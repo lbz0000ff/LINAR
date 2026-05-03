@@ -32,6 +32,17 @@ class Agent:
             tool_call_deltas = {}
 
             for chunk in stream:
+                # ── usage info (sent on the final chunk by some API versions) ──
+                if hasattr(chunk, "usage") and chunk.usage:
+                    self.emit({
+                        "type": "usage",
+                        "data": {
+                            "prompt_tokens": chunk.usage.prompt_tokens or 0,
+                            "completion_tokens": chunk.usage.completion_tokens or 0,
+                            "total_tokens": chunk.usage.total_tokens or 0,
+                        },
+                    })
+
                 if not chunk.choices:
                     continue
                 delta = chunk.choices[0].delta
@@ -39,6 +50,13 @@ class Agent:
                 if delta.content:
                     text_parts.append(delta.content)
                     self.emit({"type": "token", "data": delta.content})
+
+                # ── reasoning / thinking content ──
+                if hasattr(delta, "reasoning_content") and delta.reasoning_content:
+                    self.emit({
+                        "type": "reasoning_token",
+                        "data": delta.reasoning_content,
+                    })
 
                 if delta.tool_calls:
                     for tc in delta.tool_calls:
@@ -95,6 +113,7 @@ class Agent:
                     "result": result_str,
                 })
 
+        self.emit({"type": "complete"})
         self.emit({"type": "ready"})
 
     def run(self):

@@ -1,0 +1,59 @@
+"""
+Only-Important Reasoning Mode — preserved for future reference.
+
+This was removed from terminal.py because the current model lacks
+skill-chaining and long-planning capabilities, making the feature
+unnecessary. Revisit when those capabilities land.
+
+── How it worked ──────────────────────────────────────────────
+
+Goal: Show a concise summary of the model's reasoning *after* the
+response streams, rather than showing raw reasoning tokens during
+generation (full mode) or suppressing them entirely (not showed).
+
+State fields:
+  self._reasoning_text       — accumulates ALL reasoning tokens silently
+  self._reasoning_consumed   — whether we already printed the summary
+
+Event flow:
+  1. reasoning_token → accumulate in _reasoning_text (no print)
+  2. token → stream content normally (header + raw tokens)
+  3. complete → if _reasoning_text and not _reasoning_consumed:
+       print "  💭 {summary[:300]}…" in dim italic
+       set _reasoning_consumed = True
+
+REASONING_MODES entry:  "only important"
+
+── Key code (removed from terminal.py) ────────────────────────
+
+# in LilyTerminal.__init__:
+    self._reasoning_consumed = False
+
+# in _on_event, "start" handler:
+    self._reasoning_consumed = False
+
+# in _on_event, "complete" handler:
+    if (
+        self.reasoning_mode == "only important"
+        and self._reasoning_text
+        and not self._reasoning_consumed
+    ):
+        self._reasoning_consumed = True
+        summary = self._reasoning_text.strip()[:300]
+        self.console.print(
+            f"  [dim italic]💭 {summary}…[/dim italic]"
+        )
+
+# in REASONING_MODES:
+    ("not showed", "only important", "full")
+
+# in _reasoning_color color_map:
+    "only important": "green"
+
+── Limitation that motivated removal ──────────────────────────
+
+The summary appeared AFTER the full response content, which is
+the wrong chronological order. To fix it properly, the summary
+would need to be shown before or interleaved with the content
+stream — requires buffering or a two-phase render.
+"""
