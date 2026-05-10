@@ -25,7 +25,9 @@ Agent = agent.Agent
 
 # ── constants ─────────────────────────────────────────────
 
-MAX_TOKENS = 1_000_000  # deepseek-v4-flash context window
+from config import load_config
+_CFG = load_config()
+MAX_TOKENS = _CFG.get("terminal_max_tokens", 1_000_000)
 
 WELCOME = """
   ┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
@@ -44,7 +46,7 @@ WELCOME = """
   ┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
 """
 
-REASONING_MODES = ("not showed", "full")
+REASONING_MODES = ("hide", "full")
 
 
 # ── helpers ──────────────────────────────────────────────
@@ -92,7 +94,8 @@ class LilyTerminal:
         self.session: PromptSession | None = None
 
         # ── reasoning mode ──
-        self.reasoning_mode = "not showed"  # "not showed" | "full"
+        default_mode = _CFG.get("show_reasoning", "hide")
+        self.reasoning_mode = default_mode if default_mode in REASONING_MODES else "hide"
 
         # ── per-response state (reset on each "start") ──
         self._response_text = ""         # accumulated content tokens
@@ -271,8 +274,8 @@ class LilyTerminal:
     @staticmethod
     def _reasoning_color(mode: str | None = None) -> str:
         """Return the mode name wrapped in the appropriate Rich color tag."""
-        m = mode or "not showed"
-        color_map = {"not showed": "red", "full": "yellow"}
+        m = mode or "hide"
+        color_map = {"hide": "red", "full": "yellow"}
         color = color_map.get(m, "white")
         return f"[{color}]{m}[/{color}]"
 
@@ -288,7 +291,7 @@ class LilyTerminal:
             self.console.print("  /help                  Show this message")
             self.console.print(
                 "  /reasoning <mode>      "
-                "Set reasoning display: full | not showed"
+                "Set reasoning display: full | hide"
             )
             self.console.print(
                 f"  Current reasoning mode: {self._reasoning_color(self.reasoning_mode)}\n"
@@ -356,7 +359,26 @@ class LilyTerminal:
 # ── entry point ───────────────────────────────────────────
 
 def main() -> None:
-    from tool_registry import tools
+    from tool_registry import get_tools
+
+    # Load config and filter tools by enabled_sets
+    from config import load_config
+    _cfg = load_config()
+    _enabled = _cfg.get("tools", {}).get("enabled_sets", None)
+    tools = get_tools(_enabled)
+
+    # Inject interactive password input via prompt_toolkit
+    from prompt_toolkit import PromptSession as PromptSession_
+    _pw_session = PromptSession_()
+
+    def _tui_input(prompt: str, password: bool = False) -> str:
+        try:
+            return _pw_session.prompt(prompt, is_password=password)
+        except (KeyboardInterrupt, EOFError):
+            return ""
+
+    for t in tools.values():
+        t.interactive_input = _tui_input
 
     agent = Agent(tools=tools)
     cli = LilyTerminal(agent)

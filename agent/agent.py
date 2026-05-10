@@ -1,17 +1,77 @@
 import sys
+import io
 import json
 from deepseek_llm import LLM
+from config import load_config
 
 
 class Agent:
     def __init__(self, tools: dict = None):
-        with open("api_key.txt", "r") as f:
-            api_key = f.read().strip()
-        with open("system_prompt.txt", "r") as f:
-            system_prompt = f.read().strip()
+        cfg = load_config()
+
+        # ── read config ──
+        api_key = cfg["llm"]["api_key"]
+        system_prompt = self._build_prompt(cfg)
+
         self.llm = LLM(api_key, system_prompt, tools)
         self.tools = tools
         self.chat_history = "Chat history:"
+
+        # ── config values ──
+        self.max_turns = cfg.get("max_turns", 5)
+        self.chat_cfg = cfg.get("chat_history", {})
+        self.max_history_chars = self.chat_cfg.get("max_chars", 10000)
+        self.trim_to_chars = self.chat_cfg.get("trim_to", 5000)
+        self.protect_last_turns = self.chat_cfg.get("protect_last_turns", 3)
+        self.strategy = self.chat_cfg.get("strategy", "compact")
+
+    def _build_prompt(self, cfg):
+        """Load and join prompt files listed in config."""
+        prompt_dir = "prompt"
+        parts = []
+        for filename in cfg.get("prompt", {}).get("files", []):
+            filepath = f"{prompt_dir}/{filename}"
+            try:
+                with open(filepath, "r", encoding="utf-8") as f:
+                    content = f.read().strip()
+                if content:
+                    parts.append(content)
+            except FileNotFoundError:
+                continue
+        return "\n\n".join(parts) if parts else "You are a helpful assistant."
+
+    def _compact_history(self):
+        """Compact chat history: delete middle tool-call details,
+        preserving user requests and recent turns."""
+        if len(self.chat_history) <= self.max_history_chars:
+            return
+
+        lines = self.chat_history.split("\n")
+
+        # Find user message indices
+        user_indices = [i for i, l in enumerate(lines) if l.startswith("User: ")]
+        # Find the last N user turns to protect
+        protect_count = min(self.protect_last_turns, len(user_indices))
+        protected_start = user_indices[-protect_count] if protect_count > 0 else 0
+
+        # Preserve head (first user request + response) + tail (recent turns)
+        head = lines[:protected_start]
+        tail = lines[protected_start:]
+
+        # Mark tool calls and results for removal in the head section
+        compacted = []
+        for line in head:
+            is_tool_line = (
+                line.startswith("Tool call: ") or line.startswith("Tool result: ")
+            )
+            if is_tool_line:
+                continue
+            compacted.append(line)
+
+        # Rebuild
+        compacted_text = "\n".join(compacted).strip()
+        tail_text = "\n".join(tail).strip()
+        self.chat_history = compacted_text + "\n\n...(history compacted)...\n\n" + tail_text
 
     def emit(self, event: dict):
         """Write a JSON event to stdout."""
@@ -19,9 +79,7 @@ class Agent:
 
     def process_with_llm(self):
         """Run the LLM (streaming), handle tool calls, emit events."""
-        max_turns = 5
-
-        for _ in range(max_turns):
+        for _ in range(self.max_turns):
             prompt = self.chat_history + "Agent:"
 
             self.emit({"type": "start"})
@@ -32,7 +90,7 @@ class Agent:
             tool_call_deltas = {}
 
             for chunk in stream:
-                # ── usage info (sent on the final chunk by some API versions) ──
+                # ── usage info ──
                 if hasattr(chunk, "usage") and chunk.usage:
                     self.emit({
                         "type": "usage",
@@ -98,8 +156,12 @@ class Agent:
             # Execute each tool and add results to history
             for tc in tool_calls:
                 try:
-                    result = self.tools[tc["name"]].execute(tc["arguments"])
+                    raw_args = tc["arguments"]
+                    args_dict = json.loads(raw_args) if isinstance(raw_args, str) else raw_args
+                    result = self.tools[tc["name"]].execute(**args_dict)
                     result_str = str(result)
+                except json.JSONDecodeError as e:
+                    result_str = f"Error: Failed to parse tool arguments: {e}"
                 except Exception as e:
                     result_str = f"Error: {e}"
 
@@ -113,10 +175,17 @@ class Agent:
                     "result": result_str,
                 })
 
+            # ── compact history if needed ──
+            self._compact_history()
+
         self.emit({"type": "complete"})
         self.emit({"type": "ready"})
 
     def run(self):
+        # Force UTF-8 on stdin (Windows pipes often use the wrong code page)
+        if hasattr(sys.stdin, "reconfigure"):
+            sys.stdin.reconfigure(encoding="utf-8", errors="replace")
+
         self.emit({"type": "ready"})
         for line in sys.stdin:
             user_input = line.strip()
@@ -129,7 +198,25 @@ class Agent:
 
 if __name__ == "__main__":
 
-    from tool_registry import tools
+    from tool_registry import get_tools
+
+    # Load config and filter tools by enabled_sets
+    from config import load_config
+    _cfg = load_config()
+    _enabled = _cfg.get("tools", {}).get("enabled_sets", None)
+    tools = get_tools(_enabled)
+
+    # Inject interactive input callback (stdin-based, for headless mode)
+    def _stdin_input(prompt: str, password: bool = False) -> str:
+        sys.stderr.write(prompt)
+        sys.stderr.flush()
+        try:
+            return sys.stdin.readline().rstrip("\n")
+        except (EOFError, KeyboardInterrupt):
+            return ""
+
+    for t in tools.values():
+        t.interactive_input = _stdin_input
 
     agent = Agent(tools=tools)
     agent.run()

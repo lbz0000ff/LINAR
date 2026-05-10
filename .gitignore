@@ -1,0 +1,10 @@
+.claude/
+.vscode/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.bak
+api_key.txt
+TEST_LILY.md
+models/
