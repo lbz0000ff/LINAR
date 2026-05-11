@@ -8,3 +8,4 @@ __pycache__/
 api_key.txt
 TEST_LILY.md
 models/
+test_diag.py
