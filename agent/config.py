@@ -42,6 +42,7 @@ DEFAULTS = {
     "max_memory_length": 2200,
     "max_user_preferences_length": 500,
     "show_reasoning": "hide",
+    "show_tool_calls": "show_tools",  # "hide" | "show_tools" | "detailed"
     "confirmation_wait_time": 0,
     "terminal_max_tokens": 1000000,
     "tools": {

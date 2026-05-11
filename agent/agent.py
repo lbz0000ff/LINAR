@@ -3,6 +3,7 @@ import io
 import json
 from deepseek_llm import LLM
 from config import load_config
+import database as db
 
 
 class Agent:
@@ -16,6 +17,10 @@ class Agent:
         self.llm = LLM(api_key, system_prompt, tools)
         self.tools = tools
         self.chat_history = "Chat history:"
+
+        # ── database (archive chat history) ──
+        db.init_db()
+        self.session_id = db.create_session()
 
         # ── config values ──
         self.max_turns = cfg.get("max_turns", 5)
@@ -78,8 +83,16 @@ class Agent:
         print(json.dumps(event, ensure_ascii=False), flush=True)
 
     def process_with_llm(self):
-        """Run the LLM (streaming), handle tool calls, emit events."""
-        for _ in range(self.max_turns):
+        """Run the LLM (streaming), handle tool calls, emit events.
+
+        Loops until the agent produces a final answer (no tool calls).
+        max_turns=0 means unlimited; otherwise caps the number of LLM rounds.
+        """
+        turn = 0
+        while True:
+            turn += 1
+            if self.max_turns > 0 and turn > self.max_turns:
+                break
             prompt = self.chat_history + "Agent:"
 
             self.emit({"type": "start"})
@@ -136,6 +149,7 @@ class Agent:
             text = "".join(text_parts)
             if text:
                 self.chat_history += f"Agent: {text}\n"
+                db.save_message(self.session_id, "agent", text)
 
             # Collect complete tool calls from deltas
             tool_calls = []
@@ -187,12 +201,21 @@ class Agent:
             sys.stdin.reconfigure(encoding="utf-8", errors="replace")
 
         self.emit({"type": "ready"})
+        first_message = True
         for line in sys.stdin:
             user_input = line.strip()
             if not user_input:
                 continue
+
             self.chat_history += f"User: {user_input}\n"
             self.emit({"type": "user_echo", "data": user_input})
+
+            # ── archive ──
+            db.save_message(self.session_id, "user", user_input)
+            if first_message:
+                db.update_session_title(self.session_id, user_input[:80])
+                first_message = False
+
             self.process_with_llm()
 
 

@@ -12,6 +12,7 @@ import sys
 import time
 
 from prompt_toolkit import PromptSession
+from prompt_toolkit.completion import Completer, Completion
 from rich.console import Console
 from rich.style import Style
 
@@ -29,24 +30,63 @@ from config import load_config
 _CFG = load_config()
 MAX_TOKENS = _CFG.get("terminal_max_tokens", 1_000_000)
 
-WELCOME = """
-  ┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
-  ┃                                                    ┃
-  ┃          ██╗      ████╗ ██╗     ██╗   ██╗          ┃
-  ┃          ██║      ╚██╔╝ ██║     ╚██╗ ██╔╝          ┃
-  ┃          ██║       ██║  ██║      ╚████╔╝           ┃
-  ┃          ██║       ██╚╗ ██║       ╚██╔╝            ┃
-  ┃          ███████╗ ████║ ███████╗   ██║             ┃
-  ┃          ╚══════╝ ╚═══╝ ╚══════╝   ╚═╝             ┃
-  ┃                                                    ┃
-  ┃           Lily Agent Terminal  v0.1.0              ┃
-  ┃                                                    ┃
-  ┃     Commands:  /help   /reasoning   /exit          ┃
-  ┃                                                    ┃
-  ┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
-"""
+# ── WELCOME banner colours ── tweak these to adjust depth/shade ──
+_C_BORDER = "grey"
+_C_LILY  = "grey85"
+_C_I     = "red"
+_C_SHADOW = "grey"
+_C_TITLE = "yellow"
+_C_HINT  = "grey62"
+
+WELCOME = f"""\
+  [{_C_BORDER}]┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓[/{_C_BORDER}]
+  [{_C_BORDER}]┃[/{_C_BORDER}]                                                    [{_C_BORDER}]┃[/{_C_BORDER}]
+  [{_C_BORDER}]┃[/{_C_BORDER}]          [{_C_LILY}]██╗[/{_C_LILY}]      [{_C_I}]████[/{_C_I}][{_C_SHADOW}]╗[/{_C_SHADOW}] [{_C_LILY}]██╗     ██╗   ██╗[/{_C_LILY}]          [{_C_BORDER}]┃[/{_C_BORDER}]
+  [{_C_BORDER}]┃[/{_C_BORDER}]          [{_C_LILY}]██║[/{_C_LILY}]      [{_C_SHADOW}]╚[/{_C_SHADOW}][{_C_I}]██[/{_C_I}]╔╝ [{_C_LILY}]██║     ╚██╗ ██╔╝[/{_C_LILY}]          [{_C_BORDER}]┃[/{_C_BORDER}]
+  [{_C_BORDER}]┃[/{_C_BORDER}]          [{_C_LILY}]██║[/{_C_LILY}]       [{_C_I}]██[/{_C_I}][{_C_SHADOW}]║[/{_C_SHADOW}]  [{_C_LILY}]██║      ╚████╔╝[/{_C_LILY}]           [{_C_BORDER}]┃[/{_C_BORDER}]
+  [{_C_BORDER}]┃[/{_C_BORDER}]          [{_C_LILY}]██║[/{_C_LILY}]       [{_C_I}]██[/{_C_I}][{_C_SHADOW}]╚╗[/{_C_SHADOW}] [{_C_LILY}]██║       ╚██╔╝[/{_C_LILY}]            [{_C_BORDER}]┃[/{_C_BORDER}]
+  [{_C_BORDER}]┃[/{_C_BORDER}]          [{_C_LILY}]███████╗[/{_C_LILY}] [{_C_I}]████[/{_C_I}][{_C_SHADOW}]║[/{_C_SHADOW}] [{_C_LILY}]███████╗   ██║[/{_C_LILY}]             [{_C_BORDER}]┃[/{_C_BORDER}]
+  [{_C_BORDER}]┃[/{_C_BORDER}]          [{_C_SHADOW}]╚══════╝ ╚═══╝ ╚══════╝   ╚═╝[/{_C_SHADOW}]             [{_C_BORDER}]┃[/{_C_BORDER}]
+  [{_C_BORDER}]┃[/{_C_BORDER}]                                                    [{_C_BORDER}]┃[/{_C_BORDER}]
+  [{_C_BORDER}]┃[/{_C_BORDER}]           [{_C_TITLE}]Lily Agent Terminal  v0.1.0[/{_C_TITLE}]              [{_C_BORDER}]┃[/{_C_BORDER}]
+  [{_C_BORDER}]┃[/{_C_BORDER}]                                                    [{_C_BORDER}]┃[/{_C_BORDER}]
+  [{_C_BORDER}]┃[/{_C_BORDER}]            [{_C_HINT}]Type /help for command help[/{_C_HINT}]             [{_C_BORDER}]┃[/{_C_BORDER}]
+  [{_C_BORDER}]┃[/{_C_BORDER}]                                                    [{_C_BORDER}]┃[/{_C_BORDER}]
+  [{_C_BORDER}]┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛[/{_C_BORDER}]"""
 
 REASONING_MODES = ("hide", "full")
+TOOL_CALL_MODES = ("hide", "show_tools", "detailed")
+
+# ── tab completer ──────────────────────────────────────────
+
+class _CommandCompleter(Completer):
+    """Tab completer for slash commands — only activates when typing `/`."""
+
+    def get_completions(self, document, complete_event):
+        text = document.text_before_cursor
+        if not text.startswith("/"):
+            return
+
+        # ── base commands ──────────────────────────────────
+        commands = [
+            "/exit", "/quit", "/help",
+            "/reasoning", "/tool_calls",
+        ]
+        for cmd in commands:
+            if cmd.startswith(text):
+                yield Completion(cmd, start_position=-len(text))
+
+        # ── sub-arguments after a space ────────────────────
+        if " " in text:
+            cmd, _, partial = text.partition(" ")
+            if cmd == "/reasoning":
+                for mode in ("hide", "full"):
+                    if mode.startswith(partial):
+                        yield Completion(mode, start_position=-len(partial))
+            elif cmd == "/tool_calls":
+                for mode in ("hide", "show_tools", "detailed"):
+                    if mode.startswith(partial):
+                        yield Completion(mode, start_position=-len(partial))
 
 
 # ── helpers ──────────────────────────────────────────────
@@ -96,6 +136,10 @@ class LilyTerminal:
         # ── reasoning mode ──
         default_mode = _CFG.get("show_reasoning", "hide")
         self.reasoning_mode = default_mode if default_mode in REASONING_MODES else "hide"
+
+        # ── tool call display mode ──
+        default_tc = _CFG.get("show_tool_calls", "show_tools")
+        self.tool_calls_mode = default_tc if default_tc in TOOL_CALL_MODES else "show_tools"
 
         # ── per-response state (reset on each "start") ──
         self._response_text = ""         # accumulated content tokens
@@ -220,25 +264,36 @@ class LilyTerminal:
         elif etype == "usage":
             self._usage = event.get("data")
 
-        # ── tool_call / tool_result ──────────────────────
+        # ── tool_call — show tool name in light gray ─────
         elif etype == "tool_call":
             self._had_tool_calls = True
-            self._print_header()
-            preview = event.get("arguments", "")[:120]
-            line = f"\n  [italic magenta]⚙  Using: {event['name']}({preview})[/italic magenta]"
-            self._all_printed_text += line
-            self.console.print(line)
 
+            if self.tool_calls_mode == "hide":
+                return
+
+            self._print_header()
+            name = event["name"]
+
+            if self.tool_calls_mode == "show_tools":
+                self.console.print(f"\n  [grey85]⚙ Using: {name}[/grey85]")
+
+            elif self.tool_calls_mode == "detailed":
+                preview = event.get("arguments", "")[:120]
+                self.console.print(f"\n  [grey85]⚙ Using: {name}[/grey85]")
+                self.console.print(f"  [grey62]  {preview}[/grey62]")
+
+        # ── tool_result — show result in dark gray ────────
         elif etype == "tool_result":
             self._had_tool_calls = True
-            r = str(event.get("result", ""))[:200]
-            line = f"  [green]  → {r}[/green]"
-            self._all_printed_text += line
-            self.console.print(line)
+
+            if self.tool_calls_mode == "detailed":
+                r = str(event.get("result", ""))[:200]
+                self.console.print(f"  [grey62]  → {r}[/grey62]")
+            sys.stdout.flush()
 
         elif etype == "error":
             self.console.print(
-                f"\n[bold red]✖ Error: {event.get('data', 'unknown error')}[/bold red]"
+                f"\n[red]✖ Error: {event.get('data', 'unknown error')}[/red]"
             )
 
     # ── stats display ─────────────────────────────────────
@@ -255,7 +310,7 @@ class LilyTerminal:
 
         # dynamic color by usage percentage
         if pct > 70:
-            color = "bold red"
+            color = "red"
         elif pct > 50:
             color = "bold yellow"
         else:
@@ -279,6 +334,14 @@ class LilyTerminal:
         color = color_map.get(m, "white")
         return f"[{color}]{m}[/{color}]"
 
+    @staticmethod
+    def _tool_calls_color(mode: str | None = None) -> str:
+        """Return the tool-call mode name in its colour tag."""
+        m = mode or "show_tools"
+        color_map = {"hide": "red", "show_tools": "cyan", "detailed": "yellow"}
+        color = color_map.get(m, "white")
+        return f"[{color}]{m}[/{color}]"
+
     def _handle_command(self, text: str) -> bool:
         cmd = text.strip()
 
@@ -294,7 +357,14 @@ class LilyTerminal:
                 "Set reasoning display: full | hide"
             )
             self.console.print(
+                "  /tool_calls <mode>     "
+                "Set tool call display: hide | show_tools | detailed"
+            )
+            self.console.print(
                 f"  Current reasoning mode: {self._reasoning_color(self.reasoning_mode)}\n"
+            )
+            self.console.print(
+                f"  Current tool calls  : {self._tool_calls_color(self.tool_calls_mode)}\n"
             )
             return True
 
@@ -321,6 +391,29 @@ class LilyTerminal:
             )
             return True
 
+        if cmd.startswith("/tool_calls"):
+            parts = cmd.split(maxsplit=1)
+            if len(parts) == 1:
+                # toggle
+                current_idx = TOOL_CALL_MODES.index(self.tool_calls_mode)
+                next_idx = (current_idx + 1) % len(TOOL_CALL_MODES)
+                self.tool_calls_mode = TOOL_CALL_MODES[next_idx]
+            else:
+                arg = parts[1].lower()
+                if arg in TOOL_CALL_MODES:
+                    self.tool_calls_mode = arg
+                else:
+                    self.console.print(
+                        f"  Invalid mode '{arg}'. "
+                        f"Use: {' | '.join(TOOL_CALL_MODES)}"
+                    )
+                    return True
+
+            self.console.print(
+                f"  Tool call display set to: {self._tool_calls_color(self.tool_calls_mode)}\n"
+            )
+            return True
+
         return False
 
     # ── main loop ─────────────────────────────────────────
@@ -328,7 +421,7 @@ class LilyTerminal:
     def run(self) -> None:
         self.console.print(WELCOME)
         if self.session is None:
-            self.session = PromptSession()
+            self.session = PromptSession(completer=_CommandCompleter())
 
         while True:
             try:
@@ -351,9 +444,9 @@ class LilyTerminal:
             try:
                 self.agent.process_with_llm()
             except Exception as exc:
-                self.console.print(f"\n[bold red]✖ Error: {exc}[/bold red]")
+                self.console.print(f"\n[red]✖ Error: {exc}[/red]")
 
-        self.console.print("\n[bold red]Goodbye![/bold red]")
+        self.console.print("\n[red]Goodbye![/red]")
 
 
 # ── entry point ───────────────────────────────────────────
