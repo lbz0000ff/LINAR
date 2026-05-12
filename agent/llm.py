@@ -9,14 +9,16 @@ def generate_function_calling(tool_schema:dict):
     return function_calling
 
 class LLM:
-    def __init__(self, api_key: str, system_prompt: str = "You are a helpful assistant.", tools: dict = {}):
-        self.client = OpenAI(base_url='https://api.deepseek.com/v1',api_key=api_key)
+    def __init__(self, api_key: str, system_prompt: str = "You are a helpful assistant.", tools: dict = {},
+                 base_url: str = "https://api.deepseek.com/v1", model: str = "deepseek-v4-flash"):
+        self.client = OpenAI(base_url=base_url, api_key=api_key)
         self.system_prompt = system_prompt
         self.tools = tools
+        self.model = model
 
-    def generate_response(self, prompt: str,temperature: float = 0.7):
+    def generate_response(self, prompt: str, temperature: float = 0.7):
         response = self.client.chat.completions.create(
-            model="deepseek-v4-flash",
+            model=self.model,
             messages=[
                 {"role": "system", "content": self.system_prompt},
                 {"role": "user", "content": prompt}
@@ -29,7 +31,7 @@ class LLM:
     def stream_response(self, prompt: str, temperature: float = 0.7):
         """Stream a response from the LLM, yielding raw chunks."""
         response = self.client.chat.completions.create(
-            model="deepseek-v4-flash",
+            model=self.model,
             messages=[
                 {"role": "system", "content": self.system_prompt},
                 {"role": "user", "content": prompt}

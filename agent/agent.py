@@ -1,7 +1,7 @@
 import sys
 import io
 import json
-from deepseek_llm import LLM
+from llm import LLM
 from config import load_config
 import database as db
 
@@ -11,16 +11,22 @@ class Agent:
         cfg = load_config()
 
         # ── read config ──
+        self.cfg = cfg
         api_key = cfg["llm"]["api_key"]
+        base_url = cfg["llm"].get("base_url", "https://api.deepseek.com/v1")
+        model = cfg["llm"].get("model", "deepseek-v4-flash")
         system_prompt = self._build_prompt(cfg)
 
-        self.llm = LLM(api_key, system_prompt, tools)
+        self.llm = LLM(api_key, system_prompt, tools, base_url=base_url, model=model)
         self.tools = tools
         self.chat_history = "Chat history:"
 
         # ── database (archive chat history) ──
         db.init_db()
         self.session_id = db.create_session()
+
+        # ── conversation turn counter ──
+        self._turn_counter = 0
 
         # ── config values ──
         self.max_turns = cfg.get("max_turns", 5)
@@ -78,6 +84,20 @@ class Agent:
         tail_text = "\n".join(tail).strip()
         self.chat_history = compacted_text + "\n\n...(history compacted)...\n\n" + tail_text
 
+    def add_user_message(self, text: str):
+        """Append a user message with a [turn N] marker and archive it."""
+        self._turn_counter += 1
+        self.chat_history += f"[turn {self._turn_counter}]\nUser: {text}\n"
+        db.save_message(self.session_id, "user", text, turn=self._turn_counter)
+        if self._turn_counter == 1:
+            db.update_session_title(self.session_id, text[:80])
+
+    def reset_session(self):
+        """Start a fresh conversation session"""
+        self.chat_history = "Chat history:"
+        self._turn_counter = 0
+        self.session_id = db.create_session()
+
     def emit(self, event: dict):
         """Write a JSON event to stdout."""
         print(json.dumps(event, ensure_ascii=False), flush=True)
@@ -88,6 +108,9 @@ class Agent:
         Loops until the agent produces a final answer (no tool calls).
         max_turns=0 means unlimited; otherwise caps the number of LLM rounds.
         """
+        # ── re-read prompt files so memory writes take effect immediately ──
+        self.llm.system_prompt = self._build_prompt(self.cfg)
+
         turn = 0
         while True:
             turn += 1
@@ -149,7 +172,7 @@ class Agent:
             text = "".join(text_parts)
             if text:
                 self.chat_history += f"Agent: {text}\n"
-                db.save_message(self.session_id, "agent", text)
+                db.save_message(self.session_id, "agent", text, turn=self._turn_counter)
 
             # Collect complete tool calls from deltas
             tool_calls = []
@@ -207,15 +230,8 @@ class Agent:
             if not user_input:
                 continue
 
-            self.chat_history += f"User: {user_input}\n"
+            self.add_user_message(user_input)
             self.emit({"type": "user_echo", "data": user_input})
-
-            # ── archive ──
-            db.save_message(self.session_id, "user", user_input)
-            if first_message:
-                db.update_session_title(self.session_id, user_input[:80])
-                first_message = False
-
             self.process_with_llm()
 
 

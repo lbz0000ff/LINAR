@@ -5,6 +5,7 @@ from basic_tools.tool_fileio import (
 )
 from basic_tools.tool_cmd import Tool_CmdExecute
 from basic_tools.tool_web import Tool_WebFetch
+from basic_tools.tool_memory import Tool_Remember, Tool_Recall
 
 # ── all tool instances ──────────────────────────────────────
 _all_tools = {
@@ -18,6 +19,8 @@ _all_tools = {
     "search_files": Tool_SearchFiles(),
     "cmd_execute": Tool_CmdExecute(),
     "web_fetch": Tool_WebFetch(),
+    "remember": Tool_Remember(),
+    "recall": Tool_Recall(),
 }
 
 # ── toolsets ─────────────────────────────────────────────────
@@ -29,6 +32,7 @@ _toolsets = {
     ],
     "shell": ["cmd_execute"],
     "web": ["web_fetch"],
+    "memory": ["remember", "recall"],
 }
 
 # ── public API ───────────────────────────────────────────────

@@ -1,7 +1,7 @@
 """SQLite-backed conversation archive.
 
 Stores every session and its messages in a local SQLite database under
-memory/chat_history/archive.db for later recall.
+memory/chat_history/history.db for later recall.
 """
 
 import os
@@ -11,7 +11,7 @@ from datetime import datetime, timezone
 
 
 _DB_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "memory", "chat_history")
-_DB_PATH = os.path.join(_DB_DIR, "archive.db")
+_DB_PATH = os.path.join(_DB_DIR, "history.db")
 
 _local = threading.local()
 
@@ -55,10 +55,27 @@ def init_db():
     """)
     conn.commit()
 
+    # ── migration: add turn column if missing ──
+    try:
+        conn.execute("ALTER TABLE messages ADD COLUMN turn INTEGER DEFAULT 0")
+    except sqlite3.OperationalError:
+        pass  # already exists
+
 
 # ---------------------------------------------------------------------------
 # Session lifecycle
 # ---------------------------------------------------------------------------
+
+def reset_db():
+    """Delete all data and reinitialize (for /reset)."""
+    conn = _get_connection()
+    conn.executescript("""
+        DROP TABLE IF EXISTS messages;
+        DROP TABLE IF EXISTS sessions;
+    """)
+    conn.commit()
+    init_db()  # recreates tables using the same connection
+
 
 def create_session(title: str = "") -> int:
     """Create a new session and return its id."""
@@ -90,11 +107,11 @@ def update_session_marker(session_id: int, marker: str):
 # Messages
 # ---------------------------------------------------------------------------
 
-def save_message(session_id: int, role: str, content: str, tool_name: str = ""):
+def save_message(session_id: int, role: str, content: str, tool_name: str = "", turn: int = 0):
     conn = _get_connection()
     conn.execute(
-        "INSERT INTO messages (session_id, role, content, tool_name) VALUES (?, ?, ?, ?)",
-        (session_id, role, content, tool_name or None),
+        "INSERT INTO messages (session_id, role, content, tool_name, turn) VALUES (?, ?, ?, ?, ?)",
+        (session_id, role, content, tool_name or None, turn),
     )
     conn.commit()
 
@@ -107,7 +124,7 @@ def get_session_messages(session_id: int):
     """Return all messages for a session, oldest first."""
     conn = _get_connection()
     rows = conn.execute(
-        "SELECT role, content, tool_name, created_at FROM messages WHERE session_id = ? ORDER BY id",
+        "SELECT id, role, content, tool_name, turn, created_at FROM messages WHERE session_id = ? ORDER BY id",
         (session_id,),
     ).fetchall()
     return [dict(r) for r in rows]

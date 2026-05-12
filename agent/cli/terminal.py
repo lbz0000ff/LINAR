@@ -8,6 +8,7 @@ Usage:
 """
 
 import os
+import re
 import sys
 import time
 
@@ -15,6 +16,7 @@ from prompt_toolkit import PromptSession
 from prompt_toolkit.completion import Completer, Completion
 from rich.console import Console
 from rich.style import Style
+from rich.text import cell_len
 
 # ── ensure agent/ directory is on sys.path ───────────────
 _AGENT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -24,35 +26,8 @@ if _AGENT_DIR not in sys.path:
 import agent
 Agent = agent.Agent
 
-# ── constants ─────────────────────────────────────────────
-
-from config import load_config
-_CFG = load_config()
-MAX_TOKENS = _CFG.get("terminal_max_tokens", 1_000_000)
-
-# ── WELCOME banner colours ── tweak these to adjust depth/shade ──
-_C_BORDER = "grey"
-_C_LILY  = "grey85"
-_C_I     = "red"
-_C_SHADOW = "grey"
-_C_TITLE = "yellow"
-_C_HINT  = "grey62"
-
-WELCOME = f"""\
-  [{_C_BORDER}]┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓[/{_C_BORDER}]
-  [{_C_BORDER}]┃[/{_C_BORDER}]                                                    [{_C_BORDER}]┃[/{_C_BORDER}]
-  [{_C_BORDER}]┃[/{_C_BORDER}]          [{_C_LILY}]██╗[/{_C_LILY}]      [{_C_I}]████[/{_C_I}][{_C_SHADOW}]╗[/{_C_SHADOW}] [{_C_LILY}]██╗     ██╗   ██╗[/{_C_LILY}]          [{_C_BORDER}]┃[/{_C_BORDER}]
-  [{_C_BORDER}]┃[/{_C_BORDER}]          [{_C_LILY}]██║[/{_C_LILY}]      [{_C_SHADOW}]╚[/{_C_SHADOW}][{_C_I}]██[/{_C_I}]╔╝ [{_C_LILY}]██║     ╚██╗ ██╔╝[/{_C_LILY}]          [{_C_BORDER}]┃[/{_C_BORDER}]
-  [{_C_BORDER}]┃[/{_C_BORDER}]          [{_C_LILY}]██║[/{_C_LILY}]       [{_C_I}]██[/{_C_I}][{_C_SHADOW}]║[/{_C_SHADOW}]  [{_C_LILY}]██║      ╚████╔╝[/{_C_LILY}]           [{_C_BORDER}]┃[/{_C_BORDER}]
-  [{_C_BORDER}]┃[/{_C_BORDER}]          [{_C_LILY}]██║[/{_C_LILY}]       [{_C_I}]██[/{_C_I}][{_C_SHADOW}]╚╗[/{_C_SHADOW}] [{_C_LILY}]██║       ╚██╔╝[/{_C_LILY}]            [{_C_BORDER}]┃[/{_C_BORDER}]
-  [{_C_BORDER}]┃[/{_C_BORDER}]          [{_C_LILY}]███████╗[/{_C_LILY}] [{_C_I}]████[/{_C_I}][{_C_SHADOW}]║[/{_C_SHADOW}] [{_C_LILY}]███████╗   ██║[/{_C_LILY}]             [{_C_BORDER}]┃[/{_C_BORDER}]
-  [{_C_BORDER}]┃[/{_C_BORDER}]          [{_C_SHADOW}]╚══════╝ ╚═══╝ ╚══════╝   ╚═╝[/{_C_SHADOW}]             [{_C_BORDER}]┃[/{_C_BORDER}]
-  [{_C_BORDER}]┃[/{_C_BORDER}]                                                    [{_C_BORDER}]┃[/{_C_BORDER}]
-  [{_C_BORDER}]┃[/{_C_BORDER}]           [{_C_TITLE}]Lily Agent Terminal  v0.1.0[/{_C_TITLE}]              [{_C_BORDER}]┃[/{_C_BORDER}]
-  [{_C_BORDER}]┃[/{_C_BORDER}]                                                    [{_C_BORDER}]┃[/{_C_BORDER}]
-  [{_C_BORDER}]┃[/{_C_BORDER}]            [{_C_HINT}]Type /help for command help[/{_C_HINT}]             [{_C_BORDER}]┃[/{_C_BORDER}]
-  [{_C_BORDER}]┃[/{_C_BORDER}]                                                    [{_C_BORDER}]┃[/{_C_BORDER}]
-  [{_C_BORDER}]┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛[/{_C_BORDER}]"""
+# ── style system ──────────────────────────────────────────
+from cli.style_loader import load_style
 
 REASONING_MODES = ("hide", "full")
 TOOL_CALL_MODES = ("hide", "show_tools", "detailed")
@@ -69,7 +44,7 @@ class _CommandCompleter(Completer):
 
         # ── base commands ──────────────────────────────────
         commands = [
-            "/exit", "/quit", "/help",
+            "/exit", "/quit", "/help", "/reset", "/clear",
             "/reasoning", "/tool_calls",
         ]
         for cmd in commands:
@@ -126,6 +101,23 @@ def _progress_bar(used: int, total: int, width: int = 12) -> str:
 class LilyTerminal:
     """REPL-style streaming terminal for the Lily Agent."""
 
+    # Logo template: each line is [(text, style_key_or_None), ...]
+    # style_key maps to banner.<key> in style.yaml; None = no markup.
+    _logo = [
+        [(" ", None),(" ", None),("██╗", "lily"), ("      ", None), ("████", "i"), ("╗", "shadow"), (" ", None),("██╗", "lily"), ("     ", None), ("██╗   ██╗", "lily")                                 ,(" ", None),(" ", None)],
+        [(" ", None),(" ", None),("██║", "lily"), ("      ", None), ("╚", "shadow"), ("██", "i"), ("╔╝", "shadow"), (" ", None),("██║", "lily"), ("     ", None), ("╚", "shadow"), ("██╗ ██╔╝", "lily") ,(" ", None),(" ", None)],
+        [(" ", None),(" ", None),("██║", "lily"), ("       ", None), ("██", "i"),("║", "shadow"), ("  ", None),("██║", "lily"), ("      ", None), ("╚████╔╝", "lily"), (" ", None)                      ,(" ", None),(" ", None)],
+        [(" ", None),(" ", None),("██║", "lily"), ("       ", None), ("██", "i"), ("╚╗", "shadow"), (" ", None),("██║", "lily"), ("       ", None), ("╚██╔╝", "lily"), ("  ", None)                     ,(" ", None),(" ", None)],
+        [(" ", None),(" ", None),("███████╗", "lily"), (" ", None), ("████", "i"), ("║", "shadow"), (" ", None),("███████╗", "lily"), ("   ", None), ("██║", "lily"), ("   ", None)                     ,(" ", None),(" ", None)],
+        [(" ", None),(" ", None),("╚══════╝", "lily"), (" ", None), ("╚", "shadow"), ("═══", "shadow"), ("╝", "shadow"), (" ", None),("╚══════╝", "lily"), ("   ", None), ("╚═╝", "lily"), ("   ", None),(" ", None),(" ", None)],
+    ]
+
+    # Text lines below the logo: (template_text, banner_style_key)
+    _banner_text = [
+        ("Lily Agent Terminal  version {version}", "title"),
+        ("Type /help for command help", "hint"),
+    ]
+
     def __init__(self, agent: Agent) -> None:
         self.agent = agent
         self.agent.emit = self._on_event
@@ -133,25 +125,109 @@ class LilyTerminal:
         self.console = Console(highlight=False)
         self.session: PromptSession | None = None
 
+        # ── load style config ──
+        self.style = load_style()
+        cfg = self._load_config()
+
         # ── reasoning mode ──
-        default_mode = _CFG.get("show_reasoning", "hide")
+        default_mode = cfg.get("show_reasoning", "hide")
         self.reasoning_mode = default_mode if default_mode in REASONING_MODES else "hide"
 
         # ── tool call display mode ──
-        default_tc = _CFG.get("show_tool_calls", "show_tools")
+        default_tc = cfg.get("show_tool_calls", "show_tools")
         self.tool_calls_mode = default_tc if default_tc in TOOL_CALL_MODES else "show_tools"
 
+        # ── max tokens for stats bar ──
+        self._max_tokens = cfg.get("terminal_max_tokens", 1_000_000)
+        self._version = cfg.get("version", "0.1.0")
+
         # ── per-response state (reset on each "start") ──
-        self._response_text = ""         # accumulated content tokens
-        self._reasoning_text = ""        # accumulated reasoning tokens
-        self._all_printed_text = ""      # all text printed since last "start"
-        self._had_tool_calls = False     # whether tool calls occurred this cycle
+        self._response_text = ""
+        self._reasoning_text = ""
+        self._all_printed_text = ""
+        self._had_tool_calls = False
         self._start_time = 0.0
         self._usage: dict | None = None
-        self._header_printed = False       # whether "⚡ Lily" has been shown
-        self._in_reasoning = False         # whether currently printing reasoning
-        self._bold_active = False          # whether inside a **bold** segment
-        self._pending = ""                 # pending text for ** marker parsing
+        self._header_printed = False
+        self._in_reasoning = False
+        self._bold_active = False
+        self._pending = ""
+
+    # ── config loader (module-level import replacement) ───
+
+    @staticmethod
+    def _load_config():
+        from config import load_config as _lc
+        return _lc()
+
+    # ── style shortcut ────────────────────────────────────
+
+    def s(self, key: str) -> str:
+        """Shorthand — return color string for a console style key."""
+        return self.style["console"].get(key, "")
+
+    # ── welcome banner ─────────────────────────────────────
+
+    @staticmethod
+    def _dw(s: str) -> int:
+        """Display width of a string (CJK-aware)."""
+        return cell_len(s)
+
+    def _build_welcome_message(self) -> str:
+        """Build the welcome banner from structured components.
+
+        Renders the LILY logo, adds text lines, and wraps everything
+        in a border box.  Widths are computed with ``cell_len`` so
+        CJK characters align correctly regardless of Rich markup.
+        """
+        banner = self.style["banner"]
+
+        # ── raw text (no markup) for width computation ──────
+        raw_logo = [
+            "".join(text for text, _ in segs) for segs in self._logo
+        ]
+        raw_texts = list(raw_logo) + [
+            t.format(version=self._version) for t, _ in self._banner_text
+        ]
+        content_w = max(self._dw(line) for line in raw_texts)
+
+        # ── border wrappers ─────────────────────────────────
+        bc = banner.get("border", "grey")
+        top    = f"[{bc}]┏{'━' * content_w}┓[/{bc}]"
+        bot    = f"[{bc}]┗{'━' * content_w}┛[/{bc}]"
+        side   = f"[{bc}]┃[/{bc}]"
+        blank  = f"{side}{' ' * content_w}{side}"
+
+        lines = [top, blank]
+
+        # ── logo lines ──────────────────────────────────────
+        for i, segs in enumerate(self._logo):
+            parts = []
+            for text, sk in segs:
+                color = banner.get(sk, "") if sk and text else ""
+                if color:
+                    parts.append(f"[{color}]{text}[/{color}]")
+                else:
+                    parts.append(text)
+            colored = "".join(parts)
+            pad = content_w - self._dw(raw_logo[i])
+            lines.append(f"{side}{colored}{' ' * pad}{side}")
+
+        lines.append(blank)
+
+        # ── text lines (centered) ───────────────────────────
+        for text, sk in self._banner_text:
+            formatted = text.format(version=self._version)
+            color = banner.get(sk, "")
+            colored = f"[{color}]{formatted}[/{color}]" if color else formatted
+            d_w = self._dw(formatted)
+            left = (content_w - d_w) // 2
+            right = content_w - d_w - left
+            lines.append(f"{side}{' ' * left}{colored}{' ' * right}{side}")
+
+        lines.append(blank)
+        lines.append(bot)
+        return "\n".join(lines)
 
     # ── helpers ───────────────────────────────────────────
 
@@ -160,7 +236,8 @@ class LilyTerminal:
         if not self._header_printed:
             self._header_printed = True
             self.console.print()
-            self.console.print("[bold cyan]⚡ Lily[/bold cyan]")
+            h = self.s("header")
+            self.console.print(f"[{h}]⚡ Lily[/{h}]")
 
     def _process_output(self, text: str) -> None:
         """Print text, rendering **bold** markers as actual bold.
@@ -224,6 +301,10 @@ class LilyTerminal:
         # ── token ────────────────────────────────────────
         elif etype == "token":
             data = event["data"]
+            # strip [turn N] markers (internal context, not for display)
+            data = re.sub(r"\[turn \d+\]\s*", "", data)
+            if not data:
+                return
             self._response_text += data
             self._all_printed_text += data
 
@@ -245,11 +326,12 @@ class LilyTerminal:
                 self._all_printed_text += data
                 self._print_header()
                 self._in_reasoning = True
-                self.console.print(
-                    data,
-                    end="",
-                    style=Style(dim=True, italic=True),
-                )
+                r = self.s("reasoning")
+                if r:
+                    # named style (e.g. "dim italic")
+                    self.console.print(data, end="", style=Style.parse(r))
+                else:
+                    self.console.print(data, end="", style=Style(dim=True, italic=True))
                 sys.stdout.flush()
 
         # ── done (end of one LLM turn) ───────────────────
@@ -273,14 +355,16 @@ class LilyTerminal:
 
             self._print_header()
             name = event["name"]
+            tn = self.s("tool_name")
 
             if self.tool_calls_mode == "show_tools":
-                self.console.print(f"\n  [grey85]⚙ Using: {name}[/grey85]")
+                self.console.print(f"\n  [{tn}]⚙ Using: {name}[/{tn}]")
 
             elif self.tool_calls_mode == "detailed":
                 preview = event.get("arguments", "")[:120]
-                self.console.print(f"\n  [grey85]⚙ Using: {name}[/grey85]")
-                self.console.print(f"  [grey62]  {preview}[/grey62]")
+                self.console.print(f"\n  [{tn}]⚙ Using: {name}[/{tn}]")
+                td = self.s("tool_detail")
+                self.console.print(f"  [{td}]  {preview}[/{td}]")
 
         # ── tool_result — show result in dark gray ────────
         elif etype == "tool_result":
@@ -288,12 +372,14 @@ class LilyTerminal:
 
             if self.tool_calls_mode == "detailed":
                 r = str(event.get("result", ""))[:200]
-                self.console.print(f"  [grey62]  → {r}[/grey62]")
+                td = self.s("tool_detail")
+                self.console.print(f"  [{td}]  → {r}[/{td}]")
             sys.stdout.flush()
 
         elif etype == "error":
+            e = self.s("error")
             self.console.print(
-                f"\n[red]✖ Error: {event.get('data', 'unknown error')}[/red]"
+                f"\n[{e}]✖ Error: {event.get('data', 'unknown error')}[/{e}]"
             )
 
     # ── stats display ─────────────────────────────────────
@@ -305,41 +391,40 @@ class LilyTerminal:
 
         used = (self._usage or {}).get("total_tokens", 0)
         used_str = _format_tokens(used)
-        max_str = _format_tokens(MAX_TOKENS)
-        pct = min(used / MAX_TOKENS * 100, 100)
+        max_str = _format_tokens(self._max_tokens)
+        pct = min(used / self._max_tokens * 100, 100)
 
         # dynamic color by usage percentage
         if pct > 70:
-            color = "red"
+            color = self.s("stats_bad")
         elif pct > 50:
-            color = "bold yellow"
+            color = self.s("stats_warn")
         else:
-            color = "bold green"
+            color = self.s("stats_good")
 
-        bar = _progress_bar(used, MAX_TOKENS)
+        bar = _progress_bar(used, self._max_tokens)
+        dim = self.s("stats_dim")
 
         line = (
-            f"  [dim]⏱ {elapsed_str}  │  [/dim]"
+            f"  [{dim}]⏱ {elapsed_str}  │  [/{dim}]"
             f"[{color}]Tokens: {used_str} / {max_str}  {bar}[/{color}]"
         )
         self.console.print(line)
 
     # ── commands ──────────────────────────────────────────
 
-    @staticmethod
-    def _reasoning_color(mode: str | None = None) -> str:
+    def _reasoning_color(self, mode: str | None = None) -> str:
         """Return the mode name wrapped in the appropriate Rich color tag."""
         m = mode or "hide"
-        color_map = {"hide": "red", "full": "yellow"}
-        color = color_map.get(m, "white")
+        colors = self.style["mode_colors"]["reasoning"]
+        color = colors.get(m, "white")
         return f"[{color}]{m}[/{color}]"
 
-    @staticmethod
-    def _tool_calls_color(mode: str | None = None) -> str:
+    def _tool_calls_color(self, mode: str | None = None) -> str:
         """Return the tool-call mode name in its colour tag."""
         m = mode or "show_tools"
-        color_map = {"hide": "red", "show_tools": "cyan", "detailed": "yellow"}
-        color = color_map.get(m, "white")
+        colors = self.style["mode_colors"]["tool_calls"]
+        color = colors.get(m, "white")
         return f"[{color}]{m}[/{color}]"
 
     def _handle_command(self, text: str) -> bool:
@@ -366,6 +451,13 @@ class LilyTerminal:
             self.console.print(
                 f"  Current tool calls  : {self._tool_calls_color(self.tool_calls_mode)}\n"
             )
+            self.console.print("  /reset or /clear        Start a new conversation session")
+            return True
+
+        if cmd in ("/reset", "/clear"):
+            self.agent.reset_session()
+            ns = self.s("new_session")
+            self.console.print(f"\n[{ns}]── new session ──[/{ns}]")
             return True
 
         if cmd.startswith("/reasoning"):
@@ -419,7 +511,7 @@ class LilyTerminal:
     # ── main loop ─────────────────────────────────────────
 
     def run(self) -> None:
-        self.console.print(WELCOME)
+        self.console.print(self._build_welcome_message())
         if self.session is None:
             self.session = PromptSession(completer=_CommandCompleter())
 
@@ -439,14 +531,16 @@ class LilyTerminal:
                 continue
 
             # feed to agent
-            self.agent.chat_history += f"User: {text}\n"
+            self.agent.add_user_message(text)
 
             try:
                 self.agent.process_with_llm()
             except Exception as exc:
-                self.console.print(f"\n[red]✖ Error: {exc}[/red]")
+                e = self.s("error")
+                self.console.print(f"\n[{e}]✖ Error: {exc}[/{e}]")
 
-        self.console.print("\n[red]Goodbye![/red]")
+        g = self.s("goodbye")
+        self.console.print(f"\n[{g}]Goodbye![/{g}]")
 
 
 # ── entry point ───────────────────────────────────────────
