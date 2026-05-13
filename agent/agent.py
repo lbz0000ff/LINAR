@@ -19,11 +19,11 @@ class Agent:
 
         self.llm = LLM(api_key, system_prompt, tools, base_url=base_url, model=model)
         self.tools = tools
-        self.chat_history = "Chat history:"
+        self.chat_history: list[dict] = []
 
         # ── database (archive chat history) ──
         db.init_db()
-        self.session_id = db.create_session()
+        self.session_id = None
 
         # ── conversation turn counter ──
         self._turn_counter = 0
@@ -51,52 +51,123 @@ class Agent:
                 continue
         return "\n\n".join(parts) if parts else "You are a helpful assistant."
 
+    def _format_chat_history(self) -> str:
+        """Serialize internal JSON history to text for the LLM prompt."""
+        parts = ["Chat history:"]
+        for msg in self.chat_history:
+            role = msg["role"]
+            turn = msg.get("turn")
+            if role == "user":
+                parts.append(f"[turn {turn}]\nUser: {msg['content']}")
+            elif role == "agent":
+                parts.append(f"Agent: {msg['content']}")
+            elif role == "tool":
+                parts.append(f"Tool call: {msg['name']} with parameters {msg['arguments']}")
+                if msg.get("result"):
+                    parts.append(f"Tool result: {msg['result']}")
+            elif role == "meta":
+                parts.append(msg["content"])
+        return "\n".join(parts)
+
     def _compact_history(self):
-        """Compact chat history: delete middle tool-call details,
+        """Compact chat history: remove old tool-call details,
         preserving user requests and recent turns."""
-        if len(self.chat_history) <= self.max_history_chars:
+        if len(self._format_chat_history()) <= self.max_history_chars:
             return
 
-        lines = self.chat_history.split("\n")
-
         # Find user message indices
-        user_indices = [i for i, l in enumerate(lines) if l.startswith("User: ")]
-        # Find the last N user turns to protect
+        user_indices = [i for i, m in enumerate(self.chat_history) if m["role"] == "user"]
         protect_count = min(self.protect_last_turns, len(user_indices))
-        protected_start = user_indices[-protect_count] if protect_count > 0 else 0
+        protect_start = user_indices[-protect_count] if protect_count > 0 else 0
 
-        # Preserve head (first user request + response) + tail (recent turns)
-        head = lines[:protected_start]
-        tail = lines[protected_start:]
+        # head: everything before the protected tail
+        head = self.chat_history[:protect_start]
+        tail = self.chat_history[protect_start:]
 
-        # Mark tool calls and results for removal in the head section
-        compacted = []
-        for line in head:
-            is_tool_line = (
-                line.startswith("Tool call: ") or line.startswith("Tool result: ")
-            )
-            if is_tool_line:
-                continue
-            compacted.append(line)
+        # Remove tool entries from head
+        compacted = [m for m in head if m["role"] != "tool"]
 
-        # Rebuild
-        compacted_text = "\n".join(compacted).strip()
-        tail_text = "\n".join(tail).strip()
-        self.chat_history = compacted_text + "\n\n...(history compacted)...\n\n" + tail_text
+        self.chat_history = (
+            compacted
+            + [{"role": "meta", "content": "...(history compacted)...", "turn": None}]
+            + tail
+        )
 
     def add_user_message(self, text: str):
         """Append a user message with a [turn N] marker and archive it."""
+        if self.session_id is None:
+            self.session_id = db.create_session()
         self._turn_counter += 1
-        self.chat_history += f"[turn {self._turn_counter}]\nUser: {text}\n"
+        self.chat_history.append({
+            "role": "user", "content": text, "turn": self._turn_counter,
+        })
         db.save_message(self.session_id, "user", text, turn=self._turn_counter)
         if self._turn_counter == 1:
             db.update_session_title(self.session_id, text[:80])
 
+    def switch_session(self, session_id: int) -> bool:
+        """Switch to an existing session. Returns False if not found."""
+        sess = db.get_session_by_id(session_id)
+        if not sess:
+            return False
+
+        messages = db.get_session_messages(session_id)
+        self.chat_history = []
+        max_turn = 0
+        for msg in messages:
+            turn = msg.get("turn", 0) or 0
+            if turn > max_turn:
+                max_turn = turn
+            role = msg["role"]
+            if role == "tool":
+                # content stores JSON: {"args": ..., "result": ...}
+                try:
+                    payload = json.loads(msg["content"])
+                    entry = {
+                        "role": "tool",
+                        "name": msg.get("tool_name", ""),
+                        "arguments": payload.get("args", ""),
+                        "result": payload.get("result", ""),
+                        "turn": turn,
+                    }
+                except (json.JSONDecodeError, TypeError, KeyError):
+                    entry = {
+                        "role": "tool",
+                        "name": msg.get("tool_name", ""),
+                        "arguments": "",
+                        "result": msg.get("content", ""),
+                        "turn": turn,
+                    }
+            else:
+                entry = {
+                    "role": role,
+                    "content": msg.get("content", ""),
+                    "turn": turn,
+                }
+            self.chat_history.append(entry)
+
+        self._turn_counter = max_turn
+        self.session_id = session_id
+        return True
+
+    def get_current_session_info(self) -> dict:
+        """Return info about the current session."""
+        sess = db.get_session_by_id(self.session_id)
+        if not sess:
+            return {"session_id": self.session_id, "turn": self._turn_counter}
+        return {
+            "session_id": sess["id"],
+            "title": sess.get("title", ""),
+            "marker": sess.get("marker"),
+            "created_at": sess.get("created_at", ""),
+            "turn": self._turn_counter,
+        }
+
     def reset_session(self):
         """Start a fresh conversation session"""
-        self.chat_history = "Chat history:"
+        self.chat_history = []
         self._turn_counter = 0
-        self.session_id = db.create_session()
+        self.session_id = None
 
     def emit(self, event: dict):
         """Write a JSON event to stdout."""
@@ -116,7 +187,7 @@ class Agent:
             turn += 1
             if self.max_turns > 0 and turn > self.max_turns:
                 break
-            prompt = self.chat_history + "Agent:"
+            prompt = self._format_chat_history() + "\nAgent:"
 
             self.emit({"type": "start"})
 
@@ -171,7 +242,9 @@ class Agent:
 
             text = "".join(text_parts)
             if text:
-                self.chat_history += f"Agent: {text}\n"
+                self.chat_history.append({
+                    "role": "agent", "content": text, "turn": self._turn_counter,
+                })
                 db.save_message(self.session_id, "agent", text, turn=self._turn_counter)
 
             # Collect complete tool calls from deltas
@@ -202,15 +275,24 @@ class Agent:
                 except Exception as e:
                     result_str = f"Error: {e}"
 
-                self.chat_history += (
-                    f"Tool call: {tc['name']} with parameters {tc['arguments']}\n"
-                )
-                self.chat_history += f"Tool result: {result_str}\n"
+                self.chat_history.append({
+                    "role": "tool",
+                    "name": tc["name"],
+                    "arguments": tc["arguments"],
+                    "result": result_str,
+                    "turn": self._turn_counter,
+                })
                 self.emit({
                     "type": "tool_result",
                     "name": tc["name"],
                     "result": result_str,
                 })
+
+                db.save_message(
+                    self.session_id, "tool",
+                    json.dumps({"args": tc["arguments"], "result": result_str}, ensure_ascii=False),
+                    tool_name=tc["name"], turn=self._turn_counter,
+                )
 
             # ── compact history if needed ──
             self._compact_history()
@@ -246,11 +328,21 @@ if __name__ == "__main__":
     tools = get_tools(_enabled)
 
     # Inject interactive input callback (stdin-based, for headless mode)
-    def _stdin_input(prompt: str, password: bool = False) -> str:
+    def _stdin_input(prompt: str, password: bool = False, choices: list | None = None) -> str:
         sys.stderr.write(prompt)
+        if choices:
+            sys.stderr.write("\n")
+            for i, c in enumerate(choices, 1):
+                sys.stderr.write(f"  [{i}] {c}\n")
+            sys.stderr.write("Enter number or custom answer: ")
         sys.stderr.flush()
         try:
-            return sys.stdin.readline().rstrip("\n")
+            line = sys.stdin.readline().rstrip("\n")
+            if choices and line.isdigit():
+                idx = int(line) - 1
+                if 0 <= idx < len(choices):
+                    return choices[idx]
+            return line
         except (EOFError, KeyboardInterrupt):
             return ""
 

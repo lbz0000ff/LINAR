@@ -19,7 +19,7 @@ class Tool(BaseModel):
     }
 
     # Optional callback for interactive input (e.g., sudo password).
-    # Signature: (prompt: str, password: bool = False) -> str
+    # Signature: (prompt: str, password: bool = False, choices: list | None = None) -> str
     interactive_input: Optional[Callable] = None
 
     def execute(self, *args, **kwargs):

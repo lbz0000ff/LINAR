@@ -20,7 +20,8 @@ DEFAULTS = {
         "hint": "grey62",
     },
     "console": {
-        "header": "bold cyan",
+        "header": "rgb(253, 96, 64)",
+        "header_user": "bold cyan",
         "reasoning": "dim italic",
         "tool_name": "grey85",
         "tool_detail": "grey62",

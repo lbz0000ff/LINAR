@@ -4,13 +4,14 @@
 banner:
   border: "grey"
   lily: "grey85"
-  i: "red"
+  i: "#ad2228"
   shadow: "grey"
   title: "yellow"
   hint: "grey62"
 
 console:
-  header: "bold cyan"
+  header: "#ad2228"
+  header_user: "#13a8cd"
   reasoning: "dim italic"
   tool_name: "grey85"
   tool_detail: "grey62"

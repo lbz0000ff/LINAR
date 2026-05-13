@@ -43,9 +43,6 @@ def _write_file(path: str, content: str):
         f.write(content)
 
 
-def _count_lines(text: str) -> int:
-    return len(text.strip().split("\n")) if text.strip() else 0
-
 
 def _next_id(content: str, prefix: str) -> int:
     """Return the next sequential ID (prefix + number) for a memory file.
@@ -122,6 +119,81 @@ def _is_duplicate(content: str, prefix: str, value: str, threshold: float = 0.85
             return (existing_id, "fuzzy")
 
     return (None, None)
+
+
+_COMPRESS_TRIGGER = 0.75  # trigger compression at 75% of max chars
+
+
+def _llm_compress(entries: list) -> tuple[list, list]:
+    """Ask the LLM to split entries into keep vs archive.
+
+    *entries* is a list of (id, text) tuples, e.g. ``("U1", "name is Alex")``.
+    Returns ``(keep_ids, archive_ids)``.
+
+    On any failure, returns (all IDs, []) — no data loss.
+    """
+    if not entries:
+        return ([], [])
+
+    cfg = _load_config()
+    try:
+        from openai import OpenAI
+        client = OpenAI(
+            base_url=cfg["llm"]["base_url"],
+            api_key=cfg["llm"]["api_key"],
+        )
+
+        entries_text = "\n".join(f"- [{eid}] {text}" for eid, text in entries)
+        prompt = (
+            "You are a memory management system. Classify each entry as KEEP or ARCHIVE.\n\n"
+            "KEEP = the AI assistant must ALWAYS know this without searching:\n"
+            "- User's name, identity, core preferences\n"
+            "- Critical ongoing facts the assistant needs constantly\n\n"
+            "ARCHIVE = useful but not critical; can be searched later if needed:\n"
+            "- Temporary observations\n"
+            "- Nice-to-know but non-essential details\n"
+            "- Historical notes that don't affect current interactions\n\n"
+            "Respond ONLY with valid JSON:\n"
+            '{"keep": ["id1", "id2", ...], "archive": ["id3", "id4", ...]}'
+        )
+
+        response = client.chat.completions.create(
+            model=cfg["llm"]["model"],
+            messages=[
+                {"role": "system", "content": prompt},
+                {"role": "user", "content": f"Classify these entries:\n{entries_text}"},
+            ],
+            temperature=0.1,
+            max_tokens=1000,
+        )
+
+        raw = response.choices[0].message.content.strip()
+
+        # Extract JSON from possible markdown fences or surrounding text
+        import json
+        json_match = re.search(r"\{.*\}", raw, re.DOTALL)
+        if json_match:
+            result = json.loads(json_match.group())
+        else:
+            result = json.loads(raw)
+
+        keep = result.get("keep", [])
+        archive = result.get("archive", [])
+
+        # Validate IDs — only return IDs that actually exist in input
+        valid_ids = {eid for eid, _ in entries}
+        keep = [eid for eid in keep if eid in valid_ids]
+        archive = [eid for eid in archive if eid in valid_ids]
+
+        # If everything is archive, keep at least the most important entry
+        if not keep and archive:
+            keep = [archive.pop(0)]
+
+        return (keep, archive)
+
+    except Exception:
+        # On any error: keep everything, no data loss
+        return ([eid for eid, _ in entries], [])
 
 
 # ---------------------------------------------------------------------------
@@ -221,17 +293,9 @@ class Tool_Remember(Tool):
             content += "\n\n## Memories\n"
 
         cfg = _load_config()
-        max_lines = cfg.get("max_memory_length", 2000)
-        if _count_lines(content) > max_lines:
-            lines = content.split("\n")
-            section_start = 0
-            for i, l in enumerate(lines):
-                if l.strip().startswith("## "):
-                    section_start = i
-                    break
-            tail = lines[section_start:][-(max_lines // 2):]
-            content = "\n".join(lines[:section_start] + tail)
-            content += "\n\n*(older memories archived)*\n"
+        max_chars = cfg.get("max_memory_length", 2200)
+        if len(content) > max_chars * _COMPRESS_TRIGGER:
+            content = self._compress_entries(content, "M", max_chars, "memory")
 
         content += f"- {label} {line}\n"
         _write_file(_MEMORY_FILE, content)
@@ -254,17 +318,9 @@ class Tool_Remember(Tool):
             content += "\n\n## Traits & Preferences\n"
 
         cfg = _load_config()
-        max_lines = cfg.get("max_user_preferences_length", 2000)
-        if _count_lines(content) > max_lines:
-            lines = content.split("\n")
-            section_start = 0
-            for i, l in enumerate(lines):
-                if l.strip().startswith("## "):
-                    section_start = i
-                    break
-            tail = lines[section_start:][-(max_lines // 2):]
-            content = "\n".join(lines[:section_start] + tail)
-            content += "\n\n*(earlier preferences archived)*\n"
+        max_chars = cfg.get("max_user_preferences_length", 500)
+        if len(content) > max_chars * _COMPRESS_TRIGGER:
+            content = self._compress_entries(content, "U", max_chars, "user")
 
         uid = _next_id(content, "U")
         content += f"- [U{uid}] {value}\n"
@@ -330,6 +386,95 @@ class Tool_Remember(Tool):
 
         mid = self._append(f"[M{_next_id(_read_file(_MEMORY_FILE), 'M')}]", f"{summary} {tag}")
         return f"Event bookmark added to MEMORY.md as {mid}: {summary} {tag}"
+
+    # ── compress: LLM-classify + archive old entries when near char limit ──
+
+    def _compress_entries(self, content: str, prefix: str, max_chars: int,
+                          archive_prefix: str) -> str:
+        """Compress memory file by archiving older entries via LLM.
+
+        Takes the older half of entries under a ``##`` section, sends them to the
+        LLM to classify as keep (essential) vs archive (optional). Archived entries
+        are moved to ``memory/archived/{slug}.md``, and an index line with
+        ``[MEM:{slug}]`` is added to the file. Kept entries remain in place.
+
+        *prefix* ``"U"`` or ``"M"`` — determines ID pattern to scan.
+        *max_chars* — character limit from config.
+        *archive_prefix* — ``"user"`` or ``"memory"``, used in archive filename.
+
+        On any failure, returns content unchanged (no data loss).
+        """
+        lines = content.split("\n")
+
+        # Find ## section start
+        section_start = 0
+        for i, line in enumerate(lines):
+            if line.strip().startswith("## "):
+                section_start = i
+                break
+
+        header = lines[:section_start]
+        section_line = lines[section_start] if section_start < len(lines) else ""
+        entries_lines = lines[section_start + 1:]
+
+        # Parse entries with ID pattern
+        pattern = re.compile(rf"-\s*\[({prefix}\d+)\]\s+(.*)")
+        entries = []
+        non_entry_lines = []
+        for i, line in enumerate(entries_lines):
+            m = pattern.match(line)
+            if m:
+                entries.append((i, m.group(1), m.group(2)))
+            else:
+                non_entry_lines.append((i, line))
+
+        if len(entries) < 4:
+            return content  # too few to compress
+
+        # Old half → LLM (skip tagged entries like [MEM:] / [EVENT:])
+        mid = len(entries) // 2
+        old_half = entries[:mid]
+        new_half = entries[mid:]
+
+        untagged = [(eid, text) for _, eid, text in old_half
+                     if "[MEM:" not in text and "[EVENT:" not in text]
+        tagged = [(idx, eid, text) for idx, eid, text in old_half
+                   if "[MEM:" in text or "[EVENT:" in text]
+
+        if not untagged:
+            return content  # all old entries are already references
+
+        keep_ids, archive_ids = _llm_compress(untagged)
+
+        if not archive_ids:
+            return content  # LLM says everything should stay
+
+        # Build archive file
+        archive_text = "\n".join(
+            [f"- [{eid}] {text}" for eid, text in untagged if eid in archive_ids])
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        slug = f"{archive_prefix}_compress_{timestamp}"
+        os.makedirs(_ARCHIVE_DIR, exist_ok=True)
+        _write_file(os.path.join(_ARCHIVE_DIR, f"{slug}.md"), archive_text)
+
+        # Rebuild section content
+        kept = [f"- [{eid}] {text}" for eid, text in untagged if eid in keep_ids]
+        kept.extend(f"- [{eid}] {text}" for _, eid, text in tagged)
+        new_part = [f"- [{eid}] {text}" for _, eid, text in new_half]
+
+        section_body = "\n".join(kept + new_part)
+        non_entry_text = [line for _, line in non_entry_lines if line.strip()]
+        if non_entry_text:
+            section_body += "\n" + "\n".join(non_entry_text)
+        section_body += f"\n\n*({len(archive_text.split(chr(10)))} older entries archived → [MEM:{slug}])*\n"
+
+        result = "\n".join(header)
+        if section_line:
+            result += "\n" + section_line + "\n" + section_body
+        else:
+            result += "\n" + section_body
+
+        return result
 
     # ── update existing entry by ID ──────────────────────────
 

@@ -6,6 +6,7 @@ from basic_tools.tool_fileio import (
 from basic_tools.tool_cmd import Tool_CmdExecute
 from basic_tools.tool_web import Tool_WebFetch
 from basic_tools.tool_memory import Tool_Remember, Tool_Recall
+from basic_tools.tool_ask_user import Tool_AskUser
 
 # ── all tool instances ──────────────────────────────────────
 _all_tools = {
@@ -21,6 +22,7 @@ _all_tools = {
     "web_fetch": Tool_WebFetch(),
     "remember": Tool_Remember(),
     "recall": Tool_Recall(),
+    "ask_user": Tool_AskUser(),
 }
 
 # ── toolsets ─────────────────────────────────────────────────
@@ -33,6 +35,7 @@ _toolsets = {
     "shell": ["cmd_execute"],
     "web": ["web_fetch"],
     "memory": ["remember", "recall"],
+    "interactive": ["ask_user"],
 }
 
 # ── public API ───────────────────────────────────────────────

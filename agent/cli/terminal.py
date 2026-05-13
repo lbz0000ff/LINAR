@@ -24,6 +24,7 @@ if _AGENT_DIR not in sys.path:
     sys.path.insert(0, _AGENT_DIR)
 
 import agent
+import database as db
 Agent = agent.Agent
 
 # ── style system ──────────────────────────────────────────
@@ -45,7 +46,7 @@ class _CommandCompleter(Completer):
         # ── base commands ──────────────────────────────────
         commands = [
             "/exit", "/quit", "/help", "/reset", "/clear",
-            "/reasoning", "/tool_calls",
+            "/reasoning", "/tool_calls", "/sessions", "/session","/history"
         ]
         for cmd in commands:
             if cmd.startswith(text):
@@ -138,7 +139,7 @@ class LilyTerminal:
         self.tool_calls_mode = default_tc if default_tc in TOOL_CALL_MODES else "show_tools"
 
         # ── max tokens for stats bar ──
-        self._max_tokens = cfg.get("terminal_max_tokens", 1_000_000)
+        self._max_tokens = cfg.get("llm", {}).get("max_tokens", 1_000_000)
         self._version = cfg.get("version", "0.1.0")
 
         # ── per-response state (reset on each "start") ──
@@ -232,12 +233,12 @@ class LilyTerminal:
     # ── helpers ───────────────────────────────────────────
 
     def _print_header(self) -> None:
-        """Print the "⚡ Lily" header on first visible event of a response."""
+        """Print the header on first visible event of a response."""
         if not self._header_printed:
             self._header_printed = True
             self.console.print()
             h = self.s("header")
-            self.console.print(f"[{h}]⚡ Lily[/{h}]")
+            self.console.print(f"[grey]>>[/grey] [{h}]Lily[/{h}]")
 
     def _process_output(self, text: str) -> None:
         """Print text, rendering **bold** markers as actual bold.
@@ -411,6 +412,31 @@ class LilyTerminal:
         )
         self.console.print(line)
 
+    # —— chat history display ——————————————
+    
+    def _print_history(self) -> None:
+        """Print the conversation history with reasoning and tool calls."""
+        history = self.agent.chat_history
+        if history == []:
+            return
+        self.console.print("\n———————————— Conversation History ————————————")
+        for chat in history:
+            role = chat["role"]
+            if role == "user":
+                content = chat["content"]
+                header = "[" + self.s("header_user") + "]" + "User[/" + self.s("header_user") + "]"
+                self.console.print("\n" + header + "> " + "[grey62]" + content + "[/grey62]")
+            elif role == "agent":
+                content = chat["content"]
+                header = "[" + self.s("header") + "]" + "Lily[/" + self.s("header") + "]"
+                self.console.print("\n" + header + "> " + "[grey62]" + content + "[/grey62]")
+            elif role == "tool":
+                tool_name = chat.get("name")
+                s = self.s("tool_name")
+                self.console.print(f"\n    [{s}]Agent called tool {tool_name}[/{s}]...")
+        self.console.print("\n———————————— Conversation History ————————————")
+        
+
     # ── commands ──────────────────────────────────────────
 
     def _reasoning_color(self, mode: str | None = None) -> str:
@@ -435,29 +461,32 @@ class LilyTerminal:
 
         if cmd == "/help":
             self.console.print("\nCommands:")
+            self.console.print("  /history               Show conversation history")
             self.console.print("  /exit or /quit         Exit the terminal")
             self.console.print("  /help                  Show this message")
             self.console.print(
                 "  /reasoning <mode>      "
-                "Set reasoning display: full | hide"
+                f"Set reasoning display: full | hide. Currently: {self._reasoning_color(self.reasoning_mode)}"
             )
             self.console.print(
                 "  /tool_calls <mode>     "
-                "Set tool call display: hide | show_tools | detailed"
-            )
-            self.console.print(
-                f"  Current reasoning mode: {self._reasoning_color(self.reasoning_mode)}\n"
-            )
-            self.console.print(
-                f"  Current tool calls  : {self._tool_calls_color(self.tool_calls_mode)}\n"
+                f"Set tool call display: hide | show_tools | detailed. Currently: {self._tool_calls_color(self.tool_calls_mode)}"
             )
             self.console.print("  /reset or /clear        Start a new conversation session")
+            self.console.print("  /sessions               List all sessions")
+            self.console.print("  /session [id]           Show / switch session")
+            self.console.print("  /session rename <id> <title>")
+            self.console.print("  /session delete <id>    Delete a session")
             return True
 
         if cmd in ("/reset", "/clear"):
             self.agent.reset_session()
             ns = self.s("new_session")
             self.console.print(f"\n[{ns}]── new session ──[/{ns}]")
+            return True
+
+        if cmd in ("/history",):
+            self._print_history()
             return True
 
         if cmd.startswith("/reasoning"):
@@ -503,6 +532,144 @@ class LilyTerminal:
 
             self.console.print(
                 f"  Tool call display set to: {self._tool_calls_color(self.tool_calls_mode)}\n"
+            )
+            return True
+
+        if cmd == "/sessions":
+            sessions = db.get_recent_sessions(50)
+            if not sessions:
+                self.console.print("\n  No sessions yet.")
+                return True
+
+            from rich.table import Table
+            table = Table(show_header=True, header_style="bold", box=None)
+            table.add_column("#", style="dim", width=3)
+            table.add_column("Date", width=19)
+            table.add_column("Title")
+            for s in sessions:
+                sid = s["id"]
+                marker = f"  ← active" if sid == self.agent.session_id else ""
+                table.add_row(
+                    str(sid),
+                    s.get("created_at", "")[:19],
+                    f"{s.get('title', '')[:60]}{marker}",
+                )
+            count = db.get_session_count()
+            self.console.print(f"\n  Sessions ({count} total):")
+            self.console.print(table)
+
+            # Interactive session selector
+            from prompt_toolkit.shortcuts import prompt as pt_prompt
+            from prompt_toolkit.completion import Completer, Completion
+
+            class _SessionPicker(Completer):
+                def __init__(self, sessions):
+                    self.sessions = sessions
+                def get_completions(self, document, complete_event):
+                    text = document.text_before_cursor
+                    for s in self.sessions:
+                        title = (s.get('title') or '')[:40]
+                        display = f"#{s['id']}  {s.get('created_at', '')[:19]}  {title}"
+                        if not text or str(s['id']).startswith(text):
+                            yield Completion(str(s['id']), start_position=-len(text), display=display)
+
+            try:
+                result = pt_prompt(
+                    "  Select session # (or Enter to cancel): ",
+                    completer=_SessionPicker(sessions),
+                    complete_while_typing=True,
+                )
+                result = result.strip()
+                if result and result.isdigit():
+                    sid = int(result)
+                    if self.agent.switch_session(sid):
+                        ns = self.s("new_session")
+                        self.console.print(f"\n  [{ns}]Switched to session #{sid}[/{ns}]")
+                    else:
+                        e = self.s("error")
+                        self.console.print(f"\n  [{e}]Session #{sid} not found[/{e}]")
+            except (KeyboardInterrupt, EOFError):
+                pass
+            return True
+
+        if cmd.startswith("/session"):
+            parts = cmd.split(maxsplit=2)
+            sub = parts[1] if len(parts) > 1 else ""
+
+            # /session — show current session info
+            if not sub:
+                info = self.agent.get_current_session_info()
+                self.console.print(
+                    f"\n  Session #{info['session_id']}"
+                    f"  |  Turn {info['turn']}"
+                    f"  |  {info.get('title', 'untitled')[:60]}"
+                )
+                return True
+
+            # /session <id> — switch to a session
+            if sub.isdigit():
+                sid = int(sub)
+                if self.agent.switch_session(sid):
+                    ns = self.s("new_session")
+                    self.console.print(f"\n  [{ns}]Switched to session #{sid}[/{ns}]")
+                else:
+                    e = self.s("error")
+                    self.console.print(f"\n  [{e}]Session #{sid} not found[/{e}]")
+                return True
+
+            # /session rename <id> <title>
+            if sub == "rename" and len(parts) == 3:
+                rename_parts = parts[2].split(maxsplit=1)
+                if len(rename_parts) == 2:
+                    sid, title = int(rename_parts[0]), rename_parts[1]
+                    sess = db.get_session_by_id(sid)
+                    if sess:
+                        db.update_session_title(sid, title)
+                        self.console.print(f"\n  Session #{sid} renamed to \"{title}\"")
+                    else:
+                        e = self.s("error")
+                        self.console.print(f"\n  [{e}]Session #{sid} not found[/{e}]")
+                else:
+                    self.console.print("\n  Usage: /session rename <id> <title>")
+                return True
+
+            # /session delete <id>
+            if sub == "delete" and len(parts) >= 2:
+                try:
+                    sid = int(parts[2]) if len(parts) > 2 else 0
+                except ValueError:
+                    self.console.print("\n  Usage: /session delete <id>")
+                    return True
+                if sid <= 0:
+                    self.console.print("\n  Usage: /session delete <id>")
+                    return True
+                count = db.get_session_count()
+                if count <= 1:
+                    self.console.print("\n  Cannot delete the only session.")
+                    return True
+                sess = db.get_session_by_id(sid)
+                if not sess:
+                    e = self.s("error")
+                    self.console.print(f"\n  [{e}]Session #{sid} not found[/{e}]")
+                    return True
+                db.delete_session(sid)
+                if sid == self.agent.session_id:
+                    self.agent.reset_session()
+                    ns = self.s("new_session")
+                    self.console.print(
+                        f"\n  Session #{sid} deleted. "
+                        f"[{ns}]Started new session #{self.agent.session_id}[/{ns}]"
+                    )
+                else:
+                    self.console.print(f"\n  Session #{sid} deleted.")
+                return True
+
+            self.console.print(
+                "\n  Usage:"
+                "\n    /session              Show current session info"
+                "\n    /session <id>         Switch to a session"
+                "\n    /session rename <id> <title>"
+                "\n    /session delete <id>  Delete a session"
             )
             return True
 
@@ -558,8 +725,19 @@ def main() -> None:
     from prompt_toolkit import PromptSession as PromptSession_
     _pw_session = PromptSession_()
 
-    def _tui_input(prompt: str, password: bool = False) -> str:
+    def _tui_input(prompt: str, password: bool = False, choices: list | None = None) -> str:
         try:
+            if choices:
+                display = prompt + "\n"
+                for i, c in enumerate(choices, 1):
+                    display += f"  [{i}] {c}\n"
+                display += "Enter number or type your answer: "
+                result = _pw_session.prompt(display)
+                if result.isdigit():
+                    idx = int(result) - 1
+                    if 0 <= idx < len(choices):
+                        return choices[idx]
+                return result
             return _pw_session.prompt(prompt, is_password=password)
         except (KeyboardInterrupt, EOFError):
             return ""

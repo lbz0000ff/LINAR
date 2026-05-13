@@ -15,7 +15,7 @@ def _resolve_env(value):
     if isinstance(value, str):
         return re.sub(
             r"\$\{(\w+)\}",
-            lambda m: os.environ.get(m.group(1), ""),
+            lambda m: os.environ.get(m.group(1), m.group(0)),
             value,
         )
     if isinstance(value, dict):
@@ -44,7 +44,6 @@ DEFAULTS = {
     "show_reasoning": "hide",
     "show_tool_calls": "show_tools",  # "hide" | "show_tools" | "detailed"
     "confirmation_wait_time": 0,
-    "terminal_max_tokens": 1000000,
     "tools": {
         "enabled_sets": ["time", "file", "shell", "web"],
     },

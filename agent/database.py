@@ -148,3 +148,27 @@ def get_recent_sessions(limit: int = 10):
         (limit,),
     ).fetchall()
     return [dict(r) for r in rows]
+
+
+def get_session_by_id(session_id: int):
+    """Return a single session dict or None."""
+    conn = _get_connection()
+    row = conn.execute(
+        "SELECT id, title, marker, created_at, updated_at FROM sessions WHERE id = ?",
+        (session_id,),
+    ).fetchone()
+    return dict(row) if row else None
+
+
+def delete_session(session_id: int):
+    """Delete a session and all its messages."""
+    conn = _get_connection()
+    conn.execute("DELETE FROM messages WHERE session_id = ?", (session_id,))
+    conn.execute("DELETE FROM sessions WHERE id = ?", (session_id,))
+    conn.commit()
+
+
+def get_session_count() -> int:
+    """Return total number of sessions."""
+    conn = _get_connection()
+    return conn.execute("SELECT COUNT(*) FROM sessions").fetchone()[0]
