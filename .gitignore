@@ -6,11 +6,9 @@ __pycache__/
 *.pyd
 *.bak
 api_key.txt
-TEST_LILY.md
-
 models/*
 reports
-
+test/*
 # Exclude all .md in root (not subdirs) except README.md
 /*.md
 !/README.md
