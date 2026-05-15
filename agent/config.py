@@ -43,7 +43,13 @@ DEFAULTS = {
     "max_user_preferences_length": 500,
     "show_reasoning": "hide",
     "show_tool_calls": "show_tools",  # "hide" | "show_tools" | "detailed"
-    "confirmation_wait_time": 0,
+    "logging": {
+        "level": "INFO",
+        "file": "logs/lily.log",
+        "max_bytes": 10485760,
+        "backup_count": 7,
+        "console": True,
+    },
     "tools": {
         "enabled_sets": ["time", "file", "shell", "web"],
     },
@@ -74,6 +80,16 @@ def _deep_merge(base, override):
     return base
 
 
+def _read_api_key_file() -> str:
+    """Read api_key.txt from project root as fallback."""
+    txt_path = os.path.join(os.path.dirname(__file__), "..", "api_key.txt")
+    try:
+        with open(txt_path, "r") as f:
+            return f.read().strip()
+    except (FileNotFoundError, OSError):
+        return ""
+
+
 def load_config(path=None):
     """Load config.yaml and merge with DEFAULTS.
 
@@ -94,4 +110,13 @@ def load_config(path=None):
     except Exception:
         pass
 
-    return _resolve_env(config)
+    config = _resolve_env(config)
+
+    # ── API key fallback: env var → api_key.txt ──
+    api_key = config.get("llm", {}).get("api_key", "")
+    if not api_key or api_key.startswith("${"):
+        file_key = _read_api_key_file()
+        if file_key:
+            config["llm"]["api_key"] = file_key
+
+    return config

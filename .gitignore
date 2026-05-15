@@ -6,10 +6,13 @@ __pycache__/
 *.pyo
 *.pyd
 *.bak
+*.log
 api_key.txt
+logs/
 models/*
 reports
 test/*
+agent/memory/chat_history/*
 # Exclude all .md in root (not subdirs) except README.md
 /*.md
 !/README.md

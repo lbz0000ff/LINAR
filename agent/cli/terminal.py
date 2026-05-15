@@ -24,8 +24,21 @@ if _AGENT_DIR not in sys.path:
     sys.path.insert(0, _AGENT_DIR)
 
 import agent
-import database as db
+from logger import get_logger, setup_logging
+from orchestrator import Orchestrator, Stage, stage_label
+from commands import get_handler, all_commands, register
+from commands.cmd_help import HelpCommand
+from commands.cmd_reset import ResetCommand
+from commands.cmd_history import HistoryCommand
+from commands.cmd_reasoning import ReasoningCommand
+from commands.cmd_tool_calls import ToolCallsCommand
+from commands.cmd_session import SessionCommand, SessionsCommand
+from commands.cmd_logging import LoggingCommand
+from skill import register_skill, get_skill, all_skills, load_skills_from_markdown
+
 Agent = agent.Agent
+
+log = get_logger(__name__)
 
 # ── style system ──────────────────────────────────────────
 from cli.style_loader import load_style
@@ -46,7 +59,7 @@ class _CommandCompleter(Completer):
         # ── base commands ──────────────────────────────────
         commands = [
             "/exit", "/quit", "/help", "/reset", "/clear",
-            "/reasoning", "/tool_calls", "/sessions", "/session","/history"
+            "/reasoning", "/tool_calls", "/sessions", "/session","/history","/logging"
         ]
         for cmd in commands:
             if cmd.startswith(text):
@@ -119,9 +132,10 @@ class LilyTerminal:
         ("Type /help for command help", "hint"),
     ]
 
-    def __init__(self, agent: Agent) -> None:
+    def __init__(self, agent: Agent, orchestrator: Orchestrator | None = None) -> None:
         self.agent = agent
         self.agent.emit = self._on_event
+        self.orchestrator = orchestrator or Orchestrator(agent)
 
         self.console = Console(highlight=False)
         self.session: PromptSession | None = None
@@ -456,221 +470,21 @@ class LilyTerminal:
     def _handle_command(self, text: str) -> bool:
         cmd = text.strip()
 
+        # ── exit is control flow, not a skill ──
         if cmd in ("/exit", "/quit"):
             return True
 
-        if cmd == "/help":
-            self.console.print("\nCommands:")
-            self.console.print("  /history               Show conversation history")
-            self.console.print("  /exit or /quit         Exit the terminal")
-            self.console.print("  /help                  Show this message")
-            self.console.print(
-                "  /reasoning <mode>      "
-                f"Set reasoning display: full | hide. Currently: {self._reasoning_color(self.reasoning_mode)}"
-            )
-            self.console.print(
-                "  /tool_calls <mode>     "
-                f"Set tool call display: hide | show_tools | detailed. Currently: {self._tool_calls_color(self.tool_calls_mode)}"
-            )
-            self.console.print("  /reset or /clear        Start a new conversation session")
-            self.console.print("  /sessions               List all sessions")
-            self.console.print("  /session [id]           Show / switch session")
-            self.console.print("  /session rename <id> <title>")
-            self.console.print("  /session delete <id>    Delete a session")
-            return True
+        # ── dispatch to commands ──
+        cmd_name = cmd[1:].split(maxsplit=1)[0] if cmd.startswith("/") else ""
+        args = cmd[len(cmd_name) + 1:].strip() if cmd_name else ""
+        handler = get_handler(cmd_name)
+        if handler:
+            return handler.execute(args, self)
 
-        if cmd in ("/reset", "/clear"):
-            self.agent.reset_session()
-            ns = self.s("new_session")
-            self.console.print(f"\n[{ns}]── new session ──[/{ns}]")
-            return True
-
-        if cmd in ("/history",):
-            self._print_history()
-            return True
-
-        if cmd.startswith("/reasoning"):
-            parts = cmd.split(maxsplit=1)
-            if len(parts) == 1:
-                # toggle
-                current_idx = REASONING_MODES.index(self.reasoning_mode)
-                next_idx = (current_idx + 1) % len(REASONING_MODES)
-                self.reasoning_mode = REASONING_MODES[next_idx]
-            else:
-                arg = parts[1].lower()
-                if arg in REASONING_MODES:
-                    self.reasoning_mode = arg
-                else:
-                    self.console.print(
-                        f"  Invalid mode '{arg}'. "
-                        f"Use: {' | '.join(REASONING_MODES)}"
-                    )
-                    return True
-
-            self.console.print(
-                f"  Reasoning mode set to: {self._reasoning_color(self.reasoning_mode)}\n"
-            )
-            return True
-
-        if cmd.startswith("/tool_calls"):
-            parts = cmd.split(maxsplit=1)
-            if len(parts) == 1:
-                # toggle
-                current_idx = TOOL_CALL_MODES.index(self.tool_calls_mode)
-                next_idx = (current_idx + 1) % len(TOOL_CALL_MODES)
-                self.tool_calls_mode = TOOL_CALL_MODES[next_idx]
-            else:
-                arg = parts[1].lower()
-                if arg in TOOL_CALL_MODES:
-                    self.tool_calls_mode = arg
-                else:
-                    self.console.print(
-                        f"  Invalid mode '{arg}'. "
-                        f"Use: {' | '.join(TOOL_CALL_MODES)}"
-                    )
-                    return True
-
-            self.console.print(
-                f"  Tool call display set to: {self._tool_calls_color(self.tool_calls_mode)}\n"
-            )
-            return True
-
-        if cmd == "/sessions":
-            sessions = db.get_recent_sessions(50)
-            if not sessions:
-                self.console.print("\n  No sessions yet.")
-                return True
-
-            from rich.table import Table
-            table = Table(show_header=True, header_style="bold", box=None)
-            table.add_column("#", style="dim", width=3)
-            table.add_column("Date", width=19)
-            table.add_column("Title")
-            for s in sessions:
-                sid = s["id"]
-                marker = f"  ← active" if sid == self.agent.session_id else ""
-                table.add_row(
-                    str(sid),
-                    s.get("created_at", "")[:19],
-                    f"{s.get('title', '')[:60]}{marker}",
-                )
-            count = db.get_session_count()
-            self.console.print(f"\n  Sessions ({count} total):")
-            self.console.print(table)
-
-            # Interactive session selector
-            from prompt_toolkit.shortcuts import prompt as pt_prompt
-            from prompt_toolkit.completion import Completer, Completion
-
-            class _SessionPicker(Completer):
-                def __init__(self, sessions):
-                    self.sessions = sessions
-                def get_completions(self, document, complete_event):
-                    text = document.text_before_cursor
-                    for s in self.sessions:
-                        title = (s.get('title') or '')[:40]
-                        display = f"#{s['id']}  {s.get('created_at', '')[:19]}  {title}"
-                        if not text or str(s['id']).startswith(text):
-                            yield Completion(str(s['id']), start_position=-len(text), display=display)
-
-            try:
-                result = pt_prompt(
-                    "  Select session # (or Enter to cancel): ",
-                    completer=_SessionPicker(sessions),
-                    complete_while_typing=True,
-                )
-                result = result.strip()
-                if result and result.isdigit():
-                    sid = int(result)
-                    if self.agent.switch_session(sid):
-                        ns = self.s("new_session")
-                        self.console.print(f"\n  [{ns}]Switched to session #{sid}[/{ns}]")
-                    else:
-                        e = self.s("error")
-                        self.console.print(f"\n  [{e}]Session #{sid} not found[/{e}]")
-            except (KeyboardInterrupt, EOFError):
-                pass
-            return True
-
-        if cmd.startswith("/session"):
-            parts = cmd.split(maxsplit=2)
-            sub = parts[1] if len(parts) > 1 else ""
-
-            # /session — show current session info
-            if not sub:
-                info = self.agent.get_current_session_info()
-                self.console.print(
-                    f"\n  Session #{info['session_id']}"
-                    f"  |  Turn {info['turn']}"
-                    f"  |  {info.get('title', 'untitled')[:60]}"
-                )
-                return True
-
-            # /session <id> — switch to a session
-            if sub.isdigit():
-                sid = int(sub)
-                if self.agent.switch_session(sid):
-                    ns = self.s("new_session")
-                    self.console.print(f"\n  [{ns}]Switched to session #{sid}[/{ns}]")
-                else:
-                    e = self.s("error")
-                    self.console.print(f"\n  [{e}]Session #{sid} not found[/{e}]")
-                return True
-
-            # /session rename <id> <title>
-            if sub == "rename" and len(parts) == 3:
-                rename_parts = parts[2].split(maxsplit=1)
-                if len(rename_parts) == 2:
-                    sid, title = int(rename_parts[0]), rename_parts[1]
-                    sess = db.get_session_by_id(sid)
-                    if sess:
-                        db.update_session_title(sid, title)
-                        self.console.print(f"\n  Session #{sid} renamed to \"{title}\"")
-                    else:
-                        e = self.s("error")
-                        self.console.print(f"\n  [{e}]Session #{sid} not found[/{e}]")
-                else:
-                    self.console.print("\n  Usage: /session rename <id> <title>")
-                return True
-
-            # /session delete <id>
-            if sub == "delete" and len(parts) >= 2:
-                try:
-                    sid = int(parts[2]) if len(parts) > 2 else 0
-                except ValueError:
-                    self.console.print("\n  Usage: /session delete <id>")
-                    return True
-                if sid <= 0:
-                    self.console.print("\n  Usage: /session delete <id>")
-                    return True
-                count = db.get_session_count()
-                if count <= 1:
-                    self.console.print("\n  Cannot delete the only session.")
-                    return True
-                sess = db.get_session_by_id(sid)
-                if not sess:
-                    e = self.s("error")
-                    self.console.print(f"\n  [{e}]Session #{sid} not found[/{e}]")
-                    return True
-                db.delete_session(sid)
-                if sid == self.agent.session_id:
-                    self.agent.reset_session()
-                    ns = self.s("new_session")
-                    self.console.print(
-                        f"\n  Session #{sid} deleted. "
-                        f"[{ns}]Started new session #{self.agent.session_id}[/{ns}]"
-                    )
-                else:
-                    self.console.print(f"\n  Session #{sid} deleted.")
-                return True
-
-            self.console.print(
-                "\n  Usage:"
-                "\n    /session              Show current session info"
-                "\n    /session <id>         Switch to a session"
-                "\n    /session rename <id> <title>"
-                "\n    /session delete <id>  Delete a session"
-            )
+        # ── skill fallback — if no command matched, try a skill ──
+        skill = get_skill(cmd_name)
+        if skill:
+            self.orchestrator.run_skill(skill, args)
             return True
 
         return False
@@ -697,15 +511,15 @@ class LilyTerminal:
                     break
                 continue
 
-            # feed to agent
-            self.agent.add_user_message(text)
-
+            # feed to orchestrator (state machine)
             try:
-                self.agent.process_with_llm()
+                self.orchestrator.start(text)
             except Exception as exc:
+                log.exception("Unhandled error during orchestrator step")
                 e = self.s("error")
                 self.console.print(f"\n[{e}]✖ Error: {exc}[/{e}]")
 
+        log.info("Lily shutdown")
         g = self.s("goodbye")
         self.console.print(f"\n[{g}]Goodbye![/{g}]")
 
@@ -718,6 +532,38 @@ def main() -> None:
     # Load config and filter tools by enabled_sets
     from config import load_config
     _cfg = load_config()
+
+    # ── initialize logging from config ──
+    log_cfg = _cfg.get("logging", {})
+    setup_logging(
+        level=log_cfg.get("level", "INFO"),
+        log_file=log_cfg.get("file"),
+        max_bytes=log_cfg.get("max_bytes", 10 * 1024 * 1024),
+        backup_count=log_cfg.get("backup_count", 7),
+        console=log_cfg.get("console", True),
+    )
+    log.info("Lily v%s starting", _cfg.get("version", "?"))
+    log.debug("Config: %s", _cfg)
+
+    # ── register commands ──
+    register(HelpCommand())
+    register(ResetCommand())
+    register(HistoryCommand())
+    register(ReasoningCommand())
+    register(ToolCallsCommand())
+    register(SessionCommand())
+    register(SessionsCommand())
+    register(LoggingCommand())
+    log.info("Registered %d commands", len(all_commands()))
+
+    # ── register skills ──
+    md_count = load_skills_from_markdown(
+        os.path.join(os.path.dirname(_AGENT_DIR), "skills")
+    )
+    if md_count:
+        log.info("Loaded %d Markdown skill(s)", md_count)
+    log.info("Registered %d skills", len(all_skills()))
+
     _enabled = _cfg.get("tools", {}).get("enabled_sets", None)
     tools = get_tools(_enabled)
 
@@ -742,10 +588,34 @@ def main() -> None:
         except (KeyboardInterrupt, EOFError):
             return ""
 
+    def _confirm_tool(name: str, args: str) -> bool | str:
+        """Ask the user to approve a tool call.
+
+        Returns:
+            True     — allow once
+            False    — reject once
+            "always" — allow for the session
+            "never"  — deny for the session
+        """
+        try:
+            answer = _pw_session.prompt(
+                f"Allow {name}({args[:120]})? [y/N/a(always)/d(eny)] "
+            ).strip().lower()
+        except (KeyboardInterrupt, EOFError):
+            return False
+        if answer in ("y", "yes"):
+            return True
+        if answer in ("a", "always"):
+            return "always"
+        if answer in ("d", "deny", "never"):
+            return "never"
+        return False
+
     for t in tools.values():
         t.interactive_input = _tui_input
 
     agent = Agent(tools=tools)
+    agent._confirm_callback = _confirm_tool
     cli = LilyTerminal(agent)
     cli.run()
 

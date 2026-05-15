@@ -200,6 +200,11 @@ def _llm_compress(entries: list) -> tuple[list, list]:
 # Remember Tool
 # ---------------------------------------------------------------------------
 
+def _is_deletion(value: str) -> bool:
+    """Return True if the value signals a deletion (empty / placeholder)."""
+    return not value.strip() or value.strip() in ("（已删除）", "(deleted)")
+
+
 class Tool_Remember(Tool):
     name: str = "remember"
     description: str = "Store a summary of important conversation turns to memory for future retrieval."
@@ -479,7 +484,7 @@ class Tool_Remember(Tool):
     # ── update existing entry by ID ──────────────────────────
 
     def _update_user(self, id_str: str, new_value: str) -> str:
-        """Replace the content of an existing [U{N}] line in USER.md."""
+        """Replace or delete a [U{N}] line in USER.md."""
         content = _read_file(_USER_FILE)
         lines = content.split("\n")
         pattern = re.compile(rf"^(\s*-\s*\[{re.escape(id_str)}\]\s*).*")
@@ -487,6 +492,11 @@ class Tool_Remember(Tool):
         for i, line in enumerate(lines):
             m = pattern.match(line)
             if m:
+                if _is_deletion(new_value):
+                    lines.pop(i)
+                    found = True
+                    _write_file(_USER_FILE, "\n".join(lines))
+                    return f"Deleted [{id_str}] from USER.md."
                 lines[i] = f"{m.group(1)}{new_value}"
                 found = True
                 break
@@ -497,7 +507,7 @@ class Tool_Remember(Tool):
         return f"Updated [{id_str}] in USER.md: {preview}"
 
     def _update_normal(self, id_str: str, new_value: str) -> str:
-        """Replace the content of an existing [M{N}] line in MEMORY.md."""
+        """Replace or delete an [M{N}] line in MEMORY.md."""
         content = _read_file(_MEMORY_FILE)
         lines = content.split("\n")
         pattern = re.compile(rf"^(\s*-\s*\[{re.escape(id_str)}\]\s*).*")
@@ -505,6 +515,11 @@ class Tool_Remember(Tool):
         for i, line in enumerate(lines):
             m = pattern.match(line)
             if m:
+                if _is_deletion(new_value):
+                    lines.pop(i)
+                    found = True
+                    _write_file(_MEMORY_FILE, "\n".join(lines))
+                    return f"Deleted [{id_str}] from MEMORY.md."
                 lines[i] = f"{m.group(1)}{new_value}"
                 found = True
                 break

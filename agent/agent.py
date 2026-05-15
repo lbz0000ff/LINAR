@@ -3,7 +3,11 @@ import io
 import json
 from llm import LLM
 from config import load_config
+from logger import get_logger
+from permissions import PermissionManager
 import database as db
+
+log = get_logger(__name__)
 
 
 class Agent:
@@ -19,6 +23,9 @@ class Agent:
 
         self.llm = LLM(api_key, system_prompt, tools, base_url=base_url, model=model)
         self.tools = tools
+        self._skill_active = False  # set by Skill.on_load()
+        self.permissions = PermissionManager(cfg.get("permissions", {}))
+        self._confirm_callback = None  # set by terminal to prompt user
         self.chat_history: list[dict] = []
 
         # ── database (archive chat history) ──
@@ -31,6 +38,8 @@ class Agent:
         # ── config values ──
         self.max_turns = cfg.get("max_turns", 5)
         self.chat_cfg = cfg.get("chat_history", {})
+
+        log.info("Agent initialized (model=%s, max_turns=%s)", self.llm.model, self.max_turns)
         self.max_history_chars = self.chat_cfg.get("max_chars", 10000)
         self.trim_to_chars = self.chat_cfg.get("trim_to", 5000)
         self.protect_last_turns = self.chat_cfg.get("protect_last_turns", 3)
@@ -49,6 +58,35 @@ class Agent:
                     parts.append(content)
             except FileNotFoundError:
                 continue
+
+        # ── runtime context ──
+        import os, platform, sys as _sys
+        _cwd = os.getcwd()
+        _platform = platform.system()
+        parts.append(
+            f"\n## Runtime context\n"
+            f"Platform: {_platform}\n"
+            f"Working directory: {_cwd}\n"
+            f"Shell: cmd /c (each command runs in a fresh shell, cd does NOT persist)\n"
+            f"Use absolute paths or chain commands with && to keep the same session."
+        )
+
+        # dynamically append registered skills so the LLM knows about them
+        try:
+            from skill import all_skills
+            skills = all_skills()
+            if skills:
+                lines = ["\n## Available skills\n"]
+                for s in skills:
+                    lines.append(f"- /{s.name} — {s.description}")
+                lines.append(
+                    "\n**Rule: if the user's request matches a skill description, "
+                    "call `skill_view` to load its instructions and follow them.**"
+                )
+                parts.append("\n".join(lines))
+        except ImportError:
+            pass
+
         return "\n\n".join(parts) if parts else "You are a helpful assistant."
 
     def _format_chat_history(self) -> str:
@@ -69,34 +107,114 @@ class Agent:
                 parts.append(msg["content"])
         return "\n".join(parts)
 
+    @staticmethod
+    def _truncate_tool_result(text: str, max_len: int = 500, preview_len: int = 200) -> str:
+        """Truncate large tool results to a preview + size note.
+
+        Keeps the semantic signal (first *preview_len* chars) while discarding
+        bulk output that would bloat the context window.
+        """
+        if len(text) <= max_len:
+            return text
+        lines = text.count("\n")
+        return f"{text[:preview_len]}\n... (truncated, {len(text)} chars, {lines} lines)"
+
+    def _check_permission(self, tool_name: str, arguments: str) -> str | None:
+        """Check permission for a tool call.
+
+        Returns ``None`` if allowed, or an error ``str`` if denied / rejected.
+        """
+        level = self.permissions.check(tool_name)
+
+        if level == "deny":
+            return (
+                f"[PERMISSION_DENIED] Tool '{tool_name}' is restricted by "
+                f"permission settings. Do NOT retry — it will fail again."
+            )
+
+        if level == "ask" and self._confirm_callback:
+            result = self._confirm_callback(tool_name, arguments)
+            if result is True:
+                return None
+            if result == "always":
+                self.permissions.set_override(tool_name, "allow")
+                return None
+            if result == "never":
+                self.permissions.set_override(tool_name, "deny")
+                return (
+                    f"[REJECTED_BY_USER] Tool '{tool_name}' was blocked — "
+                    f"the user chose to never allow it. Do NOT retry."
+                )
+            # False / None / anything else → rejected
+            return (
+                f"[REJECTED_BY_USER] Tool '{tool_name}' was not approved by the "
+                f"user. Try a different approach or ask the user."
+            )
+
+        # allow, or ask without a callback → just execute
+        return None
+
     def _compact_history(self):
-        """Compact chat history: remove old tool-call details,
-        preserving user requests and recent turns."""
-        if len(self._format_chat_history()) <= self.max_history_chars:
+        """Compact chat history: remove tool noise from the middle region.
+
+        Keeps intact:
+        - Head: first 3 entries (first user turn usually establishes context)
+        - Tail: last ``protect_last_turns`` user turns, plus any associated
+          tool entries so that tool_call / tool_result pairs are never split.
+
+        Only non-user, non-agent tool entries in the unprotected middle are
+        removed.  Compared to the old approach, this is more conservative:
+        it removes *less* data, but what it removes is purely bulk output
+        that the LLM doesn't need to re-read.
+        """
+        total = len(self._format_chat_history())
+        if total <= self.max_history_chars:
             return
 
-        # Find user message indices
         user_indices = [i for i, m in enumerate(self.chat_history) if m["role"] == "user"]
         protect_count = min(self.protect_last_turns, len(user_indices))
-        protect_start = user_indices[-protect_count] if protect_count > 0 else 0
 
-        # head: everything before the protected tail
-        head = self.chat_history[:protect_start]
-        tail = self.chat_history[protect_start:]
+        # ── Head protection: keep first 3 entries ──
+        head_end = min(3, len(self.chat_history))
 
-        # Remove tool entries from head
-        compacted = [m for m in head if m["role"] != "tool"]
+        # ── Tail protection: start of the last N user turns ──
+        tail_start = user_indices[-protect_count] if protect_count > 0 else len(self.chat_history)
 
-        self.chat_history = (
-            compacted
-            + [{"role": "meta", "content": "...(history compacted)...", "turn": None}]
-            + tail
+        # ── Smart boundary: if the protected user turn follows tool
+        #     entries (which belong to the previous turn), don't pull
+        #     those tool entries into the middle — they're part of the
+        #     previous turn's pair and belong in the tail if anything.
+        #     We handle this by keeping the boundary at the user index
+        #     which naturally separates turns. ──
+
+        if head_end >= tail_start:
+            return  # no compressible region
+
+        head = self.chat_history[:head_end]
+        tail = self.chat_history[tail_start:]
+        middle = self.chat_history[head_end:tail_start]
+
+        # Only remove tool entries from the middle
+        compacted = [m for m in middle if m["role"] != "tool"]
+
+        if len(compacted) == len(middle):
+            return  # nothing to remove
+
+        self.chat_history = head + compacted + tail
+
+        log.debug(
+            "Compact: %d → %d chars (saved %d, removed %d tool entries)",
+            total, len(self._format_chat_history()),
+            total - len(self._format_chat_history()),
+            len(middle) - len(compacted),
         )
 
     def add_user_message(self, text: str):
         """Append a user message with a [turn N] marker and archive it."""
         if self.session_id is None:
             self.session_id = db.create_session()
+            log.info("Created session #%s", self.session_id)
+        log.info("[session=%s turn=%s] User: %.120s", self.session_id, self._turn_counter + 1, text)
         self._turn_counter += 1
         self.chat_history.append({
             "role": "user", "content": text, "turn": self._turn_counter,
@@ -109,7 +227,9 @@ class Agent:
         """Switch to an existing session. Returns False if not found."""
         sess = db.get_session_by_id(session_id)
         if not sess:
+            log.warning("Session #%s not found for switch", session_id)
             return False
+        log.info("Switched to session #%s", session_id)
 
         messages = db.get_session_messages(session_id)
         self.chat_history = []
@@ -168,6 +288,7 @@ class Agent:
         self.chat_history = []
         self._turn_counter = 0
         self.session_id = None
+        log.info("Session reset")
 
     def emit(self, event: dict):
         """Write a JSON event to stdout."""
@@ -180,7 +301,8 @@ class Agent:
         max_turns=0 means unlimited; otherwise caps the number of LLM rounds.
         """
         # ── re-read prompt files so memory writes take effect immediately ──
-        self.llm.system_prompt = self._build_prompt(self.cfg)
+        if not self._skill_active:
+            self.llm.system_prompt = self._build_prompt(self.cfg)
 
         turn = 0
         while True:
@@ -265,15 +387,24 @@ class Agent:
 
             # Execute each tool and add results to history
             for tc in tool_calls:
-                try:
-                    raw_args = tc["arguments"]
-                    args_dict = json.loads(raw_args) if isinstance(raw_args, str) else raw_args
-                    result = self.tools[tc["name"]].execute(**args_dict)
-                    result_str = str(result)
-                except json.JSONDecodeError as e:
-                    result_str = f"Error: Failed to parse tool arguments: {e}"
-                except Exception as e:
-                    result_str = f"Error: {e}"
+                log.info(
+                    "[session=%s turn=%s] Tool call: %s",
+                    self.session_id, self._turn_counter, tc["name"],
+                )
+
+                # ── permission check ──
+                result_str = self._check_permission(tc["name"], tc["arguments"])
+                if result_str is None:
+                    # permitted — execute normally
+                    try:
+                        raw_args = tc["arguments"]
+                        args_dict = json.loads(raw_args) if isinstance(raw_args, str) else raw_args
+                        result = self.tools[tc["name"]].execute(**args_dict)
+                        result_str = self._truncate_tool_result(str(result))
+                    except json.JSONDecodeError as e:
+                        result_str = f"Error: Failed to parse tool arguments: {e}"
+                    except Exception as e:
+                        result_str = f"Error: {e}"
 
                 self.chat_history.append({
                     "role": "tool",
@@ -297,10 +428,15 @@ class Agent:
             # ── compact history if needed ──
             self._compact_history()
 
+        log.info(
+            "[session=%s turn=%s] LLM done (tool_calls=%d)",
+            self.session_id, self._turn_counter, len(tool_calls),
+        )
         self.emit({"type": "complete"})
         self.emit({"type": "ready"})
 
     def run(self):
+        log.info("Agent run loop started (stdin mode)")
         # Force UTF-8 on stdin (Windows pipes often use the wrong code page)
         if hasattr(sys.stdin, "reconfigure"):
             sys.stdin.reconfigure(encoding="utf-8", errors="replace")

@@ -1,4 +1,7 @@
+from logger import get_logger
 from basic_tools.tool_time import Tool_GetTime, Tool_GetDate
+
+log = get_logger(__name__)
 from basic_tools.tool_fileio import (
     Tool_ReadFile, Tool_WriteFile, Tool_DeleteFile,
     Tool_DeleteDir, Tool_PatchFile, Tool_SearchFiles,
@@ -7,6 +10,7 @@ from basic_tools.tool_cmd import Tool_CmdExecute
 from basic_tools.tool_web import Tool_WebFetch
 from basic_tools.tool_memory import Tool_Remember, Tool_Recall
 from basic_tools.tool_ask_user import Tool_AskUser
+from basic_tools.tool_skill import Tool_SkillView
 
 # ── all tool instances ──────────────────────────────────────
 _all_tools = {
@@ -23,6 +27,7 @@ _all_tools = {
     "remember": Tool_Remember(),
     "recall": Tool_Recall(),
     "ask_user": Tool_AskUser(),
+    "skill_view": Tool_SkillView(),
 }
 
 # ── toolsets ─────────────────────────────────────────────────
@@ -35,7 +40,7 @@ _toolsets = {
     "shell": ["cmd_execute"],
     "web": ["web_fetch"],
     "memory": ["remember", "recall"],
-    "interactive": ["ask_user"],
+    "interactive": ["ask_user", "skill_view"],
 }
 
 # ── public API ───────────────────────────────────────────────
@@ -46,6 +51,7 @@ def get_tools(enabled_sets=None):
     If enabled_sets is None, returns all tools (backwards-compatible).
     """
     if enabled_sets is None:
+        log.info("Loaded %d tools (all toolsets)", len(_all_tools))
         return dict(_all_tools)
 
     selected = {}
@@ -53,6 +59,7 @@ def get_tools(enabled_sets=None):
         for tool_name in _toolsets.get(name, []):
             if tool_name in _all_tools:
                 selected[tool_name] = _all_tools[tool_name]
+    log.info("Loaded %d tools from enabled sets: %s", len(selected), enabled_sets)
     return selected
 
 

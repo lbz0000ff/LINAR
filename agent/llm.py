@@ -1,5 +1,8 @@
 from openai import OpenAI
+from logger import get_logger
 from basic_tools.tool_time import Tool_GetTime
+
+log = get_logger(__name__)
 
 def generate_function_calling(tool_schema:dict):
     function_calling = {
@@ -17,6 +20,7 @@ class LLM:
         self.model = model
 
     def generate_response(self, prompt: str, temperature: float = 0.7):
+        log.debug("LLM request (model=%s, temperature=%s)", self.model, temperature)
         response = self.client.chat.completions.create(
             model=self.model,
             messages=[
@@ -26,10 +30,17 @@ class LLM:
             tools=[generate_function_calling(self.tools[tool_name].tool_schema) for tool_name in self.tools],
             temperature=temperature
         )
+        usage = getattr(response, "usage", None)
+        if usage:
+            log.info(
+                "LLM response (model=%s, prompt_tokens=%s, completion_tokens=%s, total_tokens=%s)",
+                self.model, usage.prompt_tokens, usage.completion_tokens, usage.total_tokens,
+            )
         return response
 
     def stream_response(self, prompt: str, temperature: float = 0.7):
         """Stream a response from the LLM, yielding raw chunks."""
+        log.debug("LLM stream request (model=%s, temperature=%s)", self.model, temperature)
         response = self.client.chat.completions.create(
             model=self.model,
             messages=[

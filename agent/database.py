@@ -8,6 +8,9 @@ import os
 import sqlite3
 import threading
 from datetime import datetime, timezone
+from logger import get_logger
+
+log = get_logger(__name__)
 
 
 _DB_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "memory", "chat_history")
@@ -61,6 +64,8 @@ def init_db():
     except sqlite3.OperationalError:
         pass  # already exists
 
+    log.info("Database initialized at %s", _DB_PATH)
+
 
 # ---------------------------------------------------------------------------
 # Session lifecycle
@@ -68,6 +73,7 @@ def init_db():
 
 def reset_db():
     """Delete all data and reinitialize (for /reset)."""
+    log.warning("Resetting database — all sessions will be lost")
     conn = _get_connection()
     conn.executescript("""
         DROP TABLE IF EXISTS messages;
@@ -82,7 +88,9 @@ def create_session(title: str = "") -> int:
     conn = _get_connection()
     conn.execute("INSERT INTO sessions (title) VALUES (?)", (title,))
     conn.commit()
-    return conn.execute("SELECT last_insert_rowid()").fetchone()[0]
+    sid = conn.execute("SELECT last_insert_rowid()").fetchone()[0]
+    log.debug("Created session #%s", sid)
+    return sid
 
 
 def update_session_title(session_id: int, title: str):
@@ -114,6 +122,7 @@ def save_message(session_id: int, role: str, content: str, tool_name: str = "", 
         (session_id, role, content, tool_name or None, turn),
     )
     conn.commit()
+    log.debug("Saved %s message to session #%s (turn=%s)", role, session_id, turn)
 
 
 # ---------------------------------------------------------------------------
