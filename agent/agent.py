@@ -35,6 +35,12 @@ class Agent:
         # ── conversation turn counter ──
         self._turn_counter = 0
 
+        # ── consecutive tool failure tracker ──
+        self._tool_failures: dict[str, int] = {}
+
+        # ── active task plan (set by orchestrator) ──
+        self.current_plan = None
+
         # ── config values ──
         self.max_turns = cfg.get("max_turns", 5)
         self.chat_cfg = cfg.get("chat_history", {})
@@ -63,10 +69,14 @@ class Agent:
         import os, platform, sys as _sys
         _cwd = os.getcwd()
         _platform = platform.system()
+        # project root is fixed: parent of agent/
+        _agent_dir = os.path.dirname(os.path.abspath(__file__))
+        _project_root = os.path.dirname(_agent_dir)
         parts.append(
             f"\n## Runtime context\n"
             f"Platform: {_platform}\n"
             f"Working directory: {_cwd}\n"
+            f"Project root: {_project_root}\n"
             f"Shell: cmd /c (each command runs in a fresh shell, cd does NOT persist)\n"
             f"Use absolute paths or chain commands with && to keep the same session."
         )
@@ -394,17 +404,49 @@ class Agent:
 
                 # ── permission check ──
                 result_str = self._check_permission(tc["name"], tc["arguments"])
+                _tool_failed = False
                 if result_str is None:
                     # permitted — execute normally
                     try:
                         raw_args = tc["arguments"]
                         args_dict = json.loads(raw_args) if isinstance(raw_args, str) else raw_args
                         result = self.tools[tc["name"]].execute(**args_dict)
+                        # detect failures in structured tool results
+                        if isinstance(result, dict):
+                            if result.get("error"):
+                                _tool_failed = True
+                            elif result.get("exit_code", 0) != 0:
+                                _tool_failed = True
                         result_str = self._truncate_tool_result(str(result))
                     except json.JSONDecodeError as e:
                         result_str = f"Error: Failed to parse tool arguments: {e}"
+                        _tool_failed = True
                     except Exception as e:
                         result_str = f"Error: {e}"
+                        _tool_failed = True
+
+                # ── track consecutive failures per tool ──
+                is_failure = _tool_failed or (
+                    result_str and (
+                        result_str.startswith("Error") or result_str.startswith("[")
+                    )
+                )
+                if is_failure:
+                    self._tool_failures[tc["name"]] = self._tool_failures.get(tc["name"], 0) + 1
+                    if self._tool_failures[tc["name"]] >= 3:
+                        self.chat_history.append({
+                            "role": "meta",
+                            "content": (
+                                f"[SYSTEM] Tool '{tc['name']}' has failed "
+                                f"{self._tool_failures[tc['name']]} times in a row. "
+                                f"Do NOT retry the same approach. Switch strategy "
+                                f"or use ask_user to get guidance."
+                            ),
+                            "turn": self._turn_counter,
+                        })
+                        self._tool_failures[tc["name"]] = 0
+                else:
+                    self._tool_failures[tc["name"]] = 0
 
                 self.chat_history.append({
                     "role": "tool",

@@ -349,6 +349,30 @@ class LilyTerminal:
                     self.console.print(data, end="", style=Style(dim=True, italic=True))
                 sys.stdout.flush()
 
+        # ── plan events ─────────────────────────────────
+        elif etype == "plan_start":
+            self._print_header()
+            self.console.print("  [dim]Generating task plan...[/dim]")
+
+        elif etype == "plan":
+            data = event.get("data", "")
+            self._print_header()
+            self.console.print("  [bold cyan]Plan:[/bold cyan]")
+            for line in data.split("\n"):
+                if line.strip():
+                    self.console.print(f"    {line}")
+
+        elif etype == "plan_error":
+            data = event.get("data", "")
+            self.console.print(f"  [yellow]Plan generation issue: {data}[/yellow]")
+
+        elif etype == "plan_complete":
+            data = event.get("data", "")
+            self.console.print("  [bold green]Plan complete:[/bold green]")
+            for line in data.split("\n"):
+                if line.strip():
+                    self.console.print(f"    {line}")
+
         # ── done (end of one LLM turn) ───────────────────
         elif etype == "done":
             self.console.print()

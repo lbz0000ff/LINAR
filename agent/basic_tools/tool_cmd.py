@@ -56,6 +56,96 @@ _EXIT_CODE_NOTES: dict[str, dict[int, str]] = {
 }
 
 
+# ── Windows cmd error interpretation ──
+_WINDOWS_ERROR_HINTS: list[tuple[str, str]] = [
+    # Chinese Windows (most common on zh-CN systems)
+    ("文件名、目录名或卷标语法不正确。",
+     "Syntax error: likely a quoting or escaping issue. Paths without spaces don't need quotes on Windows cmd."),
+    ("语法不正确。",
+     "Syntax error: check command quoting, escaping, and path format."),
+    ("命令行语法",
+     "Syntax error: check command-line syntax."),
+    ("系统找不到指定的路径。",
+     "Path not found: the specified directory does not exist."),
+    ("系统找不到指定的文件。",
+     "File not found: the specified file does not exist."),
+    ("拒绝访问。",
+     "Access denied: insufficient permissions."),
+    ("不是内部或外部命令",
+     "Command not found: the program is not installed or not in PATH."),
+    # English Windows
+    ("is not recognized as an internal or external command",
+     "Command not found: check if it is installed and in PATH."),
+    ("The syntax of the command is incorrect",
+     "Syntax error: check command syntax and quoting."),
+    ("The system cannot find the path specified",
+     "Path not found: verify the directory exists."),
+    ("The system cannot find the file specified",
+     "File not found: verify the path."),
+    ("Access is denied",
+     "Access denied: insufficient permissions."),
+]
+
+
+def _interpret_windows_error(stderr: str | None) -> str | None:
+    """Return a human-readable hint for known Windows cmd error messages."""
+    if not stderr:
+        return None
+    for pattern, hint in _WINDOWS_ERROR_HINTS:
+        if pattern in stderr:
+            return hint
+    return None
+
+
+# ── strip superfluous quotes from Windows paths ──
+_PATH_QUOTE_RE = re.compile(r'"([A-Za-z]:\\.*?)"|"(\\\\[^"]*)"')
+
+# ── project root path conflict detection ──
+def _check_project_root_conflict(command: str) -> str | None:
+    """Warn if command contains a path whose component matches the project root
+    name (case-insensitively but not exactly), which suggests the user may have
+    mistakenly specified a duplicate project-name component in the path.
+
+    Example: user asks to create ``lily/test/test5/``, project root is ``Lily``,
+    and LLM resolves to ``mkdir H:\\Lily\\lily\\test\\test5`` — the extra
+    ``lily`` component matches ``Lily`` case-insensitively and is likely wrong.
+    """
+    _td = os.path.dirname(os.path.abspath(__file__))         # agent/basic_tools
+    _ad = os.path.dirname(_td)                                # agent
+    _pr = os.path.dirname(_ad)                                # project root
+    proj_name = os.path.basename(_pr)
+
+    parts = command.split()
+    for part in parts:
+        # Only check tokens that look like paths (contain separators)
+        if "\\" not in part and "/" not in part:
+            continue
+        normalized = part.strip("\"'")
+        components = normalized.replace("/", "\\").split("\\")
+        for comp in components:
+            if not comp:
+                continue
+            if comp.lower() == proj_name.lower() and comp != proj_name:
+                return (
+                    f"WARNING: '{comp}' in path '{part}' matches the project "
+                    f"root name '{proj_name}' (case-insensitive). The user may "
+                    f"have intended a path relative to {_pr}. Please verify."
+                )
+    return None
+
+
+def _strip_path_quotes(command: str) -> str:
+    """Remove unnecessary double quotes around Windows paths.
+
+    Only strips quotes when the path contains no spaces (quotes are needed
+    for paths with spaces). Non-path quoted strings are left untouched.
+    """
+    def _replace(m):
+        inner = m.group(1) or m.group(2)
+        return inner if " " not in inner else m.group(0)
+    return _PATH_QUOTE_RE.sub(_replace, command)
+
+
 def _get_base_command(command: str) -> str:
     """Extract the base command name from a command string."""
     # Strip env vars at the start: VAR=value cmd
@@ -257,6 +347,12 @@ class Tool_CmdExecute(Tool):
         if not safe:
             return {"error": reason}
 
+        # ── strip superfluous quotes from Windows paths ──
+        command = _strip_path_quotes(command)
+
+        # ── check project root name collisions in paths ──
+        _path_warning = _check_project_root_conflict(command)
+
         # ── build env (pass through current env) ──
         env = os.environ.copy()
         shell_env = env
@@ -323,6 +419,16 @@ class Tool_CmdExecute(Tool):
 
         # ── interpret exit code ──
         note = _interpret_exit_code(command, result.returncode)
+
+        # ── Windows-specific error hints ──
+        if platform.system() == "Windows" and result.returncode != 0 and not note:
+            win_hint = _interpret_windows_error(result.stderr)
+            if win_hint:
+                note = win_hint
+
+        # ── project root path conflict note ──
+        if _path_warning:
+            note = _path_warning if not note else f"{note}\n{_path_warning}"
 
         return {
             "stdout": output.strip(),

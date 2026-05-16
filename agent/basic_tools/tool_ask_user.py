@@ -16,9 +16,11 @@ class Tool_AskUser(Tool):
         "- A decision has meaningful trade-offs the user should weigh in on\n"
         "- You want post-task feedback\n\n"
         "Do NOT use for:\n"
-        "- Low-stakes decisions you can reasonably default on yourself\n"
-        "- Hypothetical or casual questions unrelated to the current task\n"
-        "- Simple yes/no confirmations (the terminal tool handles that)"
+        "- Things you can already determine from available tool results\n"
+        "- Hypothetical or casual questions unrelated to the current task\n\n"
+        "DO use when:\n"
+        "- A tool keeps failing and you've tried 2+ approaches — ask for guidance\n"
+        "- The path or approach is unclear and the user has preferences"
     )
     tool_schema: dict = {
         "name": "ask_user",
@@ -30,9 +32,11 @@ class Tool_AskUser(Tool):
             "- A decision has meaningful trade-offs the user should weigh in on\n"
             "- You want post-task feedback\n\n"
             "Do NOT use for:\n"
-            "- Low-stakes decisions you can reasonably default on yourself\n"
-            "- Hypothetical or casual questions unrelated to the current task\n"
-            "- Simple yes/no confirmations (the terminal tool handles that)"
+            "- Things you can already determine from available tool results\n"
+            "- Hypothetical or casual questions unrelated to the current task\n\n"
+            "DO use when:\n"
+            "- A tool keeps failing and you've tried 2+ approaches — ask for guidance\n"
+            "- The path or approach is unclear and the user has preferences"
         ),
         "parameters": {
             "type": "object",

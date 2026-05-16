@@ -15,4 +15,6 @@ test/*
 agent/memory/chat_history/*
 # Exclude all .md in root (not subdirs) except README.md
 /*.md
+docs/*.md
 !/README.md
+!/ARCHITECTURE.md

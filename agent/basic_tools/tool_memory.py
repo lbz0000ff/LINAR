@@ -543,7 +543,9 @@ class Tool_Recall(Tool):
                        "- archive: read a file by its [MEM:slug] tag → returns full content\n"
                        "- event: read conversation turns by [EVENT:session_id,turns] → returns messages\n"
                        "- search: keyword search across all archived sessions\n"
-                       "- recent: list recent session titles",
+                       "- recent: list recent session titles\n\n"
+                       "WARNING: Do NOT use to investigate tool failures or command errors. "
+                       "Only use when you have a specific historical question to answer.",
         "parameters": {
             "type": "object",
             "properties": {

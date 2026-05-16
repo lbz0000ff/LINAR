@@ -11,6 +11,7 @@ from basic_tools.tool_web import Tool_WebFetch
 from basic_tools.tool_memory import Tool_Remember, Tool_Recall
 from basic_tools.tool_ask_user import Tool_AskUser
 from basic_tools.tool_skill import Tool_SkillView
+from basic_tools.tool_plan import Tool_PlanAdvance, Tool_PlanStatus
 
 # ── all tool instances ──────────────────────────────────────
 _all_tools = {
@@ -28,6 +29,8 @@ _all_tools = {
     "recall": Tool_Recall(),
     "ask_user": Tool_AskUser(),
     "skill_view": Tool_SkillView(),
+    "plan_advance": Tool_PlanAdvance(),
+    "plan_status": Tool_PlanStatus(),
 }
 
 # ── toolsets ─────────────────────────────────────────────────
@@ -41,6 +44,7 @@ _toolsets = {
     "web": ["web_fetch"],
     "memory": ["remember", "recall"],
     "interactive": ["ask_user", "skill_view"],
+    "plan": ["plan_advance", "plan_status"],
 }
 
 # ── public API ───────────────────────────────────────────────
