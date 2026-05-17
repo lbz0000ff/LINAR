@@ -10,6 +10,26 @@ import database as db
 log = get_logger(__name__)
 
 
+def _detect_shell() -> str:
+    """Detect the effective shell used for cmd_execute on this platform."""
+    import os, platform, shutil
+    if platform.system() != "Windows":
+        return "sh -c"
+    # 1) Git Bash — best Unix compatibility
+    git_path = shutil.which("git")
+    if git_path:
+        git_dir = os.path.dirname(os.path.dirname(git_path))
+        bash = os.path.join(git_dir, "bin", "bash.exe")
+        if os.path.isfile(bash):
+            return f"Git Bash ({bash} -c)"
+    # 2) PowerShell
+    for exe in ("pwsh.exe", "powershell.exe"):
+        if shutil.which(exe):
+            return f"{exe} -Command"
+    # 3) cmd fallback
+    return "cmd /c"
+
+
 class Agent:
     def __init__(self, tools: dict = None):
         cfg = load_config()
@@ -37,6 +57,13 @@ class Agent:
 
         # ── consecutive tool failure tracker ──
         self._tool_failures: dict[str, int] = {}
+
+        # ── repeated command tracker ──
+        self._cmd_history: list[str] = []
+
+        # ── interrupt / btw ──
+        self._interrupt_requested = False
+        self._btw_queue: list[str] = []
 
         # ── active task plan (set by orchestrator) ──
         self.current_plan = None
@@ -66,18 +93,20 @@ class Agent:
                 continue
 
         # ── runtime context ──
-        import os, platform, sys as _sys
+        import os, platform, sys as _sys, shutil
         _cwd = os.getcwd()
         _platform = platform.system()
         # project root is fixed: parent of agent/
         _agent_dir = os.path.dirname(os.path.abspath(__file__))
         _project_root = os.path.dirname(_agent_dir)
+
+        _shell = _detect_shell()
         parts.append(
             f"\n## Runtime context\n"
             f"Platform: {_platform}\n"
             f"Working directory: {_cwd}\n"
             f"Project root: {_project_root}\n"
-            f"Shell: cmd /c (each command runs in a fresh shell, cd does NOT persist)\n"
+            f"Shell: {_shell} (each command runs in a fresh shell, cd does NOT persist)\n"
             f"Use absolute paths or chain commands with && to keep the same session."
         )
 
@@ -117,17 +146,73 @@ class Agent:
                 parts.append(msg["content"])
         return "\n".join(parts)
 
-    @staticmethod
-    def _truncate_tool_result(text: str, max_len: int = 500, preview_len: int = 200) -> str:
-        """Truncate large tool results to a preview + size note.
+    # ── per-tool truncation limits (chars) ──
+    _PER_TOOL_TRUNCATION_LIMITS: dict[str, int] = {
+        "cmd_execute": 20000,
+        "read_file": 50000,
+        "search_files": 10000,
+        "write_file": 5000,
+        "patch_file": 5000,
+        "web_fetch": 10000,
+    }
+    _DEFAULT_TRUNCATION_LIMIT = 5000  # was 500
 
-        Keeps the semantic signal (first *preview_len* chars) while discarding
-        bulk output that would bloat the context window.
+    @staticmethod
+    def _truncate_tool_result(text: str, max_len: int = 5000, preview_len: int = 200) -> str:
+        """Truncate large tool results with a prominent truncation marker.
+
+        The marker is designed to be impossible for the LLM to ignore.
         """
         if len(text) <= max_len:
             return text
         lines = text.count("\n")
-        return f"{text[:preview_len]}\n... (truncated, {len(text)} chars, {lines} lines)"
+        return (
+            f"[!OUTPUT TRUNCATED!] Original was {len(text)} chars ({lines} lines). "
+            f"Only first {preview_len} chars shown.\n"
+            f"---truncated start---\n"
+            f"{text[:preview_len]}\n"
+            f"... (truncated {len(text)} chars, {lines} lines) ..."
+        )
+
+    def _get_truncation_limit(self, tool_name: str) -> int:
+        """Return the truncation limit for *tool_name*."""
+        return self._PER_TOOL_TRUNCATION_LIMITS.get(
+            tool_name,
+            self.chat_cfg.get("truncate_at", self._DEFAULT_TRUNCATION_LIMIT),
+        )
+
+    def _apply_truncation(self, raw: str, tool_name: str) -> str:
+        """Truncate *raw* output if needed, after consulting the user when configured.
+
+        ``truncate_long_output`` permission levels:
+          ``allow`` — silently truncate (default, preserves current behaviour).
+          ``ask``   — prompt the user so they can choose always / never.
+          ``deny``  — pass through full output without truncation.
+        """
+        max_len = self._get_truncation_limit(tool_name)
+        if len(raw) <= max_len:
+            return raw
+
+        level = self.permissions.check("truncate_long_output")
+
+        if level == "deny":
+            return raw
+
+        if level == "ask" and self._confirm_callback:
+            info = f"Tool '{tool_name}' returned {len(raw)} chars. Truncate to {max_len}?"
+            choice = self._confirm_callback("truncate_long_output", info)
+            if choice is True:
+                return self._truncate_tool_result(raw, max_len=max_len)
+            if choice == "always":
+                self.permissions.set_override("truncate_long_output", "allow")
+                return self._truncate_tool_result(raw, max_len=max_len)
+            if choice == "never":
+                self.permissions.set_override("truncate_long_output", "deny")
+                return raw
+            # False / None → keep full this one time
+            return raw
+
+        return self._truncate_tool_result(raw, max_len=max_len)
 
     def _check_permission(self, tool_name: str, arguments: str) -> str | None:
         """Check permission for a tool call.
@@ -300,6 +385,24 @@ class Agent:
         self.session_id = None
         log.info("Session reset")
 
+    # ── interrupt ──────────────────────────────────────────
+
+    def interrupt(self):
+        """Request the agent to stop after the current tool call."""
+        self._interrupt_requested = True
+
+    # ── btw ────────────────────────────────────────────────
+
+    def btw(self, msg: str):
+        """Queue a BTW (By The Way) note for the next user instruction."""
+        self._btw_queue.append(msg)
+
+    def consume_btw(self) -> list[str]:
+        """Drain and return all queued BTW notes."""
+        notes = list(self._btw_queue)
+        self._btw_queue.clear()
+        return notes
+
     def emit(self, event: dict):
         """Write a JSON event to stdout."""
         print(json.dumps(event, ensure_ascii=False), flush=True)
@@ -417,7 +520,7 @@ class Agent:
                                 _tool_failed = True
                             elif result.get("exit_code", 0) != 0:
                                 _tool_failed = True
-                        result_str = self._truncate_tool_result(str(result))
+                        result_str = self._apply_truncation(str(result), tc["name"])
                     except json.JSONDecodeError as e:
                         result_str = f"Error: Failed to parse tool arguments: {e}"
                         _tool_failed = True
@@ -447,6 +550,42 @@ class Agent:
                         self._tool_failures[tc["name"]] = 0
                 else:
                     self._tool_failures[tc["name"]] = 0
+
+                # ── repeated command detection ──
+                if tc["name"] == "cmd_execute":
+                    try:
+                        args = json.loads(tc["arguments"]) if isinstance(tc["arguments"], str) else tc["arguments"]
+                        cmd = args.get("command", "")
+                        if cmd:
+                            self._cmd_history.append(cmd)
+                            if len(self._cmd_history) >= 3 and len(set(self._cmd_history[-3:])) == 1:
+                                self.chat_history.append({
+                                    "role": "meta",
+                                    "content": (
+                                        f"[SYSTEM] The exact same command was executed "
+                                        f"{len(self._cmd_history)} times in a row:\n  {cmd}\n"
+                                        f"The output keeps getting truncated. Do NOT retry "
+                                        f"the same command. Use a different approach "
+                                        f"(e.g., redirect to a file, use a Python script)."
+                                    ),
+                                    "turn": self._turn_counter,
+                                })
+                                self._cmd_history.clear()
+                    except (json.JSONDecodeError, KeyError, TypeError):
+                        pass
+
+                # ---- interrupt checkpoint ----
+                if self._interrupt_requested:
+                    self._interrupt_requested = False
+                    self.chat_history.append({
+                        'role': 'meta',
+                        'content': (
+                            '[SYSTEM] User interrupted the task. '
+                            'Stop and report what was done so far.'
+                        ),
+                        'turn': self._turn_counter,
+                    })
+                    break
 
                 self.chat_history.append({
                     "role": "tool",

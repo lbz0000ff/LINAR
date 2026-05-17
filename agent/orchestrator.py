@@ -81,6 +81,10 @@ class Orchestrator:
         Events are emitted through ``agent.emit()`` as before.
         """
         self._transition(Stage.INGEST)
+        # Append queued BTW notes to the user input
+        btw_notes = getattr(self.agent, 'consume_btw', lambda: [])()
+        if btw_notes:
+            user_input += "\n\n" + "\n".join(f"[BTW: {note}]" for note in btw_notes)
         self.agent.add_user_message(user_input)
 
         self._transition(Stage.ROUTE)

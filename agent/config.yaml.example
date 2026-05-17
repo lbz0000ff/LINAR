@@ -1,0 +1,80 @@
+project_name: Lily
+version: 0.1.0
+description: An AI agent designed to assist with various tasks.
+
+# OpenAI API Configuration
+llm:
+    base_url: "https://api.deepseek.com/v1"
+    api_key: "${DEEPSEEK_API_KEY}"
+    model: "deepseek-v4-flash"
+    temperature: 0.7
+    max_tokens: 1000000
+    top_p: 1.0
+
+# System Configuration
+max_turns: 0                    # 0 = unlimited; N = max LLM rounds
+show_reasoning: full              # "hide" | "full"
+show_tool_calls: detailed       # "hide" | "show_tools" | "detailed"
+
+# Memory Configuration
+max_memory_length: 2200          # MEMORY.md 字符上限（~1100 汉字 / ~350 词）
+max_user_preferences_length: 500 # USER.md 字符上限（~250 汉字 / ~80 词）
+memory_dedup_threshold: 0.85     # similarity ratio (0-1) for fuzzy memory dedup
+
+# Tool Selection
+tools:
+    enabled_sets:
+        - time
+        - file
+        - shell
+        - web
+        - memory
+        - interactive
+        - plan
+
+# Chat History Management
+chat_history:
+    max_chars: 10000        # compact when history exceeds this
+    trim_to: 5000           # target length after compact
+    protect_last_turns: 3   # keep recent N turns untouched
+    strategy: compact       # "compact" | "compress"
+    truncate_at: 5000        # per-tool limits override this; see agent.py _PER_TOOL_TRUNCATION_LIMITS
+
+# Web Search Configuration
+web_search:
+    backend: duckduckgo        # duckduckgo | serper | tavily
+    # serper_api_key: "${SERPER_API_KEY}"
+    # tavily_api_key: "${TAVILY_API_KEY}"
+
+# Logging Configuration
+logging:
+    level: INFO                # DEBUG | INFO | WARNING | ERROR | CRITICAL
+    file: logs/lily.log        # path relative to project root
+    max_bytes: 10485760        # 10 MB per file before rotation
+    backup_count: 7            # number of rotated files to keep
+    console: false              # also emit logs to stderr
+
+# Tool Permissions (allow / ask / deny)
+permissions:
+    default: allow
+    rules:
+        get_date: allow
+        get_time: allow
+        read_file: allow
+        search_files: allow
+        cmd_execute: ask
+        write_file: ask
+        patch_file: ask
+        delete_file: ask
+        delete_dir: ask
+        web_fetch: ask
+        web_search: allow
+        truncate_long_output: ask   # "allow" = silent truncate, "ask" = prompt user
+
+# Prompt File Loading Order
+prompt:
+    files:
+        - system_prompt_base.md
+        - SOUL.md
+        - USER.md
+        - MEMORY.md

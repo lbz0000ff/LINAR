@@ -8,6 +8,7 @@ __pycache__/
 *.bak
 *.log
 api_key.txt
+config.yaml
 logs/
 models/*
 reports

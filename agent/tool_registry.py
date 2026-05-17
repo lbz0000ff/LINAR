@@ -7,7 +7,7 @@ from basic_tools.tool_fileio import (
     Tool_DeleteDir, Tool_PatchFile, Tool_SearchFiles,
 )
 from basic_tools.tool_cmd import Tool_CmdExecute
-from basic_tools.tool_web import Tool_WebFetch
+from basic_tools.tool_web import Tool_WebFetch, Tool_WebSearch
 from basic_tools.tool_memory import Tool_Remember, Tool_Recall
 from basic_tools.tool_ask_user import Tool_AskUser
 from basic_tools.tool_skill import Tool_SkillView
@@ -25,6 +25,7 @@ _all_tools = {
     "search_files": Tool_SearchFiles(),
     "cmd_execute": Tool_CmdExecute(),
     "web_fetch": Tool_WebFetch(),
+    "web_search": Tool_WebSearch(),
     "remember": Tool_Remember(),
     "recall": Tool_Recall(),
     "ask_user": Tool_AskUser(),
@@ -41,7 +42,7 @@ _toolsets = {
         "delete_dir", "patch_file", "search_files",
     ],
     "shell": ["cmd_execute"],
-    "web": ["web_fetch"],
+    "web": ["web_fetch", "web_search"],
     "memory": ["remember", "recall"],
     "interactive": ["ask_user", "skill_view"],
     "plan": ["plan_advance", "plan_status"],

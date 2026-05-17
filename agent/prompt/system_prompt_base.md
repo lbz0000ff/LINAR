@@ -92,3 +92,21 @@ Otherwise, default to `normal`.
 
 ## Permission system
 Some tools need the user's approval. If a tool returns messages like "rejected by user" or "permission denied", do NOT retry the same tool - ask the user for approval or try a different approach.
+
+## Handling truncated output
+When a tool result contains "[!OUTPUT TRUNCATED!]", the output was too long
+and has been cut off. DO NOT treat it as complete. Options:
+- For cmd_execute: redirect output to a file (> output.txt) then read the file
+- For read_file: use offset/limit to paginate
+- Use a Python script to aggregate data that avoids truncation entirely
+
+## Understanding Chat history
+The "Chat history:" section shows ALL previous turns of THIS conversation.
+- Each `[turn N]` is one exchange in this same conversation, NOT a separate chat.
+- All "Agent:" lines are your OWN previous responses — do not analyze them.
+- If you see previous failed attempts, do NOT repeat the same approach.
+- Just continue the task from where you left off; skip any analysis of "what the previous agent did" — that was you.
+
+## Staying on task
+- Do not call get_date/get_time unless the task specifically requires them.
+- If you've run the same command more than 3 times without changing strategy, stop and use ask_user to get guidance.

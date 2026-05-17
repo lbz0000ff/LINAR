@@ -6,6 +6,10 @@ import re
 import threading
 import time
 import string
+import shutil
+from logger import get_logger
+
+_log = get_logger(__name__)
 
 # ── safety ──
 _BLOCKED_COMMANDS = [
@@ -241,7 +245,7 @@ def _truncate_output(text: str, max_chars: int) -> tuple[str, bool]:
 
 def _bg_worker(session_id: str, command: str, cwd: str | None, env, stdin_data: str | None = None):
     """Run a command in background thread and store result."""
-    shell_cmd = ["cmd", "/c", command] if platform.system() == "Windows" else ["sh", "-c", command]
+    shell_cmd = _get_windows_shell() + [command] if platform.system() == "Windows" else ["sh", "-c", command]
     try:
         result = subprocess.run(
             shell_cmd,
@@ -267,6 +271,46 @@ def _bg_worker(session_id: str, command: str, cwd: str | None, env, stdin_data: 
                 "done": True,
                 "done_at": time.time(),
             }
+
+
+# ── Windows shell auto-detection ──────────────────────────────
+
+_WINDOWS_SHELL: list[str] | None = None
+
+
+def _get_windows_shell() -> list[str]:
+    """Return the best available Windows shell command prefix.
+
+    Priority: Git Bash > PowerShell (pwsh) > Windows PowerShell > cmd.
+
+    Result is cached after first detection.
+    """
+    global _WINDOWS_SHELL
+    if _WINDOWS_SHELL is not None:
+        return _WINDOWS_SHELL
+
+    # 1) Git Bash — bash -c, best Unix compatibility
+    git_path = shutil.which("git")
+    if git_path:
+        git_dir = os.path.dirname(os.path.dirname(git_path))
+        bash_candidate = os.path.join(git_dir, "bin", "bash.exe")
+        if os.path.isfile(bash_candidate):
+            _log.info("Windows shell: Git Bash (%s -c)", bash_candidate)
+            _WINDOWS_SHELL = [bash_candidate, "-c"]
+            return _WINDOWS_SHELL
+
+    # 2) PowerShell
+    for exe in ("pwsh.exe", "powershell.exe"):
+        path = shutil.which(exe)
+        if path:
+            _log.info("Windows shell: %s -Command", path)
+            _WINDOWS_SHELL = [path, "-Command"]
+            return _WINDOWS_SHELL
+
+    # 3) cmd fallback
+    _log.info("Windows shell: cmd /c (fallback)")
+    _WINDOWS_SHELL = ["cmd", "/c"]
+    return _WINDOWS_SHELL
 
 
 class Tool_CmdExecute(Tool):
@@ -372,7 +416,7 @@ class Tool_CmdExecute(Tool):
                 else:
                     return {"error": "sudo requires a password. Set SUDO_PASSWORD env var or "
                                      "run from the TUI for interactive input."}
-        shell_cmd = ["cmd", "/c", command] if platform.system() == "Windows" else ["sh", "-c", command]
+        shell_cmd = _get_windows_shell() + [command] if platform.system() == "Windows" else ["sh", "-c", command]
 
         # ── background mode ──
         if background:

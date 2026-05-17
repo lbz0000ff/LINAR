@@ -11,6 +11,7 @@ import os
 import re
 import sys
 import time
+import signal
 
 from prompt_toolkit import PromptSession
 from prompt_toolkit.completion import Completer, Completion
@@ -56,26 +57,35 @@ class _CommandCompleter(Completer):
         if not text.startswith("/"):
             return
 
-        # ── base commands ──────────────────────────────────
-        commands = [
-            "/exit", "/quit", "/help", "/reset", "/clear",
-            "/reasoning", "/tool_calls", "/sessions", "/session","/history","/logging"
-        ]
-        for cmd in commands:
-            if cmd.startswith(text):
-                yield Completion(cmd, start_position=-len(text))
-
-        # ── sub-arguments after a space ────────────────────
+        # ── sub-arguments after a space (no auto-select on Enter) ──
         if " " in text:
             cmd, _, partial = text.partition(" ")
             if cmd == "/reasoning":
-                for mode in ("hide", "full"):
+                for mode in REASONING_MODES:
                     if mode.startswith(partial):
                         yield Completion(mode, start_position=-len(partial))
             elif cmd == "/tool_calls":
-                for mode in ("hide", "show_tools", "detailed"):
+                for mode in TOOL_CALL_MODES:
                     if mode.startswith(partial):
                         yield Completion(mode, start_position=-len(partial))
+            return
+
+        # ── commands (dynamic from registry) ───────────────
+        from commands import all_commands as _cmds
+        for c in _cmds():
+            full = f"/{c.name}"
+            if full.startswith(text):
+                yield Completion(full, start_position=-len(text), display_meta="cmd")
+        # /btw is handled in _handle_command but not a registered command
+        if "/btw".startswith(text):
+            yield Completion("/btw", start_position=-len(text), display_meta="cmd")
+
+        # ── skills (dynamic from registry) ─────────────────
+        from skill import all_skills as _sks
+        for s in _sks():
+            full = f"/{s.name}"
+            if full.startswith(text):
+                yield Completion(full, start_position=-len(text), display_meta="skill")
 
 
 # ── helpers ──────────────────────────────────────────────
@@ -491,11 +501,29 @@ class LilyTerminal:
         color = colors.get(m, "white")
         return f"[{color}]{m}[/{color}]"
 
+    # ── interrupt handler ─────────────────────────────────
+
+    def _on_sigint(self, signum, frame):
+        """Signal handler for Ctrl+C during agent processing."""
+        self.orchestrator.agent.interrupt()
+        g = self.s("success")
+        self.console.print(f"\n[{g}]⏹ Interrupted by user[/{g}]")
+
+    # ── command dispatch ──────────────────────────────────
+
     def _handle_command(self, text: str) -> bool:
         cmd = text.strip()
 
         # ── exit is control flow, not a skill ──
         if cmd in ("/exit", "/quit"):
+            return True
+
+        # ── /btw — queue a note for the next instruction ──
+        if cmd.startswith("/btw"):
+            msg = cmd[4:].strip()
+            self.orchestrator.agent.btw(msg or "(empty note)")
+            g = self.s("success")
+            self.console.print(f"[{g}]✓ BTW noted — will include with next instruction[/{g}]")
             return True
 
         # ── dispatch to commands ──
@@ -511,14 +539,42 @@ class LilyTerminal:
             self.orchestrator.run_skill(skill, args)
             return True
 
+        # ── unknown / command → reject ──
+        if cmd.startswith("/"):
+            e = self.s("error")
+            self.console.print(
+                f"[{e}]Unknown command: '{cmd_name}'. "
+                f"Type /help for available commands.[/{e}]"
+            )
+            return True  # consumed, not sent to LLM
+
         return False
 
     # ── main loop ─────────────────────────────────────────
 
     def run(self) -> None:
         self.console.print(self._build_welcome_message())
+
+        # Build key bindings: Enter auto-accepts first completion
+        from prompt_toolkit.key_binding import KeyBindings
+        _kb = KeyBindings()
+
+        @_kb.add('enter')
+        def _accept_first(event):
+            buff = event.current_buffer
+            if buff.complete_state:
+                completions = buff.complete_state.completions
+                if completions:
+                    buff.text = completions[0].text
+                    buff.cursor_position = len(completions[0].text)
+            buff.validate_and_handle()
+
         if self.session is None:
-            self.session = PromptSession(completer=_CommandCompleter())
+            self.session = PromptSession(
+                completer=_CommandCompleter(),
+                complete_while_typing=True,
+                key_bindings=_kb,
+            )
 
         while True:
             try:
@@ -536,12 +592,16 @@ class LilyTerminal:
                 continue
 
             # feed to orchestrator (state machine)
+            # Install SIGINT handler during processing so Ctrl+C can interrupt
+            old_handler = signal.signal(signal.SIGINT, self._on_sigint)
             try:
                 self.orchestrator.start(text)
             except Exception as exc:
                 log.exception("Unhandled error during orchestrator step")
                 e = self.s("error")
                 self.console.print(f"\n[{e}]✖ Error: {exc}[/{e}]")
+            finally:
+                signal.signal(signal.SIGINT, old_handler)
 
         log.info("Lily shutdown")
         g = self.s("goodbye")

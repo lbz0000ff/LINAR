@@ -1,4 +1,6 @@
 from .tool import Tool
+import json
+import os
 import re
 import ipaddress
 from urllib.parse import urlparse
@@ -358,3 +360,162 @@ class Tool_WebFetch(Tool):
             result["truncated"] = True
 
         return result
+
+
+# ---------------------------------------------------------------------------
+# WebSearch Tool
+# ---------------------------------------------------------------------------
+
+def _load_search_config():
+    """Load web_search config from config.yaml, with defaults."""
+    try:
+        from config import load_config
+        cfg = load_config()
+        return cfg.get("web_search", {"backend": "duckduckgo"})
+    except Exception:
+        return {"backend": "duckduckgo"}
+
+
+def _search_duckduckgo(query: str, max_results: int = 10) -> list[dict]:
+    """Search using DuckDuckGo (free, no API key needed)."""
+    try:
+        from ddgs import DDGS
+    except ImportError:
+        try:
+            from duckduckgo_search import DDGS
+        except ImportError:
+            raise ImportError(
+                "DuckDuckGo search requires ddgs or duckduckgo_search. "
+                "Run: pip install ddgs"
+            )
+
+    results = []
+    with DDGS() as ddgs:
+        for i, r in enumerate(ddgs.text(query, max_results=max_results)):
+            results.append({
+                "title": r.get("title", ""),
+                "url": r.get("href", ""),
+                "snippet": r.get("body", ""),
+            })
+    return results
+
+
+def _search_serper(query: str, max_results: int = 10) -> list[dict]:
+    """Search using Serper.dev (Google results, requires API key)."""
+    cfg = _load_search_config()
+    api_key = cfg.get("serper_api_key") or os.environ.get("SERPER_API_KEY")
+    if not api_key:
+        raise RuntimeError(
+            "Serper backend requires SERPER_API_KEY in config or environment."
+        )
+
+    import httpx
+    resp = httpx.post(
+        "https://google.serper.dev/search",
+        json={"q": query, "num": max_results},
+        headers={"X-API-KEY": api_key},
+        timeout=15,
+    )
+    resp.raise_for_status()
+    data = resp.json()
+
+    results = []
+    for item in data.get("organic", [])[:max_results]:
+        results.append({
+            "title": item.get("title", ""),
+            "url": item.get("link", ""),
+            "snippet": item.get("snippet", ""),
+        })
+    return results
+
+
+def _search_tavily(query: str, max_results: int = 10) -> list[dict]:
+    """Search using Tavily (AI-native search, requires API key)."""
+    cfg = _load_search_config()
+    api_key = cfg.get("tavily_api_key") or os.environ.get("TAVILY_API_KEY")
+    if not api_key:
+        raise RuntimeError(
+            "Tavily backend requires TAVILY_API_KEY in config or environment."
+        )
+
+    try:
+        from tavily import TavilyClient
+        client = TavilyClient(api_key=api_key)
+        response = client.search(query=query, max_results=max_results)
+        results = []
+        for item in response.get("results", [])[:max_results]:
+            results.append({
+                "title": item.get("title", ""),
+                "url": item.get("url", ""),
+                "snippet": item.get("content", ""),
+            })
+        return results
+    except ImportError:
+        raise ImportError(
+            "tavily-python is not installed. "
+            "Run: pip install tavily-python"
+        )
+
+
+_SEARCH_BACKENDS = {
+    "duckduckgo": _search_duckduckgo,
+    "serper": _search_serper,
+    "tavily": _search_tavily,
+}
+
+
+class Tool_WebSearch(Tool):
+    name: str = "web_search"
+    description: str = ("Search the web for a query and return structured results "
+                        "(title, URL, snippet).")
+    tool_schema: dict = {
+        "name": "web_search",
+        "description": "Searches the web and returns a list of results "
+                       "with title, URL, and snippet for each.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "query": {
+                    "type": "string",
+                    "description": "The search query."
+                },
+                "max_results": {
+                    "type": "integer",
+                    "description": "Maximum number of results to return (1-20). "
+                                   "Default 10.",
+                    "default": 10,
+                }
+            },
+            "required": ["query"]
+        }
+    }
+
+    def execute(self, *args, **kwargs):
+        query = kwargs.get("query")
+        max_results = kwargs.get("max_results", 10)
+
+        if not query or not isinstance(query, str):
+            return {"error": "query is required and must be a non-empty string."}
+
+        max_results = min(max(max_results, 1), 20)
+
+        cfg = _load_search_config()
+        backend = cfg.get("backend", "duckduckgo")
+
+        search_fn = _SEARCH_BACKENDS.get(backend)
+        if not search_fn:
+            return {"error": f"Unknown search backend '{backend}'. "
+                            f"Supported: {', '.join(_SEARCH_BACKENDS)}."}
+
+        try:
+            results = search_fn(query, max_results)
+            return {
+                "query": query,
+                "results": results,
+                "total": len(results),
+                "backend": backend,
+            }
+        except (ImportError, RuntimeError) as e:
+            return {"error": str(e)}
+        except Exception as e:
+            return {"error": f"Search failed: {e}"}
