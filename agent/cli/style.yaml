@@ -16,6 +16,7 @@ console:
   tool_name: "grey85"
   tool_detail: "grey62"
   error: "red"
+  success: "green"
   stats_dim: "dim"
   stats_good: "bold green"
   stats_warn: "bold yellow"

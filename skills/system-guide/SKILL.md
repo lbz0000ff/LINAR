@@ -17,7 +17,8 @@ Detailed docs are in `docs/`. Read them when you need specifics:
 | `docs/ARCHITECTURE.md` | Full architecture overview, data flow, file index, extension points |
 | `docs/AGENT_ARCHITECTURE.md` | Agent core loop, tool call streaming, chat history, events, tool registration |
 | `docs/MEMORY_ARCHITECTURE.md` | 4-tier memory system, dedup, auto-archive, LLM compression |
-| `docs/CLI_ARCHITECTURE.md` | Terminal REPL, event rendering, command system, adding commands/events |
+| `docs/CLI_ARCHITECTURE.md` | Terminal REPL (Legacy), event rendering, command system, adding commands/events |
+| `docs/TUI_ARCHITECTURE.md` | Dual-pane TUI, scroll/follow system, inline prompt, thread model, event rendering |
 | `docs/CLI_SETTINGS.md` | style.yaml theme, config.yaml CLI settings, Rich color reference |
 | `docs/LOGGING.md` | Logging config, usage, format, rotation |
 | `docs/project_analysis.md` | High-level project overview, directory structure, core concepts |

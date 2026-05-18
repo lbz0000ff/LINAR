@@ -1,6 +1,9 @@
 """
-Lily Agent Terminal — REPL-style streaming CLI with markdown rendering,
-reasoning display, and live thinking stats.
+Lily Agent Terminal — Dual-pane TUI with always-active input.
+
+LLM output streams in the upper pane; a fixed input bar at the bottom
+stays active so the user can type messages or /commands at any time.
+Messages typed while the LLM is busy are queued and processed in order.
 
 Usage:
     cd agent && python -m cli.terminal
@@ -11,13 +14,25 @@ import os
 import re
 import sys
 import time
-import signal
+import asyncio
+import threading
+from collections import deque
 
-from prompt_toolkit import PromptSession
+from prompt_toolkit.application import Application
+from prompt_toolkit.buffer import Buffer
 from prompt_toolkit.completion import Completer, Completion
+from prompt_toolkit.layout import Layout, HSplit
+from prompt_toolkit.layout.containers import Window, Float, FloatContainer
+from prompt_toolkit.layout.controls import BufferControl, FormattedTextControl
+from prompt_toolkit.layout.screen import Point
+from prompt_toolkit.layout.menus import CompletionsMenu
+from prompt_toolkit.mouse_events import MouseEventType
+from prompt_toolkit.layout.dimension import Dimension
+from prompt_toolkit.key_binding import KeyBindings
+from prompt_toolkit.formatted_text import ANSI
 from rich.console import Console
-from rich.style import Style
 from rich.text import cell_len
+from rich.markup import escape as rich_escape
 
 # ── ensure agent/ directory is on sys.path ───────────────
 _AGENT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -47,6 +62,18 @@ from cli.style_loader import load_style
 REASONING_MODES = ("hide", "full")
 TOOL_CALL_MODES = ("hide", "show_tools", "detailed")
 
+# ── Rich color name → hex mapping for colours that prompt_toolkit
+#     doesn't recognise (e.g. grey62, grey85).
+_RICH_COLORS: dict[str, str] = {}
+for _v in range(0, 101):
+    _rgb = round(_v / 100 * 255)
+    _hex = f"#{_rgb:02x}{_rgb:02x}{_rgb:02x}"
+    _RICH_COLORS[f"grey{_v}"] = _hex
+_ptk_named = {"red", "green", "yellow", "blue", "magenta", "cyan",
+              "white", "black", "default", "gray", "grey",
+              "ansired", "ansigreen", "ansiyellow", "ansiblue",
+              "ansimagenta", "ansicyan", "ansiwhite", "ansiblack"}
+
 # ── tab completer ──────────────────────────────────────────
 
 class _CommandCompleter(Completer):
@@ -57,7 +84,7 @@ class _CommandCompleter(Completer):
         if not text.startswith("/"):
             return
 
-        # ── sub-arguments after a space (no auto-select on Enter) ──
+        # ── sub-arguments after a space ──
         if " " in text:
             cmd, _, partial = text.partition(" ")
             if cmd == "/reasoning":
@@ -76,7 +103,6 @@ class _CommandCompleter(Completer):
             full = f"/{c.name}"
             if full.startswith(text):
                 yield Completion(full, start_position=-len(text), display_meta="cmd")
-        # /btw is handled in _handle_command but not a registered command
         if "/btw".startswith(text):
             yield Completion("/btw", start_position=-len(text), display_meta="cmd")
 
@@ -120,13 +146,44 @@ def _progress_bar(used: int, total: int, width: int = 12) -> str:
     return "[" + "#" * filled + " " * empty + f"] {pct * 100:.0f}%"
 
 
+# ── capture console for command output → TUI ────────────────
+
+class _CaptureConsole:
+    """File-like object that captures Console.print() output and converts
+    it to prompt_toolkit (style, text) fragments for the TUI."""
+
+    def __init__(self):
+        self.buffer = ""
+        self._output_deque = None   # set by LilyTerminal
+        self._invalidate = None     # set by LilyTerminal (app.invalidate)
+
+    def write(self, text: str):
+        self.buffer += text
+
+    def flush(self):
+        pass
+
+    def flush_to_tui(self) -> bool:
+        """Convert captured buffer to fragments and push to output deque.
+
+        Returns True if there was content to flush.
+        """
+        if not self.buffer:
+            return False
+        from prompt_toolkit.formatted_text import to_formatted_text as _to_ft
+        for style, text in _to_ft(ANSI(self.buffer)):
+            self._output_deque.append((style, text))
+        self.buffer = ""
+        return True
+
+
 # ── terminal ──────────────────────────────────────────────
 
 class LilyTerminal:
-    """REPL-style streaming terminal for the Lily Agent."""
+    """Dual-pane TUI: output streams in the upper pane, input bar at
+    the bottom stays active so the user can type at any time."""
 
     # Logo template: each line is [(text, style_key_or_None), ...]
-    # style_key maps to banner.<key> in style.yaml; None = no markup.
     _logo = [
         [(" ", None),(" ", None),("██╗", "lily"), ("      ", None), ("████", "i"), ("╗", "shadow"), (" ", None),("██╗", "lily"), ("     ", None), ("██╗   ██╗", "lily")                                 ,(" ", None),(" ", None)],
         [(" ", None),(" ", None),("██║", "lily"), ("      ", None), ("╚", "shadow"), ("██", "i"), ("╔╝", "shadow"), (" ", None),("██║", "lily"), ("     ", None), ("╚", "shadow"), ("██╗ ██╔╝", "lily") ,(" ", None),(" ", None)],
@@ -136,7 +193,6 @@ class LilyTerminal:
         [(" ", None),(" ", None),("╚══════╝", "lily"), (" ", None), ("╚", "shadow"), ("═══", "shadow"), ("╝", "shadow"), (" ", None),("╚══════╝", "lily"), ("   ", None), ("╚═╝", "lily"), ("   ", None),(" ", None),(" ", None)],
     ]
 
-    # Text lines below the logo: (template_text, banner_style_key)
     _banner_text = [
         ("Lily Agent Terminal  version {version}", "title"),
         ("Type /help for command help", "hint"),
@@ -147,8 +203,7 @@ class LilyTerminal:
         self.agent.emit = self._on_event
         self.orchestrator = orchestrator or Orchestrator(agent)
 
-        self.console = Console(highlight=False)
-        self.session: PromptSession | None = None
+        self.console: Console | None = None  # created in _build_tui
 
         # ── load style config ──
         self.style = load_style()
@@ -169,7 +224,6 @@ class LilyTerminal:
         # ── per-response state (reset on each "start") ──
         self._response_text = ""
         self._reasoning_text = ""
-        self._all_printed_text = ""
         self._had_tool_calls = False
         self._start_time = 0.0
         self._usage: dict | None = None
@@ -178,7 +232,25 @@ class LilyTerminal:
         self._bold_active = False
         self._pending = ""
 
-    # ── config loader (module-level import replacement) ───
+        # ── TUI state ──
+        self._render_fragments: list[tuple[str, str]] = []
+        self._output_deque: deque[tuple[str, str]] = deque()
+        self._input_queue: deque[str] = deque()
+        self._processing = False
+        self._llm_thread: threading.Thread | None = None
+        self._follow_output = True   # auto-scroll to bottom
+
+        # ── inline prompt (ask_user / confirm) ──
+        self._input_event: threading.Event | None = None
+        self._input_result: list[str] = []
+
+        # TUI widgets (set by _build_tui)
+        self.app: Application | None = None
+        self._input_buf: Buffer | None = None
+        self._output_control: FormattedTextControl | None = None
+        self._capture: _CaptureConsole | None = None
+
+    # ── config loader ─────────────────────────────────────
 
     @staticmethod
     def _load_config():
@@ -191,6 +263,33 @@ class LilyTerminal:
         """Shorthand — return color string for a console style key."""
         return self.style["console"].get(key, "")
 
+    # ── style converter: Rich → prompt_toolkit ────────────
+
+    def _ptk(self, key: str) -> str:
+        """Convert a Rich-style console style key to a prompt_toolkit
+        style string (e.g. ``"bold green"`` → ``"bold fg:green"``)."""
+        val = self.style["console"].get(key, "")
+        if not val:
+            return ""
+        parts = val.split()
+        mapped = []
+        for p in parts:
+            if p.startswith("#"):
+                mapped.append(f"fg:{p}")
+            elif p == "dim":
+                mapped.append("fg:gray")        # no dim in ptk, use gray
+            elif p in ("bold", "italic", "underline", "reverse"):
+                mapped.append(p)
+            elif p in _ptk_named:
+                mapped.append(f"fg:{p}")
+            elif p in _RICH_COLORS:
+                mapped.append(f"fg:{_RICH_COLORS[p]}")
+            else:
+                # Last resort — pass through (may produce a ptk warning
+                # but won't crash).
+                mapped.append(f"fg:{p}")
+        return " ".join(mapped)
+
     # ── welcome banner ─────────────────────────────────────
 
     @staticmethod
@@ -199,15 +298,9 @@ class LilyTerminal:
         return cell_len(s)
 
     def _build_welcome_message(self) -> str:
-        """Build the welcome banner from structured components.
-
-        Renders the LILY logo, adds text lines, and wraps everything
-        in a border box.  Widths are computed with ``cell_len`` so
-        CJK characters align correctly regardless of Rich markup.
-        """
+        """Build the welcome banner as a Rich markup string."""
         banner = self.style["banner"]
 
-        # ── raw text (no markup) for width computation ──────
         raw_logo = [
             "".join(text for text, _ in segs) for segs in self._logo
         ]
@@ -216,7 +309,6 @@ class LilyTerminal:
         ]
         content_w = max(self._dw(line) for line in raw_texts)
 
-        # ── border wrappers ─────────────────────────────────
         bc = banner.get("border", "grey")
         top    = f"[{bc}]┏{'━' * content_w}┓[/{bc}]"
         bot    = f"[{bc}]┗{'━' * content_w}┛[/{bc}]"
@@ -225,7 +317,6 @@ class LilyTerminal:
 
         lines = [top, blank]
 
-        # ── logo lines ──────────────────────────────────────
         for i, segs in enumerate(self._logo):
             parts = []
             for text, sk in segs:
@@ -240,7 +331,6 @@ class LilyTerminal:
 
         lines.append(blank)
 
-        # ── text lines (centered) ───────────────────────────
         for text, sk in self._banner_text:
             formatted = text.format(version=self._version)
             color = banner.get(sk, "")
@@ -254,58 +344,192 @@ class LilyTerminal:
         lines.append(bot)
         return "\n".join(lines)
 
-    # ── helpers ───────────────────────────────────────────
+    # ── TUI construction ──────────────────────────────────
 
-    def _print_header(self) -> None:
-        """Print the header on first visible event of a response."""
+    def _build_tui(self):
+        """Create the prompt_toolkit Application with split layout."""
+        self._render_fragments = []
+
+        # Output pane — displays fragments
+        # get_cursor_position always points to the last content line so
+        # the scroll algorithm naturally keeps the bottom visible.
+        self._output_control = FormattedTextControl(
+            self._get_fragments,
+            get_cursor_position=self._cursor_at_bottom,
+        )
+        self._output_window = Window(
+            content=self._output_control,
+            wrap_lines=True,
+        )
+
+        # Capture console for command output
+        self._capture = _CaptureConsole()
+        self._capture._output_deque = self._output_deque
+        # force_terminal + truecolor so Console outputs ANSI escape codes
+        # that _CaptureConsole.flush_to_tui() converts via prompt_toolkit.ANSI
+        self.console = Console(
+            file=self._capture, highlight=False,
+            force_terminal=True, color_system="truecolor",
+        )
+        # Print welcome banner to capture console
+        self.console.print(self._build_welcome_message())
+        self.console.print()
+
+        # Input buffer
+        self._input_buf = Buffer(
+            accept_handler=self._accept_input,
+            completer=_CommandCompleter(),
+            complete_while_typing=True,
+        )
+        input_window = Window(
+            content=BufferControl(buffer=self._input_buf),
+            height=Dimension.exact(1),
+        )
+        # Key bindings
+        kb = KeyBindings()
+
+        @kb.add('enter')
+        def _enter(event):
+            buff = event.current_buffer
+            if buff.complete_state:
+                completions = buff.complete_state.completions
+                if completions:
+                    buff.text = completions[0].text
+                    buff.cursor_position = len(completions[0].text)
+            buff.validate_and_handle()
+
+        @kb.add('c-c')
+        def _ctrl_c(event):
+            if self._input_event is not None:
+                # Abort inline prompt
+                self._input_result.append("")
+                self._input_event.set()
+            elif self._processing:
+                self.agent.interrupt()
+            else:
+                event.app.exit()
+
+        # ── scroll keybindings ────────────────────────────
+
+        @kb.add('pageup')
+        def _pgup(event):
+            self._follow_output = False
+            w = self._output_window
+            step = 15
+            w.vertical_scroll = max(0, w.vertical_scroll - step)
+
+        @kb.add('pagedown')
+        def _pgdn(event):
+            w = self._output_window
+            step = 15
+            w.vertical_scroll = w.vertical_scroll + step
+
+        @kb.add('home')
+        def _home(event):
+            self._follow_output = False
+            self._output_window.vertical_scroll = 0
+
+        @kb.add('end')
+        def _end(event):
+            self._follow_output = True
+
+        # Layout
+        body = HSplit([self._output_window, input_window])
+        layout = Layout(
+            FloatContainer(
+                content=body,
+                floats=[
+                    Float(
+                        xcursor=True,
+                        ycursor=True,
+                        content=CompletionsMenu(max_height=8),
+                    ),
+                ],
+            )
+        )
+        layout.focus(self._input_buf)
+
+        # Create output with fallback for environments where Win32 console
+        # detection fails (e.g. TERM=xterm-256color on Windows).
+        try:
+            from prompt_toolkit.output import create_output as _co
+            _output = _co()
+        except Exception:
+            from prompt_toolkit.output.vt100 import Vt100_Output
+            from prompt_toolkit.data_structures import Size
+            from shutil import get_terminal_size
+            def _get_size():
+                ts = get_terminal_size()
+                return Size(columns=ts.columns, rows=ts.lines)
+            _output = Vt100_Output(sys.stdout, _get_size)
+
+        self.app = Application(
+            layout=layout,
+            full_screen=True,
+            key_bindings=kb,
+            mouse_support=True,
+            # Note: text selection is still possible by holding Shift
+            # while clicking/dragging (standard terminal behaviour when
+            # mouse tracking is active).
+            output=_output,
+        )
+
+        self._capture._invalidate = self.app.invalidate
+
+        # Flush welcome banner to fragments before starting
+        self._capture.flush_to_tui()
+        self._flush_deque_to_fragments()
+
+    def _get_fragments(self):
+        """Callback for FormattedTextControl — returns current fragments
+        with a mouse handler attached to detect scroll events."""
+        if not self._render_fragments:
+            return self._render_fragments
+        return [(s, t, self._on_output_mouse) for s, t in self._render_fragments]
+
+    def _on_output_mouse(self, me):
+        """Handle mouse events on the output pane (scroll wheel → follow toggle)."""
+        if me.event_type == MouseEventType.SCROLL_UP:
+            self._follow_output = False
+            w = self._output_window
+            w.vertical_scroll = max(0, w.vertical_scroll - 3)
+            self.app.invalidate()
+        elif me.event_type == MouseEventType.SCROLL_DOWN:
+            w = self._output_window
+            w.vertical_scroll += 3
+            self.app.invalidate()
+        return NotImplemented
+
+    def _cursor_at_bottom(self) -> Point:
+        """Return a cursor position that guides the scroll algorithm.
+
+        When *following*, point to the last content line so the scroll
+        algorithm keeps the latest output visible.  Otherwise keep the
+        current scroll position stable so the user can read history.
+        """
+        if self._follow_output:
+            n = sum(t.count("\n") for _, t in self._render_fragments)
+            return Point(x=0, y=n)
+        cur = self._output_window.vertical_scroll if self._output_window else 0
+        return Point(x=0, y=cur)
+
+    # ── output helpers ────────────────────────────────────
+
+    def _flush_deque_to_fragments(self):
+        """Move all items from _output_deque to _render_fragments."""
+        while self._output_deque:
+            self._render_fragments.append(self._output_deque.popleft())
+        # Trim if too large
+        if len(self._render_fragments) > 10000:
+            self._render_fragments = self._render_fragments[-5000:]
+
+    # ── event handler (called from agent bg thread) ──────
+
+    def _maybe_show_header(self):
         if not self._header_printed:
             self._header_printed = True
-            self.console.print()
-            h = self.s("header")
-            self.console.print(f"[grey]>>[/grey] [{h}]Lily[/{h}]")
-
-    def _process_output(self, text: str) -> None:
-        """Print text, rendering **bold** markers as actual bold.
-
-        Accumulates a pending buffer across stream chunks so that **
-        markers split across chunks are handled correctly. Text inside
-        **...** is printed with Rich's bold style.
-        """
-        if not text:
-            return
-
-        self._pending += text
-
-        # Process all complete **...** segments in the buffer
-        while True:
-            idx = self._pending.find("**")
-            if idx == -1:
-                break
-
-            prefix = self._pending[:idx]
-            if prefix:
-                self.console.print(prefix, end="")
-
-            self._bold_active = not self._bold_active
-            self._pending = self._pending[idx + 2:]
-
-        # Handle lone trailing * (could be start of ** in next chunk)
-        if self._pending.endswith("*") and not self._pending.endswith("**"):
-            trailing = self._pending[:-1]
-            saved = "*"
-        else:
-            trailing = self._pending
-            saved = ""
-
-        if trailing:
-            if self._bold_active:
-                self.console.print(trailing, end="", style="bold")
-            else:
-                self.console.print(trailing, end="")
-
-        self._pending = saved
-
-    # ── event handler ─────────────────────────────────────
+            self._output_deque.append(("", "\n"))
+            self._output_deque.append(("bold", ">> Lily"))
 
     def _on_event(self, event: dict) -> None:
         etype = event.get("type")
@@ -314,7 +538,6 @@ class LilyTerminal:
         if etype == "start":
             self._response_text = ""
             self._reasoning_text = ""
-            self._all_printed_text = ""
             self._had_tool_calls = False
             self._start_time = time.time()
             self._usage = None
@@ -326,21 +549,18 @@ class LilyTerminal:
         # ── token ────────────────────────────────────────
         elif etype == "token":
             data = event["data"]
-            # strip [turn N] markers (internal context, not for display)
             data = re.sub(r"\[turn \d+\]\s*", "", data)
             if not data:
                 return
             self._response_text += data
-            self._all_printed_text += data
 
-            # newline between reasoning block and content
+            # Transition out of reasoning block
             if self._in_reasoning:
-                self.console.print()
+                self._output_deque.append(("", "\n"))
                 self._in_reasoning = False
 
-            self._print_header()
-            self._process_output(data)
-            sys.stdout.flush()
+            self._maybe_show_header()
+            self._process_output_fragments(data)
 
         # ── reasoning_token ──────────────────────────────
         elif etype == "reasoning_token":
@@ -348,93 +568,127 @@ class LilyTerminal:
             self._reasoning_text += data
 
             if self.reasoning_mode == "full":
-                self._all_printed_text += data
-                self._print_header()
+                if not self._in_reasoning:
+                    # Newline before first reasoning token prevents it
+                    # from gluing onto the user's ╭─ prompt.
+                    self._output_deque.append(("", "\n"))
                 self._in_reasoning = True
-                r = self.s("reasoning")
-                if r:
-                    # named style (e.g. "dim italic")
-                    self.console.print(data, end="", style=Style.parse(r))
-                else:
-                    self.console.print(data, end="", style=Style(dim=True, italic=True))
-                sys.stdout.flush()
+                r = self._ptk("reasoning")
+                self._output_deque.append((r or "italic fg:gray", data))
 
         # ── plan events ─────────────────────────────────
         elif etype == "plan_start":
-            self._print_header()
-            self.console.print("  [dim]Generating task plan...[/dim]")
+            self._maybe_show_header()
+            self._output_deque.append(("fg:cyan", "\nGenerating task plan..."))
 
         elif etype == "plan":
             data = event.get("data", "")
-            self._print_header()
-            self.console.print("  [bold cyan]Plan:[/bold cyan]")
+            self._maybe_show_header()
+            self._output_deque.append(("bold fg:cyan", "\nPlan:"))
             for line in data.split("\n"):
                 if line.strip():
-                    self.console.print(f"    {line}")
+                    self._output_deque.append(("", f"\n  {line}"))
 
         elif etype == "plan_error":
             data = event.get("data", "")
-            self.console.print(f"  [yellow]Plan generation issue: {data}[/yellow]")
+            self._output_deque.append(("fg:yellow", f"\nPlan generation issue: {data}"))
 
         elif etype == "plan_complete":
             data = event.get("data", "")
-            self.console.print("  [bold green]Plan complete:[/bold green]")
-            for line in data.split("\n"):
-                if line.strip():
-                    self.console.print(f"    {line}")
+            self._output_deque.append(("fg:green bold", "\nPlan complete."))
 
-        # ── done (end of one LLM turn) ───────────────────
+        # ── done ─────────────────────────────────────────
         elif etype == "done":
-            self.console.print()
+            self._output_deque.append(("", "\n"))
 
-        # ── complete (end of all turns) ──────────────────
+        # ── complete ─────────────────────────────────────
         elif etype == "complete":
-            self._print_stats()
+            self._print_stats_fragments()
 
         # ── usage ────────────────────────────────────────
         elif etype == "usage":
             self._usage = event.get("data")
 
-        # ── tool_call — show tool name in light gray ─────
+        # ── tool_call ────────────────────────────────────
         elif etype == "tool_call":
             self._had_tool_calls = True
 
             if self.tool_calls_mode == "hide":
                 return
 
-            self._print_header()
             name = event["name"]
-            tn = self.s("tool_name")
+            tn = self._ptk("tool_name") or "fg:grey85"
 
             if self.tool_calls_mode == "show_tools":
-                self.console.print(f"\n  [{tn}]⚙ Using: {name}[/{tn}]")
+                self._output_deque.append((tn, f"\n⚙ Using: {name}"))
 
             elif self.tool_calls_mode == "detailed":
                 preview = event.get("arguments", "")[:120]
-                self.console.print(f"\n  [{tn}]⚙ Using: {name}[/{tn}]")
-                td = self.s("tool_detail")
-                self.console.print(f"  [{td}]  {preview}[/{td}]")
+                self._output_deque.append((tn, f"\n⚙ Using: {name}"))
+                td = self._ptk("tool_detail") or "fg:grey62"
+                self._output_deque.append((td, f"\n  {preview}"))
 
-        # ── tool_result — show result in dark gray ────────
+        # ── tool_result ──────────────────────────────────
         elif etype == "tool_result":
             self._had_tool_calls = True
 
             if self.tool_calls_mode == "detailed":
                 r = str(event.get("result", ""))[:200]
-                td = self.s("tool_detail")
-                self.console.print(f"  [{td}]  → {r}[/{td}]")
-            sys.stdout.flush()
+                td = self._ptk("tool_detail") or "fg:grey62"
+                self._output_deque.append((td, f"\n  → {r}"))
 
+        # ── error ────────────────────────────────────────
         elif etype == "error":
-            e = self.s("error")
-            self.console.print(
-                f"\n[{e}]✖ Error: {event.get('data', 'unknown error')}[/{e}]"
-            )
+            data = str(event.get('data', 'unknown error'))
+            err = self._ptk("error") or "fg:red"
+            self._output_deque.append((err, f"\n✖ Error: {data}"))
+
+        # ── btw ──────────────────────────────────────────
+        elif etype == "btw":
+            data = event.get("data", "")
+            if data:
+                g = self._ptk("success") or "fg:green"
+                self._output_deque.append((g, f'\nBTW: "{data}"'))
+
+    # ── output text processor (bold markers) ─────────────
+
+    def _process_output_fragments(self, text: str) -> None:
+        """Append text to the output deque, handling **bold** markers."""
+        if not text:
+            return
+
+        self._pending += text
+
+        while True:
+            idx = self._pending.find("**")
+            if idx == -1:
+                break
+
+            prefix = self._pending[:idx]
+            if prefix:
+                style = "bold" if self._bold_active else ""
+                self._output_deque.append((style, prefix))
+
+            self._bold_active = not self._bold_active
+            self._pending = self._pending[idx + 2:]
+
+        # Handle lone trailing * (start of ** in next chunk)
+        if self._pending.endswith("*") and not self._pending.endswith("**"):
+            trailing = self._pending[:-1]
+            saved = "*"
+        else:
+            trailing = self._pending
+            saved = ""
+
+        if trailing:
+            style = "bold" if self._bold_active else ""
+            self._output_deque.append((style, trailing))
+
+        self._pending = saved
 
     # ── stats display ─────────────────────────────────────
 
-    def _print_stats(self) -> None:
-        """Print elapsed time and token usage line with dynamic color."""
+    def _print_stats_fragments(self) -> None:
         elapsed = time.time() - self._start_time
         elapsed_str = _format_time(elapsed)
 
@@ -443,47 +697,46 @@ class LilyTerminal:
         max_str = _format_tokens(self._max_tokens)
         pct = min(used / self._max_tokens * 100, 100)
 
-        # dynamic color by usage percentage
         if pct > 70:
-            color = self.s("stats_bad")
+            color = self._ptk("stats_bad") or "fg:red"
         elif pct > 50:
-            color = self.s("stats_warn")
+            color = self._ptk("stats_warn") or "fg:yellow bold"
         else:
-            color = self.s("stats_good")
+            color = self._ptk("stats_good") or "fg:green bold"
 
         bar = _progress_bar(used, self._max_tokens)
-        dim = self.s("stats_dim")
+        dim = self._ptk("stats_dim") or "fg:grey62"
 
-        line = (
-            f"  [{dim}]⏱ {elapsed_str}  │  [/{dim}]"
-            f"[{color}]Tokens: {used_str} / {max_str}  {bar}[/{color}]"
-        )
-        self.console.print(line)
+        self._output_deque.append((dim, f"\n  ⏱ {elapsed_str}  │  "))
+        self._output_deque.append((color, f"Tokens: {used_str} / {max_str}  {bar}"))
 
-    # —— chat history display ——————————————
-    
+    # ── chat history display ──────────────────────────────
+
     def _print_history(self) -> None:
-        """Print the conversation history with reasoning and tool calls."""
+        """Print conversation history to the capture console."""
         history = self.agent.chat_history
-        if history == []:
+        if not history:
             return
-        self.console.print("\n———————————— Conversation History ————————————")
+        self.console.print("\n— Conversation History —")
         for chat in history:
             role = chat["role"]
             if role == "user":
-                content = chat["content"]
-                header = "[" + self.s("header_user") + "]" + "User[/" + self.s("header_user") + "]"
-                self.console.print("\n" + header + "> " + "[grey62]" + content + "[/grey62]")
+                content = rich_escape(chat["content"])
+                self.console.print(
+                    f"\n[{self.s('header_user')}]User[/{self.s('header_user')}]"
+                    f"> [grey62]{content}[/grey62]"
+                )
             elif role == "agent":
-                content = chat["content"]
-                header = "[" + self.s("header") + "]" + "Lily[/" + self.s("header") + "]"
-                self.console.print("\n" + header + "> " + "[grey62]" + content + "[/grey62]")
+                content = rich_escape(chat["content"])
+                self.console.print(
+                    f"\n[{self.s('header')}]Lily[/{self.s('header')}]"
+                    f"> [grey62]{content}[/grey62]"
+                )
             elif role == "tool":
                 tool_name = chat.get("name")
-                s = self.s("tool_name")
-                self.console.print(f"\n    [{s}]Agent called tool {tool_name}[/{s}]...")
-        self.console.print("\n———————————— Conversation History ————————————")
-        
+                tn = self.s("tool_name")
+                self.console.print(f"\n    [{tn}]Agent called tool {tool_name}[/{tn}]...")
+        self.console.print("\n— Conversation History —")
 
     # ── commands ──────────────────────────────────────────
 
@@ -501,111 +754,216 @@ class LilyTerminal:
         color = colors.get(m, "white")
         return f"[{color}]{m}[/{color}]"
 
-    # ── interrupt handler ─────────────────────────────────
+    # ── TUI: input handler ────────────────────────────────
 
-    def _on_sigint(self, signum, frame):
-        """Signal handler for Ctrl+C during agent processing."""
-        self.orchestrator.agent.interrupt()
-        g = self.s("success")
-        self.console.print(f"\n[{g}]⏹ Interrupted by user[/{g}]")
+    def _accept_input(self, buf: Buffer) -> bool:
+        """Called when the user presses Enter in the input buffer."""
+        text = buf.text.strip()
+        buf.text = ""
 
-    # ── command dispatch ──────────────────────────────────
-
-    def _handle_command(self, text: str) -> bool:
-        cmd = text.strip()
-
-        # ── exit is control flow, not a skill ──
-        if cmd in ("/exit", "/quit"):
+        if not text:
             return True
 
-        # ── /btw — queue a note for the next instruction ──
-        if cmd.startswith("/btw"):
-            msg = cmd[4:].strip()
-            self.orchestrator.agent.btw(msg or "(empty note)")
-            g = self.s("success")
-            self.console.print(f"[{g}]✓ BTW noted — will include with next instruction[/{g}]")
-            return True
+        if text.startswith("/"):
+            if text.lower() in ("/exit", "/quit"):
+                self.app.exit()
+                return True
 
-        # ── dispatch to commands ──
-        cmd_name = cmd[1:].split(maxsplit=1)[0] if cmd.startswith("/") else ""
-        args = cmd[len(cmd_name) + 1:].strip() if cmd_name else ""
-        handler = get_handler(cmd_name)
-        if handler:
-            return handler.execute(args, self)
+            if text.startswith("/btw"):
+                msg = text[4:].strip()
+                self.agent.btw(msg or "(empty note)")
+                self._output_deque.append(("fg:green", "\n✓ BTW noted"))
+                return True
 
-        # ── skill fallback — if no command matched, try a skill ──
-        skill = get_skill(cmd_name)
-        if skill:
-            self.orchestrator.run_skill(skill, args)
-            return True
+            cmd_name = text[1:].split(maxsplit=1)[0]
+            args = text[len(cmd_name) + 1:].strip() if cmd_name else ""
 
-        # ── unknown / command → reject ──
-        if cmd.startswith("/"):
-            e = self.s("error")
-            self.console.print(
-                f"[{e}]Unknown command: '{cmd_name}'. "
-                f"Type /help for available commands.[/{e}]"
+            # Registered command handler — execute immediately
+            handler = get_handler(cmd_name)
+            if handler:
+                self._follow_output = True
+                self._output_deque.append(("bold", f"\n\n╭─ {text}"))
+                handler.execute(args, self)
+                return True
+
+            # Skill — queue for background processing
+            skill = get_skill(cmd_name)
+            if skill:
+                self._follow_output = True
+                self._input_queue.append(text)
+                if not self._processing:
+                    self._start_processing()
+                return True
+
+            # Unknown command
+            err = self._ptk("error") or "fg:red"
+            self._output_deque.append(
+                (err, f"\n Unknown command: '{cmd_name}'. Type /help.")
             )
-            return True  # consumed, not sent to LLM
+            return True
 
+        # Plain text — queue for LLM processing
+        self._follow_output = True
+        self._input_queue.append(text)
+        if not self._processing:
+            self._start_processing()
+        return True
+
+    # ── background LLM processing ─────────────────────────
+
+    def _start_processing(self) -> None:
+        """Start the background thread that processes queued messages."""
+        self._processing = True
+
+        def _run():
+            try:
+                while self._input_queue:
+                    text = self._input_queue.popleft()
+
+                    # Show user input in output now (about to process)
+                    self._output_deque.append(("bold", f"\n\n╭─ {text}"))
+
+                    # Check for skill invocation
+                    if text.startswith("/"):
+                        cmd_name = text[1:].split(maxsplit=1)[0]
+                        args = text[len(cmd_name) + 1:].strip() if " " in text else ""
+                        skill = get_skill(cmd_name)
+                        if skill:
+                            self.orchestrator.run_skill(skill, args)
+                            continue
+
+                    # Normal text — process through orchestrator
+                    self.orchestrator.start(text)
+
+            except Exception as exc:
+                log.exception("Unhandled error during processing")
+                err = self._ptk("error") or "fg:red"
+                self._output_deque.append((err, f"\n✖ Error: {exc}"))
+            finally:
+                self._processing = False
+                self._output_deque.append(("", "\n"))
+
+        self._llm_thread = threading.Thread(target=_run, daemon=True)
+        self._llm_thread.start()
+
+    # ── inline prompt (called from bg thread via agent callbacks) ──
+
+    def _prompt_user(self, prompt: str, password: bool = False, choices: list | None = None) -> str:
+        """Show a prompt in the output pane and wait for a line of user
+        input from the *main* event loop, then return the answer."""
+        if password:
+            # Password masking isn't supported in this mode; fall back
+            # to a simple text entry and disclose the warning.
+            self._output_deque.append(("fg:yellow", " (password will be visible)"))
+        display = prompt
+        if choices:
+            for i, c in enumerate(choices, 1):
+                display += f"\n  [{i}] {c}"
+            display += "\nEnter number or type your answer: "
+        self._output_deque.append(("bold", f"\n{display}"))
+        self._output_deque.append(("", "> "))
+        self.app.invalidate()
+
+        ev = threading.Event()
+        self._input_event = ev
+        self._input_result.clear()
+
+        def _handler(buf):
+            text = buf.text.strip()
+            buf.text = ""
+            self._output_deque.append(("", f"{text}\n"))
+            self._input_result.append(text)
+            ev.set()
+            return True
+
+        old = self._input_buf.accept_handler
+        self._input_buf.accept_handler = _handler
+
+        ev.wait(timeout=120)
+
+        self._input_buf.accept_handler = old
+        self._input_event = None
+
+        ans = self._input_result[0] if self._input_result else ""
+        if choices and ans.isdigit():
+            idx = int(ans) - 1
+            if 0 <= idx < len(choices):
+                return choices[idx]
+        return ans
+
+    def _confirm_tool(self, name: str, args: str) -> bool | str:
+        """Ask the user to confirm a tool call (agent callback)."""
+        prompt_text = f"Allow {name}({args[:120]})? [y/N/a(always)/d(eny)] "
+        self._output_deque.append(("bold", f"\n{prompt_text}"))
+        self._output_deque.append(("", "> "))
+        self.app.invalidate()
+
+        ev = threading.Event()
+        self._input_event = ev
+        self._input_result.clear()
+
+        def _handler(buf):
+            text = buf.text.strip().lower()
+            buf.text = ""
+            self._output_deque.append(("", f"{text}\n"))
+            self._input_result.append(text)
+            ev.set()
+            return True
+
+        old = self._input_buf.accept_handler
+        self._input_buf.accept_handler = _handler
+
+        ev.wait(timeout=120)
+
+        self._input_buf.accept_handler = old
+        self._input_event = None
+
+        answer = self._input_result[0] if self._input_result else ""
+        if answer in ("y", "yes"):
+            return True
+        if answer in ("a", "always"):
+            return "always"
+        if answer in ("d", "deny", "never"):
+            return "never"
         return False
 
-    # ── main loop ─────────────────────────────────────────
+    # ── main entry point ──────────────────────────────────
 
     def run(self) -> None:
-        self.console.print(self._build_welcome_message())
+        self._build_tui()
 
-        # Build key bindings: Enter auto-accepts first completion
-        from prompt_toolkit.key_binding import KeyBindings
-        _kb = KeyBindings()
+        async def _flush_loop():
+            while True:
+                dirty = False
+                # Flush output deque to render fragments
+                while self._output_deque:
+                    self._render_fragments.append(self._output_deque.popleft())
+                    dirty = True
+                # Flush captured console output (from commands)
+                if self._capture.flush_to_tui():
+                    dirty = True
+                    # Immediately flush the newly appended deque items too
+                    while self._output_deque:
+                        self._render_fragments.append(self._output_deque.popleft())
+                        dirty = True
+                if dirty:
+                    self.app.invalidate()
+                # Trim
+                if len(self._render_fragments) > 10000:
+                    self._render_fragments = self._render_fragments[-5000:]
+                await asyncio.sleep(0.05)
 
-        @_kb.add('enter')
-        def _accept_first(event):
-            buff = event.current_buffer
-            if buff.complete_state:
-                completions = buff.complete_state.completions
-                if completions:
-                    buff.text = completions[0].text
-                    buff.cursor_position = len(completions[0].text)
-            buff.validate_and_handle()
+        async def _main():
+            asyncio.ensure_future(_flush_loop())
+            await self.app.run_async()
 
-        if self.session is None:
-            self.session = PromptSession(
-                completer=_CommandCompleter(),
-                complete_while_typing=True,
-                key_bindings=_kb,
-            )
-
-        while True:
-            try:
-                text = self.session.prompt("\n╭─ ")
-            except (KeyboardInterrupt, EOFError):
-                break
-
-            text = text.strip()
-            if not text:
-                continue
-
-            if self._handle_command(text):
-                if text.strip().lower() in ("/exit", "/quit"):
-                    break
-                continue
-
-            # feed to orchestrator (state machine)
-            # Install SIGINT handler during processing so Ctrl+C can interrupt
-            old_handler = signal.signal(signal.SIGINT, self._on_sigint)
-            try:
-                self.orchestrator.start(text)
-            except Exception as exc:
-                log.exception("Unhandled error during orchestrator step")
-                e = self.s("error")
-                self.console.print(f"\n[{e}]✖ Error: {exc}[/{e}]")
-            finally:
-                signal.signal(signal.SIGINT, old_handler)
+        asyncio.run(_main())
 
         log.info("Lily shutdown")
-        g = self.s("goodbye")
-        self.console.print(f"\n[{g}]Goodbye![/{g}]")
+        goodbye = self._ptk("goodbye") or "fg:red"
+        self._render_fragments.append((goodbye, "\nGoodbye!"))
+        # Use print since the TUI is shutting down
+        print("\nGoodbye!")
 
 
 # ── entry point ───────────────────────────────────────────
@@ -613,11 +971,9 @@ class LilyTerminal:
 def main() -> None:
     from tool_registry import get_tools
 
-    # Load config and filter tools by enabled_sets
     from config import load_config
     _cfg = load_config()
 
-    # ── initialize logging from config ──
     log_cfg = _cfg.get("logging", {})
     setup_logging(
         level=log_cfg.get("level", "INFO"),
@@ -651,56 +1007,17 @@ def main() -> None:
     _enabled = _cfg.get("tools", {}).get("enabled_sets", None)
     tools = get_tools(_enabled)
 
-    # Inject interactive password input via prompt_toolkit
-    from prompt_toolkit import PromptSession as PromptSession_
-    _pw_session = PromptSession_()
-
-    def _tui_input(prompt: str, password: bool = False, choices: list | None = None) -> str:
-        try:
-            if choices:
-                display = prompt + "\n"
-                for i, c in enumerate(choices, 1):
-                    display += f"  [{i}] {c}\n"
-                display += "Enter number or type your answer: "
-                result = _pw_session.prompt(display)
-                if result.isdigit():
-                    idx = int(result) - 1
-                    if 0 <= idx < len(choices):
-                        return choices[idx]
-                return result
-            return _pw_session.prompt(prompt, is_password=password)
-        except (KeyboardInterrupt, EOFError):
-            return ""
-
-    def _confirm_tool(name: str, args: str) -> bool | str:
-        """Ask the user to approve a tool call.
-
-        Returns:
-            True     — allow once
-            False    — reject once
-            "always" — allow for the session
-            "never"  — deny for the session
-        """
-        try:
-            answer = _pw_session.prompt(
-                f"Allow {name}({args[:120]})? [y/N/a(always)/d(eny)] "
-            ).strip().lower()
-        except (KeyboardInterrupt, EOFError):
-            return False
-        if answer in ("y", "yes"):
-            return True
-        if answer in ("a", "always"):
-            return "always"
-        if answer in ("d", "deny", "never"):
-            return "never"
-        return False
-
-    for t in tools.values():
-        t.interactive_input = _tui_input
-
+    # Create agent (callbacks wired after cli is created below).
     agent = Agent(tools=tools)
-    agent._confirm_callback = _confirm_tool
     cli = LilyTerminal(agent)
+
+    # Wire interactive callbacks to cli's inline prompt mechanism.
+    # These run from the agent's bg thread and use threading.Event to
+    # coordinate with the main event loop.
+    for t in tools.values():
+        t.interactive_input = cli._prompt_user
+    agent._confirm_callback = cli._confirm_tool
+
     cli.run()
 
 
