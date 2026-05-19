@@ -126,6 +126,23 @@ class Agent:
         except ImportError:
             pass
 
+        # dynamically append MCP tools so the LLM knows about them
+        try:
+            from tool_registry import _init_mcp_servers
+            mcp_tools = _init_mcp_servers()
+            if mcp_tools:
+                lines = ["\n## MCP tools (loaded via external servers)"]
+                for name, tool in mcp_tools.items():
+                    desc = (tool.description or "").split(".")[0][:80]
+                    lines.append(f"- `{name}` — {desc}")
+                lines.append(
+                    "\nThese tools work exactly like built-in tools — call them "
+                    "by name via function calling."
+                )
+                parts.append("\n".join(lines))
+        except ImportError:
+            pass
+
         return "\n\n".join(parts) if parts else "You are a helpful assistant."
 
     def _format_chat_history(self) -> str:
@@ -138,6 +155,8 @@ class Agent:
                 parts.append(f"[turn {turn}]\nUser: {msg['content']}")
             elif role == "agent":
                 parts.append(f"Agent: {msg['content']}")
+                if msg.get("reasoning"):
+                    parts.append(f"[Reasoning]\n{msg['reasoning']}[/Reasoning]")
             elif role == "tool":
                 parts.append(f"Tool call: {msg['name']} with parameters {msg['arguments']}")
                 if msg.get("result"):
@@ -359,6 +378,8 @@ class Agent:
                     "content": msg.get("content", ""),
                     "turn": turn,
                 }
+                if role == "agent" and msg.get("reasoning"):
+                    entry["reasoning"] = msg["reasoning"]
             self.chat_history.append(entry)
 
         self._turn_counter = max_turn
@@ -429,6 +450,7 @@ class Agent:
             stream = self.llm.stream_response(prompt)
 
             text_parts = []
+            reasoning_parts = []
             tool_call_deltas = {}
 
             for chunk in stream:
@@ -453,6 +475,7 @@ class Agent:
 
                 # ── reasoning / thinking content ──
                 if hasattr(delta, "reasoning_content") and delta.reasoning_content:
+                    reasoning_parts.append(delta.reasoning_content)
                     self.emit({
                         "type": "reasoning_token",
                         "data": delta.reasoning_content,
@@ -476,11 +499,15 @@ class Agent:
             self.emit({"type": "done"})
 
             text = "".join(text_parts)
-            if text:
-                self.chat_history.append({
+            reasoning = "".join(reasoning_parts)
+            if text or reasoning:
+                entry = {
                     "role": "agent", "content": text, "turn": self._turn_counter,
-                })
-                db.save_message(self.session_id, "agent", text, turn=self._turn_counter)
+                }
+                if reasoning:
+                    entry["reasoning"] = reasoning
+                self.chat_history.append(entry)
+                db.save_message(self.session_id, "agent", text, turn=self._turn_counter, reasoning=reasoning)
 
             # Collect complete tool calls from deltas
             tool_calls = []

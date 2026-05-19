@@ -13,6 +13,56 @@ from basic_tools.tool_ask_user import Tool_AskUser
 from basic_tools.tool_skill import Tool_SkillView
 from basic_tools.tool_plan import Tool_PlanAdvance, Tool_PlanStatus
 
+# ── MCP support ──────────────────────────────────────────────
+from config import load_config
+from mcp_server import MCPServer
+from basic_tools.mcp_tool import MCPTool
+
+_mcp_servers: list[MCPServer] = []
+_mcp_initialized = False
+_mcp_tools_cache: dict = None
+"""All running MCP server instances (for lifecycle management)."""
+
+
+def _init_mcp_servers() -> dict:
+    """Start MCP servers from config and return their tools (once)."""
+    global _mcp_initialized, _mcp_tools_cache
+    if _mcp_initialized:
+        return _mcp_tools_cache or {}
+    _mcp_initialized = True
+
+    cfg = load_config()
+    servers_cfg = cfg.get("mcp_servers") or {}
+    tools = {}
+    for name, scfg in servers_cfg.items():
+        if not scfg.get("enabled", True):
+            continue
+        try:
+            server = MCPServer(name, scfg["command"], scfg.get("args", []))
+            server.start()
+            for t in server.list_tools():
+                full_name = f"mcp_{name}_{t['name']}"
+                tools[full_name] = MCPTool(
+                    server=server,
+                    name=full_name,
+                    original_name=t['name'],
+                    description=t["description"],
+                    input_schema=t["inputSchema"],
+                )
+            _mcp_servers.append(server)
+            log.info("MCP server '%s': registered %d tools", name, len(server.list_tools()))
+        except Exception as exc:
+            log.error("MCP server '%s' failed: %s", name, exc)
+    _mcp_tools_cache = tools
+    return tools
+
+
+def shutdown_mcp_servers():
+    """Stop all running MCP servers."""
+    for srv in _mcp_servers:
+        srv.stop()
+    _mcp_servers.clear()
+
 # ── all tool instances ──────────────────────────────────────
 _all_tools = {
     "get_date": Tool_GetDate(),
@@ -46,6 +96,7 @@ _toolsets = {
     "memory": ["remember", "recall"],
     "interactive": ["ask_user", "skill_view"],
     "plan": ["plan_advance", "plan_status"],
+    "mcp": [],  # placeholder — MCP tools are injected dynamically
 }
 
 # ── public API ───────────────────────────────────────────────
@@ -54,16 +105,24 @@ def get_tools(enabled_sets=None):
     """Return a dict of tools filtered by enabled toolset names.
 
     If enabled_sets is None, returns all tools (backwards-compatible).
+    Also starts MCP servers from config and appends their tools.
     """
+    # Start MCP servers once
+    mcp_tools = _init_mcp_servers()
+
     if enabled_sets is None:
-        log.info("Loaded %d tools (all toolsets)", len(_all_tools))
-        return dict(_all_tools)
+        all_tools = dict(_all_tools)
+        all_tools.update(mcp_tools)
+        log.info("Loaded %d native + %d MCP tools", len(_all_tools), len(mcp_tools))
+        return all_tools
 
     selected = {}
     for name in enabled_sets:
         for tool_name in _toolsets.get(name, []):
             if tool_name in _all_tools:
                 selected[tool_name] = _all_tools[tool_name]
+    if "mcp" in enabled_sets:
+        selected.update(mcp_tools)
     log.info("Loaded %d tools from enabled sets: %s", len(selected), enabled_sets)
     return selected
 

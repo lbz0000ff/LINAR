@@ -64,6 +64,12 @@ def init_db():
     except sqlite3.OperationalError:
         pass  # already exists
 
+    # ── migration: add reasoning column if missing ──
+    try:
+        conn.execute("ALTER TABLE messages ADD COLUMN reasoning TEXT DEFAULT ''")
+    except sqlite3.OperationalError:
+        pass  # already exists
+
     log.info("Database initialized at %s", _DB_PATH)
 
 
@@ -115,11 +121,11 @@ def update_session_marker(session_id: int, marker: str):
 # Messages
 # ---------------------------------------------------------------------------
 
-def save_message(session_id: int, role: str, content: str, tool_name: str = "", turn: int = 0):
+def save_message(session_id: int, role: str, content: str, tool_name: str = "", turn: int = 0, reasoning: str = ""):
     conn = _get_connection()
     conn.execute(
-        "INSERT INTO messages (session_id, role, content, tool_name, turn) VALUES (?, ?, ?, ?, ?)",
-        (session_id, role, content, tool_name or None, turn),
+        "INSERT INTO messages (session_id, role, content, tool_name, turn, reasoning) VALUES (?, ?, ?, ?, ?, ?)",
+        (session_id, role, content, tool_name or None, turn, reasoning or None),
     )
     conn.commit()
     log.debug("Saved %s message to session #%s (turn=%s)", role, session_id, turn)
@@ -133,7 +139,7 @@ def get_session_messages(session_id: int):
     """Return all messages for a session, oldest first."""
     conn = _get_connection()
     rows = conn.execute(
-        "SELECT id, role, content, tool_name, turn, created_at FROM messages WHERE session_id = ? ORDER BY id",
+        "SELECT id, role, content, tool_name, turn, created_at, reasoning FROM messages WHERE session_id = ? ORDER BY id",
         (session_id,),
     ).fetchall()
     return [dict(r) for r in rows]

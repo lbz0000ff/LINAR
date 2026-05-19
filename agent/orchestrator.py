@@ -69,7 +69,7 @@ class Orchestrator:
         self.agent = agent
         self.stage: Stage = Stage.IDLE
         self.previous_stage: Stage | None = None
-        self.current_plan = None  # TaskPlan instance, set during PLAN stage
+        self.current_plan = None  # DAGPlan instance, set during PLAN stage
         self.needs_plan: bool = False
 
     # ── public API ────────────────────────────────────────
@@ -153,15 +153,11 @@ class Orchestrator:
             " and ", " then ", " first ", " finally ",
             "first,", "second,", "1.", "2.",
             # Chinese
-            "并", "然后", "接着", "再", "步骤",
+            "然后", "接着", "步骤",
             "第一步", "第二步", "首先", "其次",
         ]
-        has_conjunction = any(kw in user_input.lower() for kw in multi_step_keywords)
-
-        # Long inputs are more likely multi-step
-        has_verb_chain = len(user_input.split()) > 15
-
-        self.needs_plan = has_conjunction or has_verb_chain
+        kw_matches = sum(1 for kw in multi_step_keywords if kw in user_input.lower())
+        self.needs_plan = kw_matches >= (3 if len(user_input) <= 20 else 2)
 
     def _generate_plan(self) -> None:
         """Call the LLM to decompose the user's goal into sub-tasks."""
@@ -169,6 +165,13 @@ class Orchestrator:
 
         cfg = self.agent.cfg
         user_input = self.agent.chat_history[-1]["content"]
+
+        # Use aux model config if available, fall back to main llm
+        aux_cfg = cfg.get("aux") or {}
+        planner_provider = aux_cfg.get("base_url") or cfg["llm"]["base_url"]
+        planner_key = aux_cfg.get("api_key") or cfg["llm"]["api_key"]
+        planner_model = aux_cfg.get("model") or cfg["llm"]["model"]
+        planner_temp = aux_cfg.get("temperature") or 0.3
 
         # Load planner system prompt
         prompt_dir = os.path.join(os.path.dirname(__file__), "prompt")
@@ -185,16 +188,16 @@ class Orchestrator:
 
         try:
             client = OpenAI(
-                base_url=cfg["llm"]["base_url"],
-                api_key=cfg["llm"]["api_key"],
+                base_url=planner_provider,
+                api_key=planner_key,
             )
             response = client.chat.completions.create(
-                model=cfg["llm"]["model"],
+                model=planner_model,
                 messages=[
                     {"role": "system", "content": planner_system},
                     {"role": "user", "content": user_input},
                 ],
-                temperature=0.3,
+                temperature=planner_temp,
                 max_tokens=2000,
             )
 
@@ -212,8 +215,8 @@ class Orchestrator:
             self.needs_plan = False
             return
 
-        # Build plan from LLM response
-        from plan import TaskPlan, SubTask
+        # Build DAG plan from LLM response
+        from plan import DAGPlan, DAGNode, DAGNodeStatus
 
         sub_tasks_raw = data.get("sub_tasks", [])
         if not sub_tasks_raw or len(sub_tasks_raw) <= 1:
@@ -221,23 +224,22 @@ class Orchestrator:
             self.needs_plan = False
             return
 
-        sub_tasks = [
-            SubTask(id=st["id"], description=st["description"])
-            for st in sub_tasks_raw
-        ]
-        sub_tasks[0].status = "in_progress"  # type: ignore[assignment]
-
-        plan = TaskPlan(goal=data.get("goal", user_input), sub_tasks=sub_tasks)
+        plan = DAGPlan(goal=data.get("goal", user_input))
+        for st in sub_tasks_raw:
+            plan.add_node(DAGNode(
+                id=st["id"],
+                description=st["description"],
+                depends_on=st.get("depends_on", []),
+            ))
         self.current_plan = plan
         self.agent.current_plan = plan
 
         # Inject plan into chat_history for LLM visibility
         plan_block = (
             f"\n## Active Plan\n"
-            f"You have created a plan for the user's request. Work through the "
-            f"sub-tasks below in order. After each sub-task, call plan_advance "
-            f"with a summary of what you did. Continue immediately — do NOT stop "
-            f"after plan_advance until all sub-tasks are complete.\n\n"
+            f"You created a DAG-based plan. Work through sub-tasks respecting "
+            f"dependencies. After each sub-task, call plan_advance with its "
+            f"task_id and a summary of what you did.\n\n"
             f"{plan.format_for_prompt()}"
         )
         self.agent.chat_history.append({

@@ -242,6 +242,10 @@ class DAGPlan:
             for n in self.nodes.values()
         )
 
+    def format_for_prompt(self) -> str:
+        """Alias to format_dag — polymorphic use with tool_plan.py."""
+        return self.format_dag()
+
     def format_dag(self) -> str:
         """Render the DAG for display / LLM prompt injection."""
         status_chars = {

@@ -21,7 +21,7 @@ from collections import deque
 from prompt_toolkit.application import Application
 from prompt_toolkit.buffer import Buffer
 from prompt_toolkit.completion import Completer, Completion
-from prompt_toolkit.layout import Layout, HSplit
+from prompt_toolkit.layout import Layout, HSplit, VSplit
 from prompt_toolkit.layout.containers import Window, Float, FloatContainer
 from prompt_toolkit.layout.controls import BufferControl, FormattedTextControl
 from prompt_toolkit.layout.screen import Point
@@ -30,6 +30,7 @@ from prompt_toolkit.mouse_events import MouseEventType
 from prompt_toolkit.layout.dimension import Dimension
 from prompt_toolkit.key_binding import KeyBindings
 from prompt_toolkit.formatted_text import ANSI
+from prompt_toolkit.widgets import Frame
 from rich.console import Console
 from rich.text import cell_len
 from rich.markup import escape as rich_escape
@@ -40,6 +41,7 @@ if _AGENT_DIR not in sys.path:
     sys.path.insert(0, _AGENT_DIR)
 
 import agent
+from config import load_config
 from logger import get_logger, setup_logging
 from orchestrator import Orchestrator, Stage, stage_label
 from commands import get_handler, all_commands, register
@@ -105,6 +107,8 @@ class _CommandCompleter(Completer):
                 yield Completion(full, start_position=-len(text), display_meta="cmd")
         if "/btw".startswith(text):
             yield Completion("/btw", start_position=-len(text), display_meta="cmd")
+        if "/steer".startswith(text):
+            yield Completion("/steer", start_position=-len(text), display_meta="cmd")
 
         # ── skills (dynamic from registry) ─────────────────
         from skill import all_skills as _sks
@@ -247,6 +251,15 @@ class LilyTerminal:
         # TUI widgets (set by _build_tui)
         self.app: Application | None = None
         self._input_buf: Buffer | None = None
+
+        # ── current input being processed (for steer) ──
+        self._current_input = ""
+
+        # ── btw / steer ──
+        self._btw_context = ""
+        self._btw_visible = False
+        self._btw_fragments: list = []
+        self._btw_scroll = 0
         self._output_control: FormattedTextControl | None = None
         self._capture: _CaptureConsole | None = None
 
@@ -381,10 +394,32 @@ class LilyTerminal:
             completer=_CommandCompleter(),
             complete_while_typing=True,
         )
-        input_window = Window(
-            content=BufferControl(buffer=self._input_buf),
+
+        # Border line above input
+        input_border = Window(
             height=Dimension.exact(1),
+            char='─',
+            style='fg:#40a1f2',
         )
+
+        # ">> " prompt label
+        input_prompt = Window(
+            FormattedTextControl([("fg:#40a1f2", ">> ")]),
+            width=3,
+            dont_extend_width=True,
+            always_hide_cursor=True,
+        )
+
+        # Input editor (wraps to multiple lines for long input)
+        input_editor = Window(
+            content=BufferControl(buffer=self._input_buf),
+            wrap_lines=True,
+            height=Dimension(min=1, max=8),
+            dont_extend_height=True,
+        )
+
+        # Combine prompt + editor horizontally
+        input_window = VSplit([input_prompt, input_editor])
         # Key bindings
         kb = KeyBindings()
 
@@ -433,8 +468,24 @@ class LilyTerminal:
         def _end(event):
             self._follow_output = True
 
+        @kb.add('escape')
+        def _escape(event):
+            if self._btw_visible:
+                self._btw_visible = False
+                self.app.invalidate()
+
+        # BTW popup window (scrollable, hidden by default)
+        self._btw_window = Frame(
+            title=" BTW ",
+            body=Window(
+                content=FormattedTextControl(self._get_btw_fragments),
+                style="bg:#000000",
+                wrap_lines=True,
+            ),
+        )
+
         # Layout
-        body = HSplit([self._output_window, input_window])
+        body = HSplit([self._output_window, input_border, input_window])
         layout = Layout(
             FloatContainer(
                 content=body,
@@ -443,6 +494,15 @@ class LilyTerminal:
                         xcursor=True,
                         ycursor=True,
                         content=CompletionsMenu(max_height=8),
+                    ),
+                    Float(
+                        content=self._btw_window,
+                        left=2,
+                        right=2,
+                        bottom=5,
+                        height=lambda: 0 if not self._btw_visible else min(
+                            len(self._btw_fragments) // 2 + 2, 20
+                        ),
                     ),
                 ],
             )
@@ -488,17 +548,29 @@ class LilyTerminal:
         return [(s, t, self._on_output_mouse) for s, t in self._render_fragments]
 
     def _on_output_mouse(self, me):
-        """Handle mouse events on the output pane (scroll wheel → follow toggle)."""
+        """Handle mouse events on the output pane (scroll wheel)."""
+        w = self._output_window
         if me.event_type == MouseEventType.SCROLL_UP:
             self._follow_output = False
-            w = self._output_window
             w.vertical_scroll = max(0, w.vertical_scroll - 3)
             self.app.invalidate()
+            return None
         elif me.event_type == MouseEventType.SCROLL_DOWN:
-            w = self._output_window
             w.vertical_scroll += 3
             self.app.invalidate()
+            # Re-enable follow when we've scrolled past the bottom
+            self._check_follow_output()
+            return None
         return NotImplemented
+
+    def _check_follow_output(self):
+        """Re-enable follow-output when scrolled to/past the bottom edge."""
+        info = self._output_window.render_info
+        if info is None:
+            return
+        bottom = info.content_height - info.window_height
+        if self._output_window.vertical_scroll >= bottom - 1:
+            self._follow_output = True
 
     def _cursor_at_bottom(self) -> Point:
         """Return a cursor position that guides the scroll algorithm.
@@ -529,7 +601,7 @@ class LilyTerminal:
         if not self._header_printed:
             self._header_printed = True
             self._output_deque.append(("", "\n"))
-            self._output_deque.append(("bold", ">> Lily"))
+            self._output_deque.append(("bold", ">> Lily\n"))
 
     def _on_event(self, event: dict) -> None:
         etype = event.get("type")
@@ -764,15 +836,33 @@ class LilyTerminal:
         if not text:
             return True
 
+        # ── paste detection: collapse long pastes to a marker ──
+        raw_lines = text.count('\n') + 1
+        if raw_lines > 10:
+            text = f"[pasted {raw_lines} lines]"
+            self._output_deque.append(("fg:cyan", f"\n  {text}"))
+
         if text.startswith("/"):
             if text.lower() in ("/exit", "/quit"):
                 self.app.exit()
                 return True
 
+            if text.startswith("/steer"):
+                msg = text[6:].strip()
+                if self._processing and self._current_input:
+                    self.agent.interrupt()
+                    corrected = f"[修正: {msg}] {self._current_input}"
+                    self._input_queue.appendleft(corrected)
+                else:
+                    self.agent.btw(msg or "(empty note)")
+                self._output_deque.append(("fg:green", "\n✓ Steer noted"))
+                return True
+
             if text.startswith("/btw"):
                 msg = text[4:].strip()
-                self.agent.btw(msg or "(empty note)")
-                self._output_deque.append(("fg:green", "\n✓ BTW noted"))
+                if msg:
+                    self._output_deque.append(("fg:green", "\n⚡ BTW query..."))
+                    threading.Thread(target=self._answer_btw, args=(msg,), daemon=True).start()
                 return True
 
             cmd_name = text[1:].split(maxsplit=1)[0]
@@ -832,7 +922,9 @@ class LilyTerminal:
                             self.orchestrator.run_skill(skill, args)
                             continue
 
-                    # Normal text — process through orchestrator
+                    # Normal text — save as current/btw context, process through orchestrator
+                    self._current_input = text
+                    self._btw_context = text
                     self.orchestrator.start(text)
 
             except Exception as exc:
@@ -846,24 +938,69 @@ class LilyTerminal:
         self._llm_thread = threading.Thread(target=_run, daemon=True)
         self._llm_thread.start()
 
+    # ── btw side query ─────────────────────────────────────
+
+    def _get_btw_fragments(self):
+        """Return BTW popup content (empty when hidden)."""
+        if not self._btw_visible or not self._btw_fragments:
+            return []
+        return [(s, t, self._on_btw_mouse) for s, t in self._btw_fragments]
+
+    def _on_btw_mouse(self, me):
+        """Mouse handler for BTW popup — scroll inside float only."""
+        if me.event_type == MouseEventType.SCROLL_UP:
+            self._btw_scroll = max(0, self._btw_scroll - 1)
+            self._btw_window.vertical_scroll = self._btw_scroll
+            self.app.invalidate()
+            return None
+        elif me.event_type == MouseEventType.SCROLL_DOWN:
+            self._btw_scroll += 1
+            self._btw_window.vertical_scroll = self._btw_scroll
+            self.app.invalidate()
+            return None
+        return NotImplemented
+
+    def _answer_btw(self, question: str) -> None:
+        """Lightweight side LLM query with original context, no tools."""
+        try:
+            cfg = load_config()
+            aux_cfg = cfg.get("aux") or {}
+            from openai import OpenAI
+            client = OpenAI(
+                base_url=aux_cfg.get("base_url") or cfg["llm"]["base_url"],
+                api_key=aux_cfg.get("api_key") or cfg["llm"]["api_key"],
+            )
+            resp = client.chat.completions.create(
+                model=aux_cfg.get("model") or cfg["llm"]["model"],
+                messages=[
+                    {"role": "system", "content": "You are a helpful assistant. Answer concisely based on the context provided."},
+                    {"role": "user", "content": f"User's original request:\n{self._btw_context or '(no context)'}\n\nSide question:\n{question}"},
+                ],
+                temperature=0.5,
+                max_tokens=500,
+            )
+            answer = resp.choices[0].message.content.strip()
+        except Exception as exc:
+            answer = f"(BTW query failed: {exc})"
+
+        h = self._ptk("console.header") or "fg:#ad2228"
+        s = self._ptk("success") or "fg:green"
+        d = self._ptk("tool_detail") or "fg:grey62"
+        self._btw_fragments = [
+            (h, " ── BTW ────────────────────────────────────────\n"),
+            ("", "Q: "), (s, f"{question}\n"),
+            ("", "A: "), (d, f"{answer}\n"),
+        ]
+        self._btw_scroll = 0
+        self._btw_window.vertical_scroll = 0
+        self._btw_visible = True
+        if self.app:
+            self.app.invalidate()
+
     # ── inline prompt (called from bg thread via agent callbacks) ──
 
-    def _prompt_user(self, prompt: str, password: bool = False, choices: list | None = None) -> str:
-        """Show a prompt in the output pane and wait for a line of user
-        input from the *main* event loop, then return the answer."""
-        if password:
-            # Password masking isn't supported in this mode; fall back
-            # to a simple text entry and disclose the warning.
-            self._output_deque.append(("fg:yellow", " (password will be visible)"))
-        display = prompt
-        if choices:
-            for i, c in enumerate(choices, 1):
-                display += f"\n  [{i}] {c}"
-            display += "\nEnter number or type your answer: "
-        self._output_deque.append(("bold", f"\n{display}"))
-        self._output_deque.append(("", "> "))
-        self.app.invalidate()
-
+    def _capture_input(self) -> str:
+        """Swap the input buffer to capture one line, return it."""
         ev = threading.Event()
         self._input_event = ev
         self._input_result.clear()
@@ -878,13 +1015,26 @@ class LilyTerminal:
 
         old = self._input_buf.accept_handler
         self._input_buf.accept_handler = _handler
-
         ev.wait(timeout=120)
-
         self._input_buf.accept_handler = old
         self._input_event = None
+        return self._input_result[0] if self._input_result else ""
 
-        ans = self._input_result[0] if self._input_result else ""
+    def _prompt_user(self, prompt: str, password: bool = False, choices: list | None = None) -> str:
+        """Show a prompt in the output pane and wait for a line of user
+        input from the *main* event loop, then return the answer."""
+        if password:
+            self._output_deque.append(("fg:yellow", " (password will be visible)"))
+        display = prompt
+        if choices:
+            for i, c in enumerate(choices, 1):
+                display += f"\n  [{i}] {c}"
+            display += "\nEnter number or type your answer: "
+        self._output_deque.append(("bold", f"\n{display}"))
+        self._output_deque.append(("", "> "))
+        self.app.invalidate()
+
+        ans = self._capture_input()
         if choices and ans.isdigit():
             idx = int(ans) - 1
             if 0 <= idx < len(choices):
@@ -898,27 +1048,7 @@ class LilyTerminal:
         self._output_deque.append(("", "> "))
         self.app.invalidate()
 
-        ev = threading.Event()
-        self._input_event = ev
-        self._input_result.clear()
-
-        def _handler(buf):
-            text = buf.text.strip().lower()
-            buf.text = ""
-            self._output_deque.append(("", f"{text}\n"))
-            self._input_result.append(text)
-            ev.set()
-            return True
-
-        old = self._input_buf.accept_handler
-        self._input_buf.accept_handler = _handler
-
-        ev.wait(timeout=120)
-
-        self._input_buf.accept_handler = old
-        self._input_event = None
-
-        answer = self._input_result[0] if self._input_result else ""
+        answer = self._capture_input().lower()
         if answer in ("y", "yes"):
             return True
         if answer in ("a", "always"):
@@ -964,6 +1094,13 @@ class LilyTerminal:
         self._render_fragments.append((goodbye, "\nGoodbye!"))
         # Use print since the TUI is shutting down
         print("\nGoodbye!")
+
+        # Shut down MCP servers
+        try:
+            from tool_registry import shutdown_mcp_servers
+            shutdown_mcp_servers()
+        except Exception:
+            pass
 
 
 # ── entry point ───────────────────────────────────────────

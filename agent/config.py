@@ -30,9 +30,14 @@ def _resolve_env(value):
 DEFAULTS = {
     "project_name": "Lily",
     "version": "1.0.0",
+    "providers": {
+        "deepseek": {
+            "base_url": "https://api.deepseek.com/v1",
+            "api_key": "",
+        },
+    },
     "llm": {
-        "base_url": "https://api.deepseek.com/v1",
-        "api_key": "",
+        "provider": "deepseek",
         "model": "deepseek-v4-flash",
         "temperature": 0.7,
         "max_tokens": 1000000,
@@ -59,6 +64,11 @@ DEFAULTS = {
         "protect_last_turns": 3,
         "strategy": "compact",  # "compact" | "compress"
     },
+    "aux": {
+        "provider": "deepseek",
+        "model": "",
+        "temperature": 0.3,
+    },
     "prompt": {
         "files": [
             "system_prompt_base.md",
@@ -68,6 +78,21 @@ DEFAULTS = {
         ],
     },
 }
+
+
+def _resolve_providers(config):
+    """Fill base_url/api_key into llm/aux from their referenced provider."""
+    providers = config.get("providers", {})
+    for key in ("llm", "aux"):
+        section = config.get(key)
+        if not section:
+            continue
+        pname = section.get("provider")
+        if pname and pname in providers:
+            p = providers[pname]
+            section.setdefault("base_url", p.get("base_url", ""))
+            section.setdefault("api_key", p.get("api_key", ""))
+    return config
 
 
 def _deep_merge(base, override):
@@ -97,6 +122,17 @@ def load_config(path=None):
     Missing fields in the YAML file fall back to DEFAULTS values.
     """
     config_path = path or _CONFIG_PATH
+
+    # Auto-create config.yaml from example if missing
+    if not os.path.exists(config_path):
+        example_path = config_path + ".example"
+        if os.path.exists(example_path):
+            try:
+                import shutil
+                shutil.copy2(example_path, config_path)
+            except Exception:
+                pass
+
     config = DEFAULTS.copy()
 
     if not os.path.exists(config_path):
@@ -111,12 +147,14 @@ def load_config(path=None):
         pass
 
     config = _resolve_env(config)
+    config = _resolve_providers(config)
 
     # ── API key fallback: env var → api_key.txt ──
-    api_key = config.get("llm", {}).get("api_key", "")
-    if not api_key or api_key.startswith("${"):
-        file_key = _read_api_key_file()
-        if file_key:
-            config["llm"]["api_key"] = file_key
+    for key in ("llm", "aux"):
+        ak = config.get(key, {}).get("api_key", "")
+        if not ak or ak.startswith("${"):
+            file_key = _read_api_key_file()
+            if file_key:
+                config[key]["api_key"] = file_key
 
     return config

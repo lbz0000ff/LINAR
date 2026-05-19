@@ -1,11 +1,23 @@
+# Lily Configuration Example
+# Copy to config.yaml and adjust values for your environment.
+# Environment variables are referenced as ${VAR_NAME}.
+
 project_name: Lily
 version: 0.1.0
 description: An AI agent designed to assist with various tasks.
 
-# OpenAI API Configuration
-llm:
+# API Providers — base_url and api_key are inherited by llm / aux
+providers:
+  deepseek:
     base_url: "https://api.deepseek.com/v1"
     api_key: "${DEEPSEEK_API_KEY}"
+  zhipu:
+    base_url: "https://open.bigmodel.cn/api/paas/v4"
+    api_key: "${ZHIPU_API_KEY}"
+
+# Main Model Configuration
+llm:
+    provider: deepseek
     model: "deepseek-v4-flash"
     temperature: 0.7
     max_tokens: 1000000
@@ -15,6 +27,12 @@ llm:
 max_turns: 0                    # 0 = unlimited; N = max LLM rounds
 show_reasoning: full              # "hide" | "full"
 show_tool_calls: detailed       # "hide" | "show_tools" | "detailed"
+
+# Auxiliary Model Configuration (planning, routing, lightweight tasks)
+aux:
+    provider: deepseek
+    model: "deepseek-v4-flash"
+    temperature: 0.3
 
 # Memory Configuration
 max_memory_length: 2200          # MEMORY.md 字符上限（~1100 汉字 / ~350 词）
@@ -31,6 +49,7 @@ tools:
         - memory
         - interactive
         - plan
+        - mcp  # MCP server tools
 
 # Chat History Management
 chat_history:
@@ -70,6 +89,17 @@ permissions:
         web_fetch: ask
         web_search: allow
         truncate_long_output: ask   # "allow" = silent truncate, "ask" = prompt user
+
+# MCP Servers (Model Context Protocol)
+mcp_servers:
+  fetch:
+    enabled: true
+    command: python
+    args: ["-m", "mcp_server_fetch"]
+  # github:
+  #   enabled: true
+  #   command: npx
+  #   args: ["-y", "@modelcontextprotocol/server-github"]
 
 # Prompt File Loading Order
 prompt:
