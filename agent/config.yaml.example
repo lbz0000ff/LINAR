@@ -34,6 +34,15 @@ aux:
     model: "deepseek-v4-flash"
     temperature: 0.3
 
+# Vision Model Configuration (image analysis via vision_query tool)
+vision:
+    enabled: false
+    provider: ""
+    model: ""
+    temperature: 0.7
+    max_images: 5
+    max_image_size_mb: 20
+
 # Memory Configuration
 max_memory_length: 2200          # MEMORY.md 字符上限（~1100 汉字 / ~350 词）
 max_user_preferences_length: 500 # USER.md 字符上限（~250 汉字 / ~80 词）
@@ -50,6 +59,7 @@ tools:
         - interactive
         - plan
         - mcp  # MCP server tools
+        - vision  # vision_query tool (requires vision config)
 
 # Chat History Management
 chat_history:
@@ -88,7 +98,29 @@ permissions:
         delete_dir: ask
         web_fetch: ask
         web_search: allow
+        vision_query: ask        # image analysis — confirm before calling external API
         truncate_long_output: ask   # "allow" = silent truncate, "ask" = prompt user
+
+# Permission Modes — switch via Shift+Tab in the TUI
+#   safe  : most dev tools ask, read-only tools auto-allow
+#   auto  : everything allowed (hardcoded, not configurable)
+#   review: everything asks (no config needed)
+# "active" selects the default mode on startup.
+permission_modes:
+    active: safe
+    modes:
+        safe:
+            default: allow
+            rules:
+                cmd_execute: ask
+                write_file: ask
+                patch_file: ask
+                delete_file: ask
+                delete_dir: ask
+                web_fetch: ask
+                vision_query: ask
+                truncate_long_output: ask
+        review: {}
 
 # MCP Servers (Model Context Protocol)
 mcp_servers:

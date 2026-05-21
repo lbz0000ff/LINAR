@@ -3,6 +3,8 @@ import json
 import os
 import re
 import ipaddress
+import concurrent.futures
+from typing import Any
 from urllib.parse import urlparse
 
 # ---------------------------------------------------------------------------
@@ -23,7 +25,6 @@ TEXT_TYPES_PREFIXES = (
 # SSRF Protection
 # ---------------------------------------------------------------------------
 _PRIVATE_BLOCKS = [
-    ipaddress.ip_network("127.0.0.0/8"),
     ipaddress.ip_network("10.0.0.0/8"),
     ipaddress.ip_network("172.16.0.0/12"),
     ipaddress.ip_network("192.168.0.0/16"),
@@ -231,6 +232,7 @@ def _is_text_content(content_type):
 class Tool_WebFetch(Tool):
     name: str = "web_fetch"
     description: str = "Fetch content from a URL and return it as readable text."
+    stop_event: Any = None
     tool_schema: dict = {
         "name": "web_fetch",
         "description": "Fetches a URL and returns its content as plain text. "
@@ -468,10 +470,11 @@ class Tool_WebSearch(Tool):
     name: str = "web_search"
     description: str = ("Search the web for a query and return structured results "
                         "(title, URL, snippet).")
+    stop_event: Any = None
     tool_schema: dict = {
         "name": "web_search",
         "description": "Searches the web and returns a list of results "
-                       "with title, URL, and snippet for each.",
+                       "with title, URL, and snippet for each. Only use this when you need information in these cases:1.specific version or date involved. 2.current news, events and trends. 3.information you dont't know 4.the user explicitly requires you to do that",
         "parameters": {
             "type": "object",
             "properties": {
@@ -508,7 +511,10 @@ class Tool_WebSearch(Tool):
                             f"Supported: {', '.join(_SEARCH_BACKENDS)}."}
 
         try:
-            results = search_fn(query, max_results)
+            if self.stop_event is not None:
+                results = self._run_interruptible(search_fn, query, max_results)
+            else:
+                results = search_fn(query, max_results)
             return {
                 "query": query,
                 "results": results,
@@ -519,3 +525,22 @@ class Tool_WebSearch(Tool):
             return {"error": str(e)}
         except Exception as e:
             return {"error": f"Search failed: {e}"}
+
+    def _run_interruptible(self, search_fn, query, max_results):
+        """Run search in a background thread, polling stop_event every 0.5s.
+
+        When the user presses Ctrl+C, ``stop_event`` is set and this method
+        stops waiting for the (still-running) background thread, returning an
+        empty result list immediately.  The agent's interrupt checkpoint then
+        catches ``stop_event`` on the next loop iteration.
+        """
+        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+            future = pool.submit(search_fn, query, max_results)
+            while True:
+                try:
+                    return future.result(timeout=0.5)
+                except concurrent.futures.TimeoutError:
+                    if self.stop_event and self.stop_event.is_set():
+                        future.cancel()
+                        return []
+                    continue

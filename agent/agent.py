@@ -1,6 +1,8 @@
 import sys
 import io
 import json
+import re
+import threading
 from llm import LLM
 from config import load_config
 from logger import get_logger
@@ -45,6 +47,7 @@ class Agent:
         self.tools = tools
         self._skill_active = False  # set by Skill.on_load()
         self.permissions = PermissionManager(cfg.get("permissions", {}))
+        self.permissions.load_modes(cfg.get("permission_modes", {}))
         self._confirm_callback = None  # set by terminal to prompt user
         self.chat_history: list[dict] = []
 
@@ -58,12 +61,21 @@ class Agent:
         # ── consecutive tool failure tracker ──
         self._tool_failures: dict[str, int] = {}
 
+        # ── reasoning-only turn retry guard ──
+        self._reasoning_only_retries = 0
+
         # ── repeated command tracker ──
         self._cmd_history: list[str] = []
 
         # ── interrupt / btw ──
         self._interrupt_requested = False
+        self.stop_event = threading.Event()
         self._btw_queue: list[str] = []
+        # Propagate stop_event to tools that support it (e.g. web_search)
+        if self.tools:
+            for t in self.tools.values():
+                if hasattr(t, 'stop_event'):
+                    t.stop_event = self.stop_event
 
         # ── active task plan (set by orchestrator) ──
         self.current_plan = None
@@ -147,7 +159,14 @@ class Agent:
 
     def _format_chat_history(self) -> str:
         """Serialize internal JSON history to text for the LLM prompt."""
-        parts = ["Chat history:"]
+        # Anchor: first user message reminds the LLM of the active task,
+        # preventing context drift when history is long or compacted.
+        anchor = ""
+        for msg in self.chat_history:
+            if msg["role"] == "user":
+                anchor = f"\n[Active task: {msg['content'][:160]}]"
+                break
+        parts = [f"Chat history:{anchor}"]
         for msg in self.chat_history:
             role = msg["role"]
             turn = msg.get("turn")
@@ -165,14 +184,65 @@ class Agent:
                 parts.append(msg["content"])
         return "\n".join(parts)
 
+    def _build_llm_messages(self) -> list[dict]:
+        """Build OpenAI-format messages list from internal chat history.
+
+        Converts the internal JSON history into the message format the LLM
+        API expects (assistant with tool_calls, tool with tool_call_id, etc.)
+        so the model sees a conversation structure matching its training.
+        """
+        msgs: list[dict] = []
+        for msg in self.chat_history:
+            role = msg["role"]
+            if role == "user":
+                msgs.append({"role": "user", "content": msg["content"]})
+            elif role == "agent":
+                content = msg.get("content", "")
+                # DeepSeek requires content to be a non-null string when
+                # there are no tool_calls; OpenAI spec says null is fine
+                # when tool_calls are present.
+                if msg.get("tool_calls") and not content:
+                    content = None
+                entry: dict = {"role": "assistant", "content": content}
+                if msg.get("reasoning"):
+                    # DeepSeek thinking mode requires reasoning_content to be
+                    # passed back in assistant messages on subsequent requests.
+                    entry["reasoning_content"] = msg["reasoning"]
+                if msg.get("tool_calls"):
+                    entry["tool_calls"] = msg["tool_calls"]
+                msgs.append(entry)
+            elif role == "tool":
+                tool_id = msg.get("tool_call_id", "")
+                if tool_id:
+                    msgs.append({
+                        "role": "tool",
+                        "tool_call_id": tool_id,
+                        "content": msg.get("result", ""),
+                    })
+                else:
+                    # Legacy entry without tool_call_id (loaded from DB before
+                    # the structured-format migration) — fold into the last
+                    # assistant message as plain text.
+                    if msgs and msgs[-1]["role"] == "assistant":
+                        suffix = (
+                            f"\n[Tool result ({msg.get('name', '?')}): "
+                            f"{msg.get('result', '')}]"
+                        )
+                        existing = msgs[-1]["content"] or ""
+                        msgs[-1]["content"] = existing + suffix
+            elif role == "meta":
+                msgs.append({"role": "system", "content": msg["content"]})
+        return msgs
+
     # ── per-tool truncation limits (chars) ──
     _PER_TOOL_TRUNCATION_LIMITS: dict[str, int] = {
         "cmd_execute": 20000,
-        "read_file": 50000,
+        "read_file": 10000,
         "search_files": 10000,
         "write_file": 5000,
         "patch_file": 5000,
         "web_fetch": 10000,
+        "vision_query": 10000,
     }
     _DEFAULT_TRUNCATION_LIMIT = 5000  # was 500
 
@@ -308,8 +378,31 @@ class Agent:
         tail = self.chat_history[tail_start:]
         middle = self.chat_history[head_end:tail_start]
 
-        # Only remove tool entries from the middle
-        compacted = [m for m in middle if m["role"] != "tool"]
+        # Before removing tool entries, fold their results into the
+        # preceding assistant message as text so structured messages
+        # still carry the information after compaction.  Search both
+        # *head* and *compacted* (entries already processed from middle)
+        # so an assistant in the middle section is also found.
+        compacted: list[dict] = []
+        for m in middle:
+            if m["role"] == "tool":
+                result_text = m.get("result", "")
+                name = m.get("name", "?")
+                # Search head (reversed), then compacted (reversed)
+                found = False
+                for pool in (reversed(compacted), reversed(head)):
+                    for entry in pool:
+                        if entry["role"] == "agent":
+                            suffix = f"\n[Tool result ({name}): {result_text}]"
+                            existing = entry.get("content") or ""
+                            entry["content"] = existing + suffix
+                            entry.pop("tool_calls", None)
+                            found = True
+                            break
+                    if found:
+                        break
+            else:
+                compacted.append(m)
 
         if len(compacted) == len(middle):
             return  # nothing to remove
@@ -411,6 +504,7 @@ class Agent:
     def interrupt(self):
         """Request the agent to stop after the current tool call."""
         self._interrupt_requested = True
+        self.stop_event.set()
 
     # ── btw ────────────────────────────────────────────────
 
@@ -443,11 +537,11 @@ class Agent:
             turn += 1
             if self.max_turns > 0 and turn > self.max_turns:
                 break
-            prompt = self._format_chat_history() + "\nAgent:"
+            llm_messages = self._build_llm_messages()
 
             self.emit({"type": "start"})
 
-            stream = self.llm.stream_response(prompt)
+            stream = self.llm.stream_response_messages(llm_messages)
 
             text_parts = []
             reasoning_parts = []
@@ -500,14 +594,6 @@ class Agent:
 
             text = "".join(text_parts)
             reasoning = "".join(reasoning_parts)
-            if text or reasoning:
-                entry = {
-                    "role": "agent", "content": text, "turn": self._turn_counter,
-                }
-                if reasoning:
-                    entry["reasoning"] = reasoning
-                self.chat_history.append(entry)
-                db.save_message(self.session_id, "agent", text, turn=self._turn_counter, reasoning=reasoning)
 
             # Collect complete tool calls from deltas
             tool_calls = []
@@ -521,8 +607,47 @@ class Agent:
                         "arguments": tc["arguments"],
                     })
 
+            # Save assistant entry (with tool_calls if any, for structured messages)
+            if text or reasoning or tool_calls:
+                entry: dict = {
+                    "role": "agent", "content": text, "turn": self._turn_counter,
+                }
+                if reasoning:
+                    entry["reasoning"] = reasoning
+                if tool_calls:
+                    entry["tool_calls"] = [
+                        {
+                            "id": tc["id"],
+                            "type": "function",
+                            "function": {
+                                "name": tc["name"],
+                                "arguments": tc["arguments"],
+                            },
+                        }
+                        for tc in tool_calls
+                    ]
+                self.chat_history.append(entry)
+                db.save_message(self.session_id, "agent", text, turn=self._turn_counter, reasoning=reasoning)
+
             # No tool calls → this turn is the final answer
             if not tool_calls:
+                # Safety net: if reasoning described tool calls but never
+                # invoked them (common with DeepSeek), nudge the model
+                # instead of stopping silently.  Limit to 1 retry to
+                # avoid infinite loops.
+                if reasoning and not text and self._reasoning_only_retries < 1:
+                    self._reasoning_only_retries += 1
+                    self.chat_history.append({
+                        "role": "meta",
+                        "content": (
+                            "[SYSTEM] You described calling tools in your "
+                            "reasoning but did not actually invoke any tool. "
+                            "If you need a tool, call it now using the proper "
+                            "function-calling format. If not, answer directly."
+                        ),
+                    })
+                    log.info("Reasoning-only turn — giving model another chance")
+                    continue
                 break
 
             # Execute each tool and add results to history
@@ -602,7 +727,7 @@ class Agent:
                         pass
 
                 # ---- interrupt checkpoint ----
-                if self._interrupt_requested:
+                if self._interrupt_requested or self.stop_event.is_set():
                     self._interrupt_requested = False
                     self.chat_history.append({
                         'role': 'meta',
@@ -616,6 +741,7 @@ class Agent:
 
                 self.chat_history.append({
                     "role": "tool",
+                    "tool_call_id": tc.get("id", ""),
                     "name": tc["name"],
                     "arguments": tc["arguments"],
                     "result": result_str,

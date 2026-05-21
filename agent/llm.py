@@ -38,6 +38,21 @@ class LLM:
             )
         return response
 
+    def stream_response_messages(self, messages: list, temperature: float = 0.7):
+        """Stream a response from the LLM using OpenAI-format messages list."""
+        log.debug("LLM stream request (model=%s, temperature=%s)", self.model, temperature)
+        response = self.client.chat.completions.create(
+            model=self.model,
+            messages=[
+                {"role": "system", "content": self.system_prompt},
+                *messages,
+            ],
+            tools=[generate_function_calling(self.tools[tool_name].tool_schema) for tool_name in self.tools],
+            temperature=temperature,
+            stream=True,
+        )
+        yield from response
+
     def stream_response(self, prompt: str, temperature: float = 0.7):
         """Stream a response from the LLM, yielding raw chunks."""
         log.debug("LLM stream request (model=%s, temperature=%s)", self.model, temperature)

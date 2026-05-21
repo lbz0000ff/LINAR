@@ -59,7 +59,7 @@ DEFAULTS = {
         "enabled_sets": ["time", "file", "shell", "web"],
     },
     "chat_history": {
-        "max_chars": 10000,
+        "max_chars": 50000,
         "trim_to": 5000,
         "protect_last_turns": 3,
         "strategy": "compact",  # "compact" | "compress"
@@ -68,6 +68,14 @@ DEFAULTS = {
         "provider": "deepseek",
         "model": "",
         "temperature": 0.3,
+    },
+    "vision": {
+        "enabled": False,
+        "provider": "",
+        "model": "",
+        "temperature": 0.7,
+        "max_images": 5,
+        "max_image_size_mb": 20,
     },
     "prompt": {
         "files": [
@@ -83,7 +91,7 @@ DEFAULTS = {
 def _resolve_providers(config):
     """Fill base_url/api_key into llm/aux from their referenced provider."""
     providers = config.get("providers", {})
-    for key in ("llm", "aux"):
+    for key in ("llm", "aux", "vision"):
         section = config.get(key)
         if not section:
             continue

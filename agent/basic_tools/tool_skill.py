@@ -30,14 +30,28 @@ class Tool_SkillView(Tool):
     }
 
     def execute(self, name: str) -> str:
-        from skill import get_skill
+        from skill import get_skill, all_skills
+
+        # Normalize: strip leading "/" that the model sometimes includes
+        raw = name
+        name = name.lstrip("/")
 
         skill = get_skill(name)
+        if skill is None:
+            # Fuzzy match: try prefix (model may truncate, e.g. "comfyui" → "comfyui-api")
+            for s in all_skills():
+                if s.name.startswith(name):
+                    skill = s
+                    break
+
         if skill is None:
             available = ", ".join(
                 f"/{s.name}" for s in _all_skills()
             )
-            return f"Skill '{name}' not found. Available skills: {available}"
+            return (
+                f"Skill '{raw}' not found. Available skills: {available}\n\n"
+                "(Hint: use the exact name from the list, without the leading /)"
+            )
 
         parts = [f"## Skill: /{skill.name}"]
         if skill.description:

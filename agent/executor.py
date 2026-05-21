@@ -1,4 +1,4 @@
-"""DAG executor — walk a DAGPlan wave by wave.
+"""DAG executor — walk a DAGPlan wave by wave, executing ready nodes in parallel.
 
 A wave is a set of nodes whose dependencies are all satisfied and that
 can therefore execute concurrently (in a true multi-agent system).
@@ -12,6 +12,9 @@ Usage::
 """
 
 from __future__ import annotations
+
+import threading
+from concurrent.futures import ThreadPoolExecutor, wait, as_completed
 
 from plan import DAGNode, DAGNodeStatus, DAGPlan
 
@@ -35,12 +38,17 @@ class DAGExecutor:
     runner : callable, optional
         ``runner(node_id, description) -> str``. Called for each node.
         If omitted a no-op default is used.
+    interrupt_check : callable, optional
+        ``interrupt_check() -> bool``. Called between waves; if it returns
+        True, execution stops early.  Remaining PENDING nodes are marked FAILED.
     """
 
-    def __init__(self, dag: DAGPlan, runner=None) -> None:
+    def __init__(self, dag: DAGPlan, runner=None, interrupt_check=None) -> None:
         self.dag = dag
         self.runner = runner or _default_runner
+        self.interrupt_check = interrupt_check
         self.execution_log: list[dict] = []
+        self.interrupted: bool = False
 
     # ── public API ──────────────────────────────────────────
 
@@ -49,7 +57,8 @@ class DAGExecutor:
 
         Stops when:
         - All nodes are complete, OR
-        - Nodes have failed and no more can be made ready.
+        - Nodes have failed and no more can be made ready, OR
+        - ``interrupt_check()`` returns True (if set).
 
         Returns ``{node_id: result_string}`` for every node.
         Failed nodes have their error message as the result;
@@ -57,6 +66,11 @@ class DAGExecutor:
         """
         results: dict[str, str] = {}
         while not self.dag.is_complete:
+            # ── check interrupt between waves ──
+            if self.interrupt_check and self.interrupt_check():
+                self.interrupted = True
+                break
+
             # ── termination check: stuck with failures ──────────
             if not self.dag.get_ready():
                 # No ready nodes but DAG isn't complete — either blocked
@@ -65,12 +79,19 @@ class DAGExecutor:
                     break  # nothing will ever become ready — stop
             wave_results = self._execute_wave()
             results.update(wave_results)
+
+        # ── mark remaining PENDING nodes as FAILED so get_blocked works ──
+        if self.interrupted:
+            for node in self.dag.nodes.values():
+                if node.status == DAGNodeStatus.PENDING:
+                    node.status = DAGNodeStatus.FAILED
+                    node.result = "[INTERRUPTED]"
         return results
 
     # ── internal ────────────────────────────────────────────
 
     def _execute_wave(self) -> dict[str, str]:
-        """Execute all currently-ready nodes as one wave.
+        """Execute all currently-ready nodes as one wave, in parallel.
 
         If no nodes are ready, checks for failure-induced blocking
         and marks dependent nodes as BLOCKED.
@@ -97,36 +118,58 @@ class DAGExecutor:
 
         wave = self._next_wave_num()
         results: dict[str, str] = {}
+        lock = threading.Lock()
 
-        for node in ready:
-            node.status = DAGNodeStatus.IN_PROGRESS
-            self.execution_log.append({
-                "wave": wave,
-                "node_id": node.id,
-                "action": "start",
-                "description": node.description,
-            })
+        def _run(node: DAGNode) -> None:
+            """Execute one node and record its result (thread-safe)."""
+            with lock:
+                node.status = DAGNodeStatus.IN_PROGRESS
+                self.execution_log.append({
+                    "wave": wave,
+                    "node_id": node.id,
+                    "action": "start",
+                    "description": node.description,
+                })
 
             try:
                 result = self.runner(node.id, node.description)
-                node.status = DAGNodeStatus.COMPLETED
-                node.result = str(result)
-                self.execution_log.append({
-                    "wave": wave,
-                    "node_id": node.id,
-                    "action": "complete",
-                })
-                results[node.id] = str(result)
+                with lock:
+                    node.status = DAGNodeStatus.COMPLETED
+                    node.result = str(result)
+                    self.execution_log.append({
+                        "wave": wave,
+                        "node_id": node.id,
+                        "action": "complete",
+                    })
+                    results[node.id] = str(result)
             except Exception as exc:
-                node.status = DAGNodeStatus.FAILED
-                node.result = str(exc)
-                self.execution_log.append({
-                    "wave": wave,
-                    "node_id": node.id,
-                    "action": "failed",
-                    "error": str(exc),
-                })
-                results[node.id] = str(exc)
+                with lock:
+                    node.status = DAGNodeStatus.FAILED
+                    node.result = str(exc)
+                    self.execution_log.append({
+                        "wave": wave,
+                        "node_id": node.id,
+                        "action": "failed",
+                        "error": str(exc),
+                    })
+                    results[node.id] = str(exc)
+
+        # ── execute ready nodes in parallel (interruptible) ──
+        with ThreadPoolExecutor(max_workers=len(ready)) as pool:
+            futures = {pool.submit(_run, node): node for node in ready}
+            done = set()
+            while len(done) < len(futures):
+                if self.interrupt_check and self.interrupt_check():
+                    for f in futures:
+                        f.cancel()
+                    break
+                pending = set(futures.keys()) - done
+                if not pending:
+                    break
+                newly_done, _ = wait(pending, timeout=0.3)
+                if newly_done:
+                    for f in newly_done:
+                        done.add(f)
 
         return results
 

@@ -12,6 +12,7 @@ from basic_tools.tool_memory import Tool_Remember, Tool_Recall
 from basic_tools.tool_ask_user import Tool_AskUser
 from basic_tools.tool_skill import Tool_SkillView
 from basic_tools.tool_plan import Tool_PlanAdvance, Tool_PlanStatus
+from basic_tools.tool_vision import Tool_VisionQuery
 
 # ── MCP support ──────────────────────────────────────────────
 from config import load_config
@@ -63,7 +64,77 @@ def shutdown_mcp_servers():
         srv.stop()
     _mcp_servers.clear()
 
-# ── all tool instances ──────────────────────────────────────
+
+# ── tool definitions (building blocks for registries) ─────────
+_TOOL_CLASSES = {
+    "get_date": Tool_GetDate,
+    "get_time": Tool_GetTime,
+    "read_file": Tool_ReadFile,
+    "write_file": Tool_WriteFile,
+    "delete_file": Tool_DeleteFile,
+    "delete_dir": Tool_DeleteDir,
+    "patch_file": Tool_PatchFile,
+    "search_files": Tool_SearchFiles,
+    "cmd_execute": Tool_CmdExecute,
+    "web_fetch": Tool_WebFetch,
+    "web_search": Tool_WebSearch,
+    "remember": Tool_Remember,
+    "recall": Tool_Recall,
+    "ask_user": Tool_AskUser,
+    "skill_view": Tool_SkillView,
+    "plan_advance": Tool_PlanAdvance,
+    "plan_status": Tool_PlanStatus,
+    "vision_query": Tool_VisionQuery,
+}
+
+# ── toolsets ─────────────────────────────────────────────────
+_TOOLSETS = {
+    "time": ["get_date", "get_time"],
+    "file": [
+        "read_file", "write_file", "delete_file",
+        "delete_dir", "patch_file", "search_files",
+    ],
+    "shell": ["cmd_execute"],
+    "web": ["web_fetch", "web_search"],
+    "memory": ["remember", "recall"],
+    "interactive": ["ask_user", "skill_view"],
+    "plan": ["plan_advance", "plan_status"],
+    "vision": ["vision_query"],
+    "mcp": [],  # placeholder — MCP tools are injected dynamically
+}
+
+
+class ToolRegistry:
+    """Instantiable tool registry — each agent gets its own instance.
+
+    Usage::
+
+        registry = ToolRegistry(enabled_sets=["time", "file", "shell"])
+        tools = registry.get_tools()
+        agent = Agent(tools=tools)
+    """
+
+    def __init__(self, enabled_sets: list[str] | None = None):
+        self._enabled_sets = enabled_sets
+
+    def get_tools(self) -> dict:
+        """Return a dict of tool instances filtered by enabled sets."""
+        selected = {}
+        if self._enabled_sets is None:
+            for name, cls in _TOOL_CLASSES.items():
+                selected[name] = cls()
+        else:
+            for name in self._enabled_sets:
+                for tool_name in _TOOLSETS.get(name, []):
+                    if tool_name in _TOOL_CLASSES:
+                        selected[tool_name] = _TOOL_CLASSES[tool_name]()
+            if "mcp" in self._enabled_sets:
+                mcp_tools = _init_mcp_servers()
+                selected.update(mcp_tools)
+        return selected
+
+
+# ── global singleton (backwards compatibility) ────────────────
 _all_tools = {
     "get_date": Tool_GetDate(),
     "get_time": Tool_GetTime(),
@@ -82,21 +153,7 @@ _all_tools = {
     "skill_view": Tool_SkillView(),
     "plan_advance": Tool_PlanAdvance(),
     "plan_status": Tool_PlanStatus(),
-}
-
-# ── toolsets ─────────────────────────────────────────────────
-_toolsets = {
-    "time": ["get_date", "get_time"],
-    "file": [
-        "read_file", "write_file", "delete_file",
-        "delete_dir", "patch_file", "search_files",
-    ],
-    "shell": ["cmd_execute"],
-    "web": ["web_fetch", "web_search"],
-    "memory": ["remember", "recall"],
-    "interactive": ["ask_user", "skill_view"],
-    "plan": ["plan_advance", "plan_status"],
-    "mcp": [],  # placeholder — MCP tools are injected dynamically
+    "vision_query": Tool_VisionQuery(),
 }
 
 # ── public API ───────────────────────────────────────────────
@@ -118,7 +175,7 @@ def get_tools(enabled_sets=None):
 
     selected = {}
     for name in enabled_sets:
-        for tool_name in _toolsets.get(name, []):
+        for tool_name in _TOOLSETS.get(name, []):
             if tool_name in _all_tools:
                 selected[tool_name] = _all_tools[tool_name]
     if "mcp" in enabled_sets:
@@ -129,7 +186,7 @@ def get_tools(enabled_sets=None):
 
 def get_toolsets():
     """Return the toolset definition dict."""
-    return dict(_toolsets)
+    return dict(_TOOLSETS)
 
 
 # ── backwards-compatible globals ─────────────────────────────

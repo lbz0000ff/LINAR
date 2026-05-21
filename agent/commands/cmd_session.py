@@ -93,7 +93,7 @@ class SessionCommand(Command):
 
 
 class SessionsCommand(Command):
-    """``/sessions`` — list all sessions with interactive picker."""
+    """``/sessions`` — list all sessions with interactive picker overlay."""
 
     name = "sessions"
     description = "List all sessions"
@@ -104,54 +104,5 @@ class SessionsCommand(Command):
             terminal.console.print("\n  No sessions yet.")
             return True
 
-        from rich.table import Table
-
-        table = Table(show_header=True, header_style="bold", box=None)
-        table.add_column("#", style="dim", width=3)
-        table.add_column("Date", width=19)
-        table.add_column("Title")
-        for s in sessions:
-            sid = s["id"]
-            marker = f"  ← active" if sid == terminal.agent.session_id else ""
-            table.add_row(
-                str(sid),
-                s.get("created_at", "")[:19],
-                f"{s.get('title', '')[:60]}{marker}",
-            )
-        count = db.get_session_count()
-        terminal.console.print(f"\n  Sessions ({count} total):")
-        terminal.console.print(table)
-
-        # Interactive session selector
-        from prompt_toolkit.shortcuts import prompt as pt_prompt
-        from prompt_toolkit.completion import Completer, Completion
-
-        class _SessionPicker(Completer):
-            def __init__(self, sessions):
-                self.sessions = sessions
-            def get_completions(self, document, complete_event):
-                text = document.text_before_cursor
-                for s in self.sessions:
-                    title = (s.get("title") or "")[:40]
-                    display = f"#{s['id']}  {s.get('created_at', '')[:19]}  {title}"
-                    if not text or str(s["id"]).startswith(text):
-                        yield Completion(str(s["id"]), start_position=-len(text), display=display)
-
-        try:
-            result = pt_prompt(
-                "  Select session # (or Enter to cancel): ",
-                completer=_SessionPicker(sessions),
-                complete_while_typing=True,
-            )
-            result = result.strip()
-            if result and result.isdigit():
-                sid = int(result)
-                if terminal.agent.switch_session(sid):
-                    ns = terminal.s("new_session")
-                    terminal.console.print(f"\n  [{ns}]Switched to session #{sid}[/{ns}]")
-                else:
-                    e = terminal.s("error")
-                    terminal.console.print(f"\n  [{e}]Session #{sid} not found[/{e}]")
-        except (KeyboardInterrupt, EOFError):
-            pass
+        terminal.activate_session_picker(sessions)
         return True

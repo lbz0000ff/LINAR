@@ -29,6 +29,7 @@ from prompt_toolkit.layout.menus import CompletionsMenu
 from prompt_toolkit.mouse_events import MouseEventType
 from prompt_toolkit.layout.dimension import Dimension
 from prompt_toolkit.key_binding import KeyBindings
+from prompt_toolkit.filters import Condition
 from prompt_toolkit.formatted_text import ANSI
 from prompt_toolkit.widgets import Frame
 from rich.console import Console
@@ -39,6 +40,12 @@ from rich.markup import escape as rich_escape
 _AGENT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if _AGENT_DIR not in sys.path:
     sys.path.insert(0, _AGENT_DIR)
+
+# When loaded via runpy (e.g. lily.py), ``agent`` may already be cached
+# as a namespace package.  Delete it so the real ``agent/agent.py``
+# module is imported instead.
+if 'agent' in sys.modules and getattr(sys.modules['agent'], '__file__', None) is None:
+    del sys.modules['agent']
 
 import agent
 from config import load_config
@@ -52,6 +59,7 @@ from commands.cmd_reasoning import ReasoningCommand
 from commands.cmd_tool_calls import ToolCallsCommand
 from commands.cmd_session import SessionCommand, SessionsCommand
 from commands.cmd_logging import LoggingCommand
+from commands.cmd_stop import StopCommand
 from skill import register_skill, get_skill, all_skills, load_skills_from_markdown
 
 Agent = agent.Agent
@@ -255,6 +263,12 @@ class LilyTerminal:
         # ── current input being processed (for steer) ──
         self._current_input = ""
 
+        # ── session picker ──
+        self._session_picker_sessions: list[dict] = []
+        self._session_picker_cursor = 0
+        self._session_picker_scroll = 0
+        self._session_picker_active = False
+
         # ── btw / steer ──
         self._btw_context = ""
         self._btw_visible = False
@@ -402,10 +416,9 @@ class LilyTerminal:
             style='fg:#40a1f2',
         )
 
-        # ">> " prompt label
+        # ">> " prompt label — shows "The agent is working..." when busy + input empty
         input_prompt = Window(
-            FormattedTextControl([("fg:#40a1f2", ">> ")]),
-            width=3,
+            FormattedTextControl(self._get_input_prompt),
             dont_extend_width=True,
             always_hide_cursor=True,
         )
@@ -423,8 +436,34 @@ class LilyTerminal:
         # Key bindings
         kb = KeyBindings()
 
+        # ── session picker navigation ─────────────────────
+        _picker = Condition(lambda: self._session_picker_active)
+
+        @kb.add('up', filter=_picker)
+        def _picker_up(event):
+            n = len(self._session_picker_sessions)
+            self._session_picker_cursor = (self._session_picker_cursor - 1) % n
+            # scroll up when cursor moves above the visible window
+            v = self._picker_visible_lines()
+            if self._session_picker_cursor < self._session_picker_scroll:
+                self._session_picker_scroll = self._session_picker_cursor
+            event.app.invalidate()
+
+        @kb.add('down', filter=_picker)
+        def _picker_down(event):
+            n = len(self._session_picker_sessions)
+            self._session_picker_cursor = (self._session_picker_cursor + 1) % n
+            # scroll down when cursor moves below the visible window
+            v = self._picker_visible_lines()
+            if self._session_picker_cursor >= self._session_picker_scroll + v:
+                self._session_picker_scroll = self._session_picker_cursor - v + 1
+            event.app.invalidate()
+
         @kb.add('enter')
         def _enter(event):
+            if self._session_picker_active:
+                self._session_picker_select()
+                return
             buff = event.current_buffer
             if buff.complete_state:
                 completions = buff.complete_state.completions
@@ -470,9 +509,24 @@ class LilyTerminal:
 
         @kb.add('escape')
         def _escape(event):
+            if self._session_picker_active:
+                self._session_picker_active = False
+                self.app.invalidate()
+                return
             if self._btw_visible:
                 self._btw_visible = False
                 self.app.invalidate()
+
+        @kb.add('s-tab')
+        def _shift_tab(event):
+            """Cycle through permission modes: safe → auto → review."""
+            if self._session_picker_active:
+                return
+            modes = ["safe", "auto", "review"]
+            current = self.agent.permissions.mode
+            idx = (modes.index(current) + 1) % len(modes)
+            self.agent.permissions.switch_mode(modes[idx])
+            self.app.invalidate()
 
         # BTW popup window (scrollable, hidden by default)
         self._btw_window = Frame(
@@ -502,6 +556,19 @@ class LilyTerminal:
                         bottom=5,
                         height=lambda: 0 if not self._btw_visible else min(
                             len(self._btw_fragments) // 2 + 2, 20
+                        ),
+                    ),
+                    Float(
+                        content=Window(
+                            content=FormattedTextControl(self._session_picker_text),
+                            style="bg:#1a1a2e",
+                        ),
+                        left=2,
+                        right=2,
+                        bottom=1,
+                        height=lambda: (
+                            0 if not self._session_picker_active
+                            else self._picker_visible_lines() + 4
                         ),
                     ),
                 ],
@@ -541,10 +608,10 @@ class LilyTerminal:
         self._flush_deque_to_fragments()
 
     def _get_fragments(self):
-        """Callback for FormattedTextControl — returns current fragments
-        with a mouse handler attached to detect scroll events."""
+        """Callback for FormattedTextControl — returns fragments
+        with a mouse handler for scroll events."""
         if not self._render_fragments:
-            return self._render_fragments
+            return []
         return [(s, t, self._on_output_mouse) for s, t in self._render_fragments]
 
     def _on_output_mouse(self, me):
@@ -587,13 +654,19 @@ class LilyTerminal:
 
     # ── output helpers ────────────────────────────────────
 
-    def _flush_deque_to_fragments(self):
-        """Move all items from _output_deque to _render_fragments."""
+    def _flush_deque_to_fragments(self) -> bool:
+        """Move all items from _output_deque to _render_fragments.
+
+        Returns True if any items were moved (caller should invalidate).
+        """
+        if not self._output_deque:
+            return False
         while self._output_deque:
             self._render_fragments.append(self._output_deque.popleft())
         # Trim if too large
         if len(self._render_fragments) > 10000:
             self._render_fragments = self._render_fragments[-5000:]
+        return True
 
     # ── event handler (called from agent bg thread) ──────
 
@@ -810,6 +883,20 @@ class LilyTerminal:
                 self.console.print(f"\n    [{tn}]Agent called tool {tool_name}[/{tn}]...")
         self.console.print("\n— Conversation History —")
 
+    # ── input prompt ─────────────────────────────────────
+
+    def _get_input_prompt(self) -> list[tuple[str, str]]:
+        """Return the input prompt label — shows mode and working status."""
+        if self._processing and self._input_buf and not self._input_buf.text:
+            return [(f"fg:{_RICH_COLORS.get('grey58', '#949494')}", "The agent is working... ")]
+        mode = self.agent.permissions.mode.upper()
+        colors = {"SAFE": "#40a1f2", "AUTO": "#ff6b6b", "REVIEW": "#ffd93d"}
+        color = colors.get(mode, "#40a1f2")
+        return [
+            (f"fg:{color}", f"[{mode}] "),
+            ("fg:#40a1f2", ">> "),
+        ]
+
     # ── commands ──────────────────────────────────────────
 
     def _reasoning_color(self, mode: str | None = None) -> str:
@@ -825,6 +912,73 @@ class LilyTerminal:
         colors = self.style["mode_colors"]["tool_calls"]
         color = colors.get(m, "white")
         return f"[{color}]{m}[/{color}]"
+
+    # ── session picker (overlay) ──────────────────────────
+
+    def activate_session_picker(self, sessions: list[dict]) -> None:
+        """Show the session picker overlay."""
+        self._session_picker_sessions = sessions
+        self._session_picker_cursor = 0
+        self._session_picker_scroll = 0
+        self._session_picker_active = True
+        self.app.invalidate()
+
+    def _picker_visible_lines(self) -> int:
+        """Number of session lines that fit in the picker overlay.
+
+        Derived from the same computation used for the float height.
+        """
+        rows = self.app.output.get_size().rows if self.app else 24
+        return max(6, rows // 2) - 4  # minus header(2) + footer(2)
+
+    def _session_picker_text(self) -> list[tuple[str, str]]:
+        """Formatted text for the session picker float."""
+        if not self._session_picker_active:
+            return []
+        sessions = self._session_picker_sessions
+        cursor = self._session_picker_cursor
+        current_id = self.agent.session_id
+        dim = f"fg:{_RICH_COLORS.get('grey58', '#949494')}"
+
+        n_visible = self._picker_visible_lines()
+        max_scroll = max(0, len(sessions) - n_visible)
+        scroll = min(self._session_picker_scroll, max_scroll)
+
+        lines: list[tuple[str, str]] = []
+        lines.append(("bold", f"  Sessions ({len(sessions)} total)\n"))
+        lines.append((dim, f"  {'─' * 50}\n"))
+        for i in range(scroll, scroll + n_visible):
+            if i >= len(sessions):
+                break
+            s = sessions[i]
+            prefix = "▸ " if i == cursor else "  "
+            marker = "  ← active" if s["id"] == current_id else ""
+            title = (s.get("title") or "")[:60]
+            date = (s.get("created_at") or "")[:19]
+            style = "bold" if i == cursor else ""
+            lines.append((style, f"{prefix}#{s['id']}  {date}  {title}{marker}\n"))
+        lines.append((dim, f"\n  {'─' * 50}\n"))
+        lines.append((dim, "  ↑↓ select  |  Enter switch  |  Esc cancel"))
+        return lines
+
+    def _session_picker_select(self) -> None:
+        """Called when Enter is pressed with picker active."""
+        if not self._session_picker_active:
+            return
+        sessions = self._session_picker_sessions
+        cursor = self._session_picker_cursor
+        self._session_picker_active = False
+
+        if 0 <= cursor < len(sessions):
+            sid = sessions[cursor]["id"]
+            if sid != self.agent.session_id:
+                if self.agent.switch_session(sid):
+                    ns = self.s("new_session")
+                    self.console.print(f"\n  [{ns}]Switched to session #{sid}[/{ns}]")
+                else:
+                    e = self.s("error")
+                    self.console.print(f"\n  [{e}]Session #{sid} not found[/{e}]")
+        self.app.invalidate()
 
     # ── TUI: input handler ────────────────────────────────
 
@@ -1064,23 +1218,15 @@ class LilyTerminal:
 
         async def _flush_loop():
             while True:
-                dirty = False
-                # Flush output deque to render fragments
-                while self._output_deque:
-                    self._render_fragments.append(self._output_deque.popleft())
-                    dirty = True
-                # Flush captured console output (from commands)
+                dirty = self._flush_deque_to_fragments()
+                # Also flush captured console output (from commands)
                 if self._capture.flush_to_tui():
                     dirty = True
-                    # Immediately flush the newly appended deque items too
-                    while self._output_deque:
-                        self._render_fragments.append(self._output_deque.popleft())
+                    # flush any new items that capture put in the deque
+                    if self._flush_deque_to_fragments():
                         dirty = True
                 if dirty:
                     self.app.invalidate()
-                # Trim
-                if len(self._render_fragments) > 10000:
-                    self._render_fragments = self._render_fragments[-5000:]
                 await asyncio.sleep(0.05)
 
         async def _main():
@@ -1131,6 +1277,7 @@ def main() -> None:
     register(SessionCommand())
     register(SessionsCommand())
     register(LoggingCommand())
+    register(StopCommand())
     log.info("Registered %d commands", len(all_commands()))
 
     # ── register skills ──
