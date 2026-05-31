@@ -36,8 +36,24 @@ import sys
 import json
 import asyncio
 import importlib.util
+from typing import Any
+
+import threading
 
 import yaml
+
+# Persistent event loop for async script tools.  Module-level singletons
+# (e.g. aiohttp ClientSession) retain loop affinity, so we keep one loop
+# alive instead of creating + closing one per call.
+_async_loop: asyncio.AbstractEventLoop | None = None
+
+
+def _get_async_loop() -> asyncio.AbstractEventLoop:
+    global _async_loop
+    if _async_loop is None or _async_loop.is_closed():
+        _async_loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(_async_loop)
+    return _async_loop
 
 
 # ── Claude Code granular tool name → Lily tool name mapping ──
@@ -103,6 +119,7 @@ class Skill:
     hooks: dict | None = None                # lifecycle hooks
     paths: list[str] | None = None           # glob patterns for auto-activation
     shell: str = "bash"                      # bash | powershell
+    mcp_servers: list[str] | None = None     # MCP servers to start on load
 
     # ── bundled script support (skill.json / scripts/) ──────
     skill_file: str = ""                     # path to Python script from skill.json
@@ -118,6 +135,7 @@ class Skill:
         """
         self._saved_prompt = agent.llm.system_prompt
         self._saved_tools = dict(agent.tools)  # shallow copy
+        agent._active_skill = self
 
         # ── register bundled script tools ──
         injected = {}
@@ -128,6 +146,7 @@ class Skill:
                 script_path=self.skill_file,
                 skill_dir=self.skill_dir,
                 shell=self.shell,
+                agent_ref=agent,
             )
             injected[self.name + "_script"] = script_tool
 
@@ -140,6 +159,7 @@ class Skill:
                         script_path=os.path.join(self.scripts_dir, fname),
                         skill_dir=self.skill_dir,
                         shell=self.shell,
+                        agent_ref=agent,
                     )
                     injected[f"{self.name}_{fname[:-3]}"] = st
                 elif fname.endswith((".sh", ".ps1")):
@@ -149,6 +169,7 @@ class Skill:
                         script_path=os.path.join(self.scripts_dir, fname),
                         skill_dir=self.skill_dir,
                         shell=self.shell,
+                        agent_ref=agent,
                     )
                     injected[f"{self.name}_{fname.rsplit('.', 1)[0]}"] = st
 
@@ -156,15 +177,22 @@ class Skill:
         if injected:
             agent.tools = {**agent.tools, **injected}
 
+        # ── MCP servers are started at boot by tool_registry._init_mcp_servers() ──
+        # Skill only controls which tools are visible via allowed_tools.
+
         agent._skill_active = True
         agent.llm.system_prompt = self.system_prompt
 
         if self.allowed_tools is not None:
             # Resolve both Claude Code granular names and Lily native names
+            # MCP tools (prefixed with mcp_) are always visible, not filtered
             allowed = set(injected.keys())
             for raw in self.allowed_tools:
                 allowed.update(_resolve_tool_name(raw))
-            filtered = {k: v for k, v in agent.tools.items() if k in allowed}
+            filtered = {}
+            for k, v in agent.tools.items():
+                if k.startswith("mcp_") or k in allowed:
+                    filtered[k] = v
             agent.tools = filtered
             agent.llm.tools = filtered
 
@@ -172,8 +200,10 @@ class Skill:
         """Called when the skill hands control back to the main agent.
 
         Restores the agent's pre-skill state (prompt + tools).
+        MCP tools are boot-loaded and persist independently of skill lifecycle.
         """
         agent._skill_active = False
+        agent._active_skill = None
         agent.llm.system_prompt = self._saved_prompt
         agent.tools = self._saved_tools
         agent.llm.tools = self._saved_tools
@@ -189,15 +219,22 @@ class SkillScriptTool:
     For Python scripts, it imports the module and calls ``execute(command, args)``
     (or ``handle_command(text)`` as a fallback), handling async functions
     transparently.  For shell scripts, it runs them via ``subprocess``.
+
+    If the script returns a dict with a ``"promise"`` key, the tool registers
+    it with the agent as an async operation and returns without blocking.
     """
 
+    stop_event: Any = None  # set by agent for interrupt support
+
     def __init__(self, name: str, description: str, script_path: str,
-                 skill_dir: str = "", shell: str = "bash"):
+                 skill_dir: str = "", shell: str = "bash",
+                 agent_ref=None):
         self.name = name
         self.description = description
         self._script_path = script_path
         self._skill_dir = skill_dir
         self._shell = shell
+        self.agent_ref = agent_ref
         self._schema = {
             "name": name,
             "description": description,
@@ -263,6 +300,9 @@ class SkillScriptTool:
 
             # Try execute(command, args) first (OpenClaw convention)
             if hasattr(self._module, "execute"):
+                # Inject stop_event so the script can check it during long ops
+                if self.stop_event is not None:
+                    self._module.stop_event = self.stop_event
                 fn = self._module.execute
                 result = fn(command, args)
             # Fallback: handle_command(text)
@@ -286,15 +326,31 @@ class SkillScriptTool:
 
             # Handle async functions
             if asyncio.iscoroutine(result):
-                try:
-                    loop = asyncio.get_event_loop()
-                    if loop.is_running():
-                        # We're in an async context — create new loop
-                        result = asyncio.new_event_loop().run_until_complete(result)
-                    else:
-                        result = loop.run_until_complete(result)
-                except RuntimeError:
-                    result = asyncio.run(result)
+                if self.stop_event and self.stop_event.is_set():
+                    return "[Interrupted by user]"
+
+                loop = _get_async_loop()
+                result = loop.run_until_complete(result)
+
+            # ── promise detection: script returned an async operation ──
+            if isinstance(result, dict) and "promise" in result:
+                promise = result["promise"]
+                pid = promise.get("id", "")
+                if pid and self.agent_ref:
+                    self.agent_ref.create_promise(pid)
+                    self.agent_ref._promises[pid].update(promise)
+                    return (
+                        f"[PROMISE] Async operation submitted: {pid}\n"
+                        f"Status: {promise.get('status', 'pending')}\n"
+                        f"{promise.get('message', '')}\n\n"
+                        f"Use resolve_promise promise_id=\"{pid}\" to check status."
+                    )
+                elif pid:
+                    return (
+                        f"[PROMISE] Async operation submitted: {pid}\n"
+                        f"The operation is running in the background. "
+                        f"(agent_ref not available for status queries)"
+                    )
 
             # Format dict result nicely
             if isinstance(result, dict):
@@ -374,6 +430,8 @@ _FRONTMATTER_FIELDS = {
     "hooks": "hooks",
     "paths": "paths",
     "shell": "shell",
+    "mcp-servers": "mcp_servers",
+    "mcp_servers": "mcp_servers",
 }
 
 
@@ -414,6 +472,8 @@ def load_skills_from_markdown(skills_dir: str) -> int:
         return 0
 
     for entry in os.listdir(skills_dir):
+        if entry.endswith(".disabled"):
+            continue
         skill_dir_path = os.path.join(skills_dir, entry)
         skill_file = os.path.join(skill_dir_path, _SKILL_MD)
         if not os.path.isfile(skill_file):

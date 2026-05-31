@@ -14,9 +14,12 @@ Usage::
 
 import json
 import os
+import queue
 import shutil
 import subprocess
 import sys
+import threading
+import time
 from logger import get_logger
 
 log = get_logger(__name__)
@@ -33,10 +36,11 @@ def _resolve_cmd(command: str) -> str:
 class MCPServer:
     """Synchronous wrapper around an MCP server child process."""
 
-    def __init__(self, name: str, command: str, args: list[str] | None = None):
+    def __init__(self, name: str, command: str, args: list[str] | None = None, env: dict | None = None):
         self.name = name
         self._command = command
         self._args = args or []
+        self._env = env
         self._proc: subprocess.Popen | None = None
         self._request_id = 0
         self._tools: list[dict] = []
@@ -51,11 +55,16 @@ class MCPServer:
             return
 
         log.info("Starting MCP server '%s': %s %s", self.name, self._command, " ".join(self._args))
+        proc_env = None
+        if self._env:
+            proc_env = os.environ.copy()
+            proc_env.update(self._env)
         self._proc = subprocess.Popen(
             [_resolve_cmd(self._command)] + self._args,
             stdin=subprocess.PIPE,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
+            env=proc_env,
         )
 
         # ── initialize ──
@@ -149,17 +158,64 @@ class MCPServer:
     def _send(self, msg: dict):
         line = json.dumps(msg, ensure_ascii=False) + "\n"
         if self._proc and self._proc.stdin:
-            self._proc.stdin.write(line.encode("utf-8"))
-            self._proc.stdin.flush()
+            try:
+                self._proc.stdin.write(line.encode("utf-8"))
+                self._proc.stdin.flush()
+            except (BrokenPipeError, OSError) as e:
+                log.warning("MCP _send failed for '%s': %s", self.name, e)
+                raise RuntimeError(f"MCP server '{self.name}' write failed: {e}")
 
-    def _recv(self) -> dict | None:
-        """Read one JSON-RPC response line from stdout."""
+    def _recv(self, timeout: float = 300.0) -> dict | None:
+        """Read one JSON-RPC response line from stdout with a timeout.
+
+        Skips non-JSON lines (e.g. startup banners printed by the server
+        before it enters stdio protocol mode).
+
+        Uses a daemon thread to read from the pipe so the agent never hangs
+        indefinitely if the subprocess stops responding.
+        """
         if self._proc is None or self._proc.stdout is None:
             return None
-        line = self._proc.stdout.readline()
-        if not line:
-            return None
-        return json.loads(line.decode("utf-8"))
+
+        deadline = time.monotonic() + timeout
+        while True:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                log.warning("MCP _recv timed out (%.1fs) for '%s'", timeout, self.name)
+                return None
+
+            q: queue.Queue = queue.Queue()
+
+            def _reader():
+                try:
+                    line = self._proc.stdout.readline()
+                    q.put(line)
+                except Exception as e:
+                    q.put(e)
+
+            t = threading.Thread(target=_reader, daemon=True)
+            t.start()
+            t.join(max(remaining, 0.1))
+
+            if t.is_alive():
+                log.warning("MCP _recv timed out (%.1fs) for '%s'", timeout, self.name)
+                return None
+
+            result = q.get_nowait()
+            if isinstance(result, Exception):
+                raise result
+            if not result:
+                return None
+
+            raw = result.decode("utf-8", errors="replace").strip()
+            if not raw:
+                continue  # skip empty lines
+
+            try:
+                return json.loads(raw)
+            except json.JSONDecodeError:
+                log.debug("MCP _recv skipping non-JSON line: %.100s", raw)
+                continue  # skip banner / debug output
 
     def _dump_stderr(self):
         """Print whatever the subprocess wrote to stderr (for debugging)."""

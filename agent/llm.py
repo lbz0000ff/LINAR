@@ -1,6 +1,5 @@
 from openai import OpenAI
 from logger import get_logger
-from basic_tools.tool_time import Tool_GetTime
 
 log = get_logger(__name__)
 
@@ -69,7 +68,7 @@ class LLM:
         yield from response
 
 if __name__ == "__main__":
-    with open("api_key.txt", "r") as f:
+    with open("api_key.txt", "r", encoding="utf-8") as f:
         api_key = f.read().strip()
     llm = LLM(api_key)
     prompt = "Where is China located?"

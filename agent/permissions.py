@@ -26,6 +26,7 @@ class PermissionManager:
         self.default: str = cfg.get("default", "ask")
         self.rules: dict[str, str] = cfg.get("rules", {})
         self._overrides: dict[str, str] = {}
+        self._cmd_safe_prefixes: list[str] = cfg.get("cmd_safe_prefixes", [])
 
         # ── mode support ─────────────────────────────────────
         self._modes: dict[str, dict] = {}
@@ -69,11 +70,19 @@ class PermissionManager:
 
     # ── original public API ───────────────────────────────────
 
-    def check(self, tool_name: str) -> str:
+    def check(self, tool_name: str, tool_args: dict | None = None) -> str:
         """Return the effective permission level for *tool_name*.
+
+        *tool_args* is the raw arguments dict (e.g. ``{"command": "ls"}``
+        for ``cmd_execute``) used for command-level filtering.
 
         Returns one of ``"allow"``, ``"ask"``, ``"deny"``.
         """
+        # 0. cmd_execute safe-prefix match → auto allow
+        if tool_name == "cmd_execute" and self._cmd_safe_prefixes and tool_args:
+            cmd = (tool_args.get("command") or "").strip().lower()
+            if any(cmd.startswith(prefix.lower()) for prefix in self._cmd_safe_prefixes):
+                return "allow"
         # 1. Runtime override (user-picked always / never)
         if tool_name in self._overrides:
             return self._overrides[tool_name]

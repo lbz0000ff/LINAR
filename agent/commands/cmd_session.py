@@ -25,6 +25,9 @@ class SessionCommand(Command):
 
         # /session <id> — switch to a session
         if sub.isdigit():
+            if getattr(terminal, '_processing', False):
+                terminal.console.print("\n  Can't switch sessions while the agent is processing.")
+                return True
             sid = int(sub)
             if terminal.agent.switch_session(sid):
                 ns = terminal.s("new_session")
@@ -53,6 +56,9 @@ class SessionCommand(Command):
 
         # /session delete <id>
         if sub == "delete" and len(parts) >= 2:
+            if getattr(terminal, '_processing', False):
+                terminal.console.print("\n  Can't delete sessions while the agent is processing.")
+                return True
             try:
                 sid = int(parts[1])
             except (ValueError, IndexError):

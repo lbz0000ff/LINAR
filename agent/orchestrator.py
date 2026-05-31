@@ -147,15 +147,21 @@ class Orchestrator:
                 f"Do NOT call skill_view — you are already in the skill context."
             ),
         })
-        self.agent.add_user_message(user_input)
 
-        self._transition(Stage.SKILL_EXEC)
-        try:
-            self.agent.process_with_llm()
-        except Exception:
-            self._transition(Stage.ERROR)
-            skill.on_unload(self.agent)
-            raise
+        # If the user invoked the skill with no arguments, don't call the LLM
+        # — an empty user message causes hallucinations (the model fills in
+        # plausible-sounding but false scenarios).  Just load and return.
+        if user_input.strip():
+            self.agent.add_user_message(user_input)
+            self._transition(Stage.SKILL_EXEC)
+            try:
+                self.agent.process_with_llm()
+            except Exception:
+                self._transition(Stage.ERROR)
+                skill.on_unload(self.agent)
+                raise
+        else:
+            self.agent.emit({"type": "skill_loaded", "data": {"name": skill.name, "desc": skill.description}})
 
         self._transition(Stage.SKILL_UNLOAD)
         skill.on_unload(self.agent)
@@ -182,6 +188,16 @@ class Orchestrator:
             sub_cfg = self.agent.cfg
             enabled = sub_cfg.get("tools", {}).get("enabled_sets", None)
             sub_tools = get_tools(enabled)
+
+            # Save main agent's tool refs — get_tools() returns shared
+            # singleton instances, and Agent.__init__ overwrites agent_ref
+            # (and stop_event) on them.  They must be restored after the
+            # sub-agent finishes so the main agent remains functional.
+            _saved_refs: dict[int, object] = {}
+            for t in sub_tools.values():
+                if hasattr(t, 'agent_ref'):
+                    _saved_refs[id(t)] = t.agent_ref
+
             sub_agent = Agent(tools=sub_tools)
         except Exception as exc:
             self.agent.emit({"type": "error", "data": f"Failed to fork agent: {exc}"})
@@ -197,27 +213,35 @@ class Orchestrator:
             if hasattr(t, 'stop_event'):
                 t.stop_event = sub_agent.stop_event
 
-        # Apply skill on_load to subagent
-        skill.on_load(sub_agent)
-        sub_agent.add_user_message(user_input)
-
-        self._transition(Stage.SKILL_EXEC)
         try:
-            sub_agent.process_with_llm()
-        except Exception:
-            self._transition(Stage.ERROR)
+            # Apply skill on_load to subagent
+            skill.on_load(sub_agent)
+            sub_agent.add_user_message(user_input)
+
+            self._transition(Stage.SKILL_EXEC)
+            try:
+                sub_agent.process_with_llm()
+            except Exception:
+                self._transition(Stage.ERROR)
+                skill.on_unload(sub_agent)
+                raise
+
+            self._transition(Stage.SKILL_UNLOAD)
             skill.on_unload(sub_agent)
-            raise
 
-        self._transition(Stage.SKILL_UNLOAD)
-        skill.on_unload(sub_agent)
-
-        # Collect the subagent's final answer
-        result_text = ""
-        for msg in reversed(sub_agent.chat_history):
-            if msg.get("role") == "agent":
-                result_text = msg.get("content", "")
-                break
+            # Collect the subagent's final answer
+            result_text = ""
+            for msg in reversed(sub_agent.chat_history):
+                if msg.get("role") == "agent":
+                    result_text = msg.get("content", "")
+                    break
+        finally:
+            # ── restore main agent's tool refs ──
+            for t in sub_tools.values():
+                if hasattr(t, 'agent_ref') and id(t) in _saved_refs:
+                    t.agent_ref = _saved_refs[id(t)]
+                if hasattr(t, 'stop_event'):
+                    t.stop_event = self.agent.stop_event
 
         self._transition(Stage.COMPLETE)
         self._transition(Stage.IDLE)
@@ -241,13 +265,15 @@ class Orchestrator:
         if not user_input:
             return
 
-        # Multi-step indicators — conjunctions that join multiple actions
+        # Multi-step indicators — conjunctions that join multiple actions.
+        # Avoid single digits / common substrings that trigger on version
+        # numbers ("SD1.5") or casual sentences.
         multi_step_keywords = [
-            " and ", " then ", " first ", " finally ",
-            "first,", "second,", "1.", "2.",
+            " and then ", " first ", " finally ",
+            "secondly,", "thirdly,",
             # Chinese
-            "然后", "接着", "步骤", "并",
-            "第一步", "第二步", "首先", "其次",
+            "然后", "接着", "首先", "其次",
+            "第一步", "第二步", "步骤如下",
         ]
         kw_matches = sum(user_input.lower().count(kw) for kw in multi_step_keywords if kw)
         self.needs_plan = kw_matches >= 1

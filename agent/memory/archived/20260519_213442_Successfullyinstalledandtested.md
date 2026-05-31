@@ -1,1 +1,0 @@
-Successfully installed and tested mcp-server-fetch. The MCP infrastructure is working — MCPServer class starts/stops the subprocess, registers 1 tool ("fetch"), and call_tool returns results properly. Config updated with mcp_servers.fetch and mcp toolset enabled.

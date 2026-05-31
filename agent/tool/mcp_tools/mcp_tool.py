@@ -1,5 +1,5 @@
 """MCPTool — wraps a remote MCP tool as a Lily Tool."""
-from .tool import Tool
+from ..basic_tools.tool import Tool
 
 
 class MCPTool(Tool):

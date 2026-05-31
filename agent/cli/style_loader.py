@@ -13,6 +13,7 @@ _STYLE_PATH = os.path.join(_STYLE_DIR, "style.yaml")
 DEFAULTS = {
     "banner": {
         "border": "grey",
+        "echo": "cyan",
         "lily": "grey85",
         "i": "red",
         "shadow": "grey",

@@ -1,45 +1,124 @@
 from logger import get_logger
-from basic_tools.tool_time import Tool_GetTime, Tool_GetDate
+import os
+import json
+from tool.basic_tools.tool_time import Tool_GetTime, Tool_GetDate
 
 log = get_logger(__name__)
-from basic_tools.tool_fileio import (
+from tool.basic_tools.tool_fileio import (
     Tool_ReadFile, Tool_WriteFile, Tool_DeleteFile,
     Tool_DeleteDir, Tool_PatchFile, Tool_SearchFiles,
 )
-from basic_tools.tool_cmd import Tool_CmdExecute
-from basic_tools.tool_web import Tool_WebFetch, Tool_WebSearch
-from basic_tools.tool_memory import Tool_Remember, Tool_Recall
-from basic_tools.tool_ask_user import Tool_AskUser
-from basic_tools.tool_skill import Tool_SkillView
-from basic_tools.tool_plan import Tool_PlanAdvance, Tool_PlanStatus
-from basic_tools.tool_vision import Tool_VisionQuery
+from tool.basic_tools.tool_cmd import Tool_CmdExecute
+from tool.basic_tools.tool_web import Tool_WebFetch, Tool_WebSearch
+from tool.basic_tools.tool_memory import Tool_Remember, Tool_Recall
+from tool.basic_tools.tool_ask_user import Tool_AskUser
+from tool.basic_tools.tool_skill import Tool_SkillView
+from tool.basic_tools.tool_plan import Tool_PlanAdvance, Tool_PlanStatus
+from tool.basic_tools.tool_vision import Tool_VisionQuery
+from tool.basic_tools.tool_promise import Tool_ResolvePromise
+from tool.basic_tools.tool_watch import Tool_Watch
+from tool.basic_tools.tool_cancel_promise import Tool_CancelPromise
 
 # ── MCP support ──────────────────────────────────────────────
 from config import load_config
 from mcp_server import MCPServer
-from basic_tools.mcp_tool import MCPTool
+from tool.mcp_tools.mcp_tool import MCPTool
 
 _mcp_servers: list[MCPServer] = []
 _mcp_initialized = False
-_mcp_tools_cache: dict = None
+_mcp_tools_cache: dict = {}
 """All running MCP server instances (for lifecycle management)."""
 
 
+def _discover_local_servers() -> dict:
+    """Auto-discover MCP servers from agent/tool/mcp_tools/server/.
+
+    Each subdirectory containing a ``server.py`` or ``mcp_server.json``
+    is registered as a server.
+
+    Config.yaml entries always take precedence over discovered ones.
+    """
+    discovered = {}
+    servers_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                               "tool", "mcp_tools", "server")
+    if not os.path.isdir(servers_dir):
+        return discovered
+
+    for entry in sorted(os.listdir(servers_dir)):
+        srv_dir = os.path.join(servers_dir, entry)
+        if not os.path.isdir(srv_dir):
+            continue
+
+        # Check for manifest
+        manifest = os.path.join(srv_dir, "mcp_server.json")
+        if os.path.isfile(manifest):
+            try:
+                with open(manifest, encoding="utf-8") as f:
+                    meta = json.load(f)
+                args_raw = meta.get("args", [os.path.join(srv_dir, "server.py")])
+                args_resolved = [
+                    os.path.join(srv_dir, a) if not a.startswith("-") and not os.path.isabs(a)
+                    and "/" not in a and "\\" not in a
+                    else a
+                    for a in args_raw
+                ]
+                env_raw = meta.get("env") or {}
+                env_resolved = {
+                    k: os.path.join(srv_dir, v) if not v.startswith("-") and not os.path.isabs(v)
+                    and "/" not in v and "\\" not in v
+                    else v
+                    for k, v in env_raw.items()
+                }
+                discovered[entry] = {
+                    "enabled": True,
+                    "command": meta.get("command", "python"),
+                    "args": args_resolved,
+                    "env": env_resolved or None,
+                }
+                continue
+            except (OSError, json.JSONDecodeError) as e:
+                log.warning("MCP discover: skipping %s manifest: %s", entry, e)
+
+        # Convention: python server.py --stdio
+        server_py = os.path.join(srv_dir, "server.py")
+        if os.path.isfile(server_py):
+            discovered[entry] = {
+                "enabled": True,
+                "command": "python",
+                "args": [server_py, "--stdio"],
+                "env": None,
+            }
+
+    return discovered
+
+
+def _load_mcp_config() -> dict:
+    """Merge config.yaml MCP servers with auto-discovered local servers.
+
+    Returns a dict of ``{name: config_dict}``.  Config.yaml entries
+    take precedence over discovered ones.
+    """
+    cfg = load_config()
+    merged = dict(cfg.get("mcp_servers") or {})
+    for name, scfg in _discover_local_servers().items():
+        merged.setdefault(name, scfg)
+    return merged
+
+
 def _init_mcp_servers() -> dict:
-    """Start MCP servers from config and return their tools (once)."""
+    """Start all MCP servers from config and return their tools (once)."""
     global _mcp_initialized, _mcp_tools_cache
     if _mcp_initialized:
-        return _mcp_tools_cache or {}
+        return _mcp_tools_cache
     _mcp_initialized = True
 
-    cfg = load_config()
-    servers_cfg = cfg.get("mcp_servers") or {}
+    servers_cfg = _load_mcp_config()
     tools = {}
     for name, scfg in servers_cfg.items():
         if not scfg.get("enabled", True):
             continue
         try:
-            server = MCPServer(name, scfg["command"], scfg.get("args", []))
+            server = MCPServer(name, scfg["command"], scfg.get("args", []), env=scfg.get("env"))
             server.start()
             for t in server.list_tools():
                 full_name = f"mcp_{name}_{t['name']}"
@@ -56,6 +135,25 @@ def _init_mcp_servers() -> dict:
             log.error("MCP server '%s' failed: %s", name, exc)
     _mcp_tools_cache = tools
     return tools
+
+
+def reload_mcp_servers() -> dict:
+    """Shut down all MCP servers and restart them.
+
+    Call this after installing new MCP servers or tools.
+    Returns the new tool dict.
+    """
+    global _mcp_initialized, _mcp_tools_cache, _mcp_servers
+
+    # Shut down existing
+    for srv in _mcp_servers:
+        srv.stop()
+    _mcp_servers.clear()
+    _mcp_tools_cache = {}
+    _mcp_initialized = False
+
+    # Re-init
+    return _init_mcp_servers()
 
 
 def shutdown_mcp_servers():
@@ -85,6 +183,9 @@ _TOOL_CLASSES = {
     "plan_advance": Tool_PlanAdvance,
     "plan_status": Tool_PlanStatus,
     "vision_query": Tool_VisionQuery,
+    "resolve_promise": Tool_ResolvePromise,
+    "watch": Tool_Watch,
+    "cancel_promise": Tool_CancelPromise,
 }
 
 # ── toolsets ─────────────────────────────────────────────────
@@ -97,7 +198,8 @@ _TOOLSETS = {
     "shell": ["cmd_execute"],
     "web": ["web_fetch", "web_search"],
     "memory": ["remember", "recall"],
-    "interactive": ["ask_user", "skill_view"],
+    "interactive": ["ask_user", "skill_view", "resolve_promise"],
+    "shell": ["cmd_execute", "watch", "cancel_promise"],
     "plan": ["plan_advance", "plan_status"],
     "vision": ["vision_query"],
     "mcp": [],  # placeholder — MCP tools are injected dynamically
@@ -154,6 +256,9 @@ _all_tools = {
     "plan_advance": Tool_PlanAdvance(),
     "plan_status": Tool_PlanStatus(),
     "vision_query": Tool_VisionQuery(),
+    "resolve_promise": Tool_ResolvePromise(),
+    "watch": Tool_Watch(),
+    "cancel_promise": Tool_CancelPromise(),
 }
 
 # ── public API ───────────────────────────────────────────────

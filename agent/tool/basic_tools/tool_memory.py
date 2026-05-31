@@ -7,7 +7,7 @@ from datetime import datetime
 
 from .tool import Tool
 
-_AGENT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+_AGENT_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 _PROMPT_DIR = os.path.join(_AGENT_DIR, "prompt")
 _MEMORY_FILE = os.path.join(_PROMPT_DIR, "MEMORY.md")
 _USER_FILE = os.path.join(_PROMPT_DIR, "USER.md")

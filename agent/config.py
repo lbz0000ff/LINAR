@@ -117,7 +117,7 @@ def _read_api_key_file() -> str:
     """Read api_key.txt from project root as fallback."""
     txt_path = os.path.join(os.path.dirname(__file__), "..", "api_key.txt")
     try:
-        with open(txt_path, "r") as f:
+        with open(txt_path, "r", encoding="utf-8") as f:
             return f.read().strip()
     except (FileNotFoundError, OSError):
         return ""

@@ -1,6 +1,8 @@
 .claude/
 .vscode/
 .temp/
+.agents/
+.pytest_cache/
 __pycache__/
 *.pyc
 *.pyo
@@ -14,9 +16,20 @@ models/*
 reports
 test/*
 agent/memory/chat_history/*
-history.db
+agent/memory/archived/*
+agent/tool/memory/*
+agent/prompt/USER.md
+agent/prompt/MEMORY.md
+agent/tool/mcp_tools/server/comfyui-mcp/
+demo/
+
 # Exclude all .md in root (not subdirs) except README.md
 /*.md
 docs/*.md
 !/README.md
 !/ARCHITECTURE.md
+
+#Exclude all skills except basic skills
+skills/*
+!skills/skill-writer
+!skills/system-guide
