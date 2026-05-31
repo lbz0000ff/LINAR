@@ -172,9 +172,9 @@ def reload_mcp_servers() -> dict:
 
 
 def shutdown_mcp_servers():
-    """Stop all running MCP servers."""
+    """Stop all running MCP servers immediately."""
     for srv in _mcp_servers:
-        srv.stop()
+        srv.kill()
     _mcp_servers.clear()
 
 

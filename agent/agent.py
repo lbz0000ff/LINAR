@@ -11,7 +11,9 @@ from logger import get_logger
 from permissions import PermissionManager
 import database as db
 from skill import get_skill
+
 log = get_logger(__name__)
+
 def _detect_shell() -> str:
     """Detect the effective shell used for cmd_execute on this platform."""
     import os, platform, shutil

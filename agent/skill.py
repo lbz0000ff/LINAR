@@ -181,7 +181,11 @@ class Skill:
         # Skill only controls which tools are visible via allowed_tools.
 
         agent._skill_active = True
-        agent.llm.system_prompt = self.system_prompt
+        # Append skill prompt on top of the base prompt (identity, memory,
+        # behavioural rules) instead of replacing it entirely. This way
+        # the LLM keeps its persona and constraints from system_prompt_base.md,
+        # SOUL.md, USER.md and MEMORY.md while running the skill.
+        agent.llm.system_prompt = self._saved_prompt + "\n\n" + self.system_prompt
 
         if self.allowed_tools is not None:
             # Resolve both Claude Code granular names and Lily native names
