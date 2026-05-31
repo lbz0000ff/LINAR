@@ -25,7 +25,7 @@ demo/
 
 # Exclude all .md in root (not subdirs) except README.md
 /*.md
-docs/*.md
+docs/
 !/README.md
 !/ARCHITECTURE.md
 
