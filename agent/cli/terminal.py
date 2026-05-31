@@ -962,8 +962,18 @@ class LilyTerminal:
             self._output_deque.append(("fg:cyan", f"\n  {text}"))
         if text.startswith("/"):
             if text.lower() in ("/exit", "/quit"):
-                self.app.exit()
-                return True
+                # Do cleanup synchronously first, then exit immediately
+                # without waiting for the prompt_toolkit event loop to
+                # wind down (which can take time on large displays).
+                from tool_registry import shutdown_mcp_servers
+                shutdown_mcp_servers()
+                import shutil
+                _tmp = os.path.join(os.path.dirname(os.path.dirname(
+                    os.path.abspath(__file__))), ".temp")
+                if os.path.isdir(_tmp):
+                    shutil.rmtree(_tmp, ignore_errors=True)
+                print("\nGoodbye!", flush=True)
+                os._exit(0)
             if text.startswith("/steer"):
                 msg = text[6:].strip()
                 if self._processing and self._current_input:
