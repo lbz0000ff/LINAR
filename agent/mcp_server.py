@@ -108,6 +108,22 @@ class MCPServer:
         self._started = False
         log.info("MCP server '%s' stopped", self.name)
 
+    def kill(self):
+        """Kill the subprocess immediately — no graceful wait."""
+        if self._proc is None:
+            return
+        if self._proc.poll() is None:
+            self._proc.kill()
+            self._proc.wait(timeout=3)
+        for pipe in (self._proc.stdin, self._proc.stdout, self._proc.stderr):
+            if pipe and not pipe.closed:
+                try:
+                    pipe.close()
+                except OSError:
+                    pass
+        self._started = False
+        log.info("MCP server '%s' killed", self.name)
+
     # ── public interface ─────────────────────────────────────────────────
 
     def list_tools(self) -> list[dict]:

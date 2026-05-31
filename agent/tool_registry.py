@@ -160,9 +160,9 @@ def reload_mcp_servers() -> dict:
     """
     global _mcp_initialized, _mcp_tools_cache, _mcp_servers
 
-    # Shut down existing
+    # Shut down existing — kill immediately, no graceful 5s wait
     for srv in _mcp_servers:
-        srv.stop()
+        srv.kill()
     _mcp_servers.clear()
     _mcp_tools_cache = {}
     _mcp_initialized = False

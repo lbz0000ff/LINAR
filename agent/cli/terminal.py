@@ -105,6 +105,10 @@ class _CommandCompleter(Completer):
             yield Completion("/btw", start_position=-len(text), display_meta="cmd")
         if "/steer".startswith(text):
             yield Completion("/steer", start_position=-len(text), display_meta="cmd")
+        if "/exit".startswith(text):
+            yield Completion("/exit", start_position=-len(text), display_meta="cmd")
+        if "/quit".startswith(text):
+            yield Completion("/quit", start_position=-len(text), display_meta="cmd")
         # ── skills (dynamic from registry) ─────────────────
         from skill import all_skills as _sks
         for s in _sks():
