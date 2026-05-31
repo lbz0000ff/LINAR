@@ -25,6 +25,8 @@ from config import load_config
 from mcp_server import MCPServer
 from tool.mcp_tools.mcp_tool import MCPTool
 
+_MCP_START_TIMEOUT = 5  # seconds per server
+
 _mcp_servers: list[MCPServer] = []
 _mcp_initialized = False
 _mcp_tools_cache: dict = {}
@@ -120,15 +122,19 @@ def _init_mcp_servers() -> dict:
             continue
         try:
             server = MCPServer(name, scfg["command"], scfg.get("args", []), env=scfg.get("env"))
-            # Start with a 15‑second timeout so a slow server doesn't block startup
-            with concurrent.futures.ThreadPoolExecutor(max_workers=1) as _pool:
-                fut = _pool.submit(server.start)
-                try:
-                    fut.result(timeout=15)
-                except concurrent.futures.TimeoutError:
-                    log.warning("MCP server '%s' timed out (15s) — killing process", name)
-                    server.stop()
-                    continue
+            # Start with a timeout so a slow/down server doesn't block startup
+            _pool = concurrent.futures.ThreadPoolExecutor(max_workers=1)
+            fut = _pool.submit(server.start)
+            try:
+                fut.result(timeout=_MCP_START_TIMEOUT)
+            except concurrent.futures.TimeoutError:
+                log.warning("MCP server '%s' timed out (%ds) — killing process", name, _MCP_START_TIMEOUT)
+                server._killed_on_timeout = True
+                server.stop()
+                _pool.shutdown(wait=False)
+                continue
+            finally:
+                _pool.shutdown(wait=False)
             for t in server.list_tools():
                 full_name = f"mcp_{name}_{t['name']}"
                 tools[full_name] = MCPTool(

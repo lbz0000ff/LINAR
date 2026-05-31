@@ -45,6 +45,7 @@ class MCPServer:
         self._request_id = 0
         self._tools: list[dict] = []
         self._started = False
+        self._killed_on_timeout = False  # set by tool_registry when startup timed out
 
     # ── lifecycle ────────────────────────────────────────────────────────
 
@@ -87,7 +88,7 @@ class MCPServer:
         self._started = True
 
     def stop(self):
-        """Terminate the subprocess."""
+        """Terminate the subprocess and close pipes."""
         if not self._started or self._proc is None:
             return
         if self._proc.poll() is None:
@@ -96,6 +97,14 @@ class MCPServer:
                 self._proc.wait(timeout=5)
             except subprocess.TimeoutExpired:
                 self._proc.kill()
+        # Close pipes so any blocked readline() in background threads
+        # wakes up immediately instead of hanging until the 300s _recv timeout.
+        for pipe in (self._proc.stdin, self._proc.stdout, self._proc.stderr):
+            if pipe and not pipe.closed:
+                try:
+                    pipe.close()
+                except OSError:
+                    pass
         self._started = False
         log.info("MCP server '%s' stopped", self.name)
 
@@ -219,7 +228,17 @@ class MCPServer:
 
     def _dump_stderr(self):
         """Print whatever the subprocess wrote to stderr (for debugging)."""
-        if self._proc and self._proc.stderr:
-            err = self._proc.stderr.read().decode("utf-8", errors="replace")
-            if err.strip():
-                print(f"[MCP:{self.name} stderr]\n{err}", file=sys.stderr)
+        if self._proc is None or self._proc.stderr is None:
+            return
+        # Suppress stderr when the server was killed on startup timeout —
+        # the retry noise (e.g. "ComfyUI availability check attempt 1/5...")
+        # is not useful.
+        if self._killed_on_timeout:
+            return
+        if not self._proc.stderr.closed:
+            try:
+                err = self._proc.stderr.read().decode("utf-8", errors="replace")
+                if err.strip():
+                    print(f"[MCP:{self.name} stderr]\n{err}", file=sys.stderr)
+            except (OSError, ValueError):
+                pass  # pipe already closed or broken
