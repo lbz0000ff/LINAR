@@ -661,7 +661,7 @@ class LilyTerminal:
         # ── token ────────────────────────────────────────
         elif etype == "token":
             data = event["data"]
-            data = re.sub(r"\[turn \d+\]\s*", "", data)
+            data = re.sub(r"\[round \d+\]\s*", "", data)
             if not data:
                 return
             self._response_text += data

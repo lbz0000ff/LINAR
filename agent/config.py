@@ -43,7 +43,7 @@ DEFAULTS = {
         "max_tokens": 1000000,
         "top_p": 1.0,
     },
-    "max_turns": 5,
+    "max_llm_calls": 5,
     "max_memory_length": 2200,
     "max_user_preferences_length": 500,
     "show_reasoning": "hide",
@@ -61,7 +61,7 @@ DEFAULTS = {
     "chat_history": {
         "max_chars": 50000,
         "trim_to": 5000,
-        "protect_last_turns": 3,
+        "protect_last_rounds": 3,
         "strategy": "compact",  # "compact" | "compress"
     },
     "aux": {

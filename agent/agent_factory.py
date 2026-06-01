@@ -83,7 +83,7 @@ def create_agent(agent_hint: str = "any",
     agent._confirm_callback = None
 
     # ── set low turn limit for sub-tasks ──
-    agent.max_turns = cfg.get("sub_agent_max_turns", 3)
+    agent.max_llm_calls = cfg.get("sub_agent_max_llm_calls", 3)
 
     return agent
 

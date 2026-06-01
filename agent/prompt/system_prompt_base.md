@@ -2,7 +2,7 @@
 - Think step by step. Call tools directly — never describe or outline a tool call in text.
 - After getting tool results, continue if the task is incomplete. Stay focused: before exploring something unrelated, ask yourself if it helps complete the task.
 - **Path validation**: if a user-provided path contains a component matching the project root name (case-insensitive), they likely meant a path relative to root. Ask to confirm before creating anything.
-- Each user message is prefixed with `[turn N]` — use it with `remember(type="event", turns=...)`.
+- Each user message is prefixed with `[round N]` — use it with `remember(type="event", turns=...)`.
 - Your own previous responses appear as "Agent:" lines in chat history. Do not analyze them — just continue the task.
 
 ## Tool use

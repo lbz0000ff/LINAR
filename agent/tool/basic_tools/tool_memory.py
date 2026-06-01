@@ -76,12 +76,12 @@ def _shorten(text: str, max_len: int = 70) -> str:
     return (cutoff[:idx] + "…") if idx > max_len // 2 else cutoff + "…"
 
 
-def _parse_turns(turns_str: str):
-    """Parse a turns string like ``"3"`` or ``"3,5"`` into (start, end)."""
-    turns_str = turns_str.strip()
-    if not turns_str:
+def _parse_rounds(rounds_str: str):
+    """Parse a rounds string like ``"3"`` or ``"3,5"`` into (start, end)."""
+    rounds_str = rounds_str.strip()
+    if not rounds_str:
         return None
-    parts = turns_str.split(",")
+    parts = rounds_str.split(",")
     try:
         start = int(parts[0])
         end = int(parts[1]) if len(parts) > 1 else start
@@ -236,11 +236,11 @@ class Tool_Remember(Tool):
                                    "For event: short keywords only (3-10 words), not a full sentence. "
                                    "This is used as a summary label in MEMORY.md."
                 },
-                "turns": {
+                "rounds": {
                     "type": "string",
                     "description": "Only for event mode. The conversation turn(s) to bookmark. "
                                    "Single turn: '3'. Range: '3,5'. "
-                                   "(The [turn N] markers in chat history tell you which turn you're on.)"
+                                   "(The [round N] markers in chat history tell you which turn you're on.)"
                 },
                 "event_ref": {
                     "type": "string",
@@ -260,7 +260,7 @@ class Tool_Remember(Tool):
         }
     }
 
-    def execute(self, memory_type: str, value: str, turns: str = "", event_ref: str = "",
+    def execute(self, memory_type: str, value: str, rounds: str = "", event_ref: str = "",
                 update_id: str = ""):
         if update_id:
             if memory_type == "user":
@@ -277,7 +277,7 @@ class Tool_Remember(Tool):
         elif memory_type == "archive":
             return self._archive(value, event_ref)
         elif memory_type == "event":
-            return self._event(value, turns)
+            return self._event(value, rounds)
         else:
             return f"Error: Unknown memory_type '{memory_type}'. Use: user, normal, archive, or event."
 
@@ -374,19 +374,19 @@ class Tool_Remember(Tool):
 
     # ── event: bookmark conversation → [EVENT:...] tag ─────
 
-    def _event(self, value: str, turns: str = "") -> str:
-        parsed = _parse_turns(turns) if turns else None
+    def _event(self, value: str, rounds: str = "") -> str:
+        parsed = _parse_rounds(rounds) if rounds else None
         if not parsed:
-            return ("Error: event mode requires a 'turns' parameter. "
-                    "Provide a turn number or range based on the [turn N] markers, "
-                    "e.g. turns='3' or turns='3,5'.")
+            return ("Error: event mode requires a 'rounds' parameter. "
+                    "Provide a round number or range based on the [round N] markers, "
+                    "e.g. rounds='3' or rounds='3,5'.")
 
-        turn_start, turn_end = parsed
+        round_start, round_end = parsed
         session_id = _get_current_session_id()
         if session_id is None:
             return "Error: no active session found."
 
-        tag = f"[EVENT:{session_id},{turn_start},{turn_end}]"
+        tag = f"[EVENT:{session_id},{round_start},{round_end}]"
         summary = _shorten(value, 70)
 
         mid = self._append(f"[M{_next_id(_read_file(_MEMORY_FILE), 'M')}]", f"{summary} {tag}")
@@ -559,7 +559,7 @@ class Tool_Recall(Tool):
                 "query": {
                     "type": "string",
                     "description": "For mode=archive: the slug from [MEM:slug]. "
-                                   "For mode=event: 'session_id,turn_start,turn_end' from [EVENT:...]. "
+                                   "For mode=event: 'session_id,round_start,round_end' from [EVENT:...]. "
                                    "For mode=search: keyword to search for. "
                                    "For mode=recent: number of sessions (default 10)."
                 }
@@ -601,33 +601,33 @@ class Tool_Recall(Tool):
         query = query.strip().replace("[EVENT:", "").replace("]", "")
         parts = query.split(",")
         if len(parts) < 2:
-            return "Error: expected format 'session_id,turn_start[,turn_end]'."
+            return "Error: expected format 'session_id,round_start[,round_end]'."
 
         try:
             session_id = int(parts[0])
-            turn_start = int(parts[1])
-            turn_end = int(parts[2]) if len(parts) > 2 else turn_start
+            round_start = int(parts[1])
+            round_end = int(parts[2]) if len(parts) > 2 else round_start
         except ValueError:
-            return "Error: session_id and turn numbers must be integers."
+            return "Error: session_id and round numbers must be integers."
 
         import database as db
         all_msgs = db.get_session_messages(session_id)
         if not all_msgs:
             return f"No messages found for session #{session_id}."
 
-        # Filter by turn range
-        matched = [m for m in all_msgs if turn_start <= (m.get("turn") or 0) <= turn_end]
+        # Filter by round range
+        matched = [m for m in all_msgs if round_start <= (m.get("conversation_round") or 0) <= round_end]
         if not matched:
-            return (f"No messages in session #{session_id} for turn range "
-                    f"[{turn_start},{turn_end}].")
+            return (f"No messages in session #{session_id} for round range "
+                    f"[{round_start},{round_end}].")
 
-        turn_range = f"{turn_start}–{turn_end}" if turn_start != turn_end else str(turn_start)
-        lines = [f"Session #{session_id} turn {turn_range}:", ""]
+        round_range = f"{round_start}–{round_end}" if round_start != round_end else str(round_start)
+        lines = [f"Session #{session_id} round {round_range}:", ""]
         for m in matched:
             role = m["role"].upper()
             content = (m.get("content") or "")[:1000]
-            t = m.get("turn") or ""
-            lines.append(f"  [turn {t}] {role}: {content}")
+            t = m.get("conversation_round") or ""
+            lines.append(f"  [round {t}] {role}: {content}")
 
         return "\n".join(lines)
 
@@ -649,8 +649,8 @@ class Tool_Recall(Tool):
                 if keyword.lower() in content.lower():
                     role = m["role"]
                     preview = content[:300].replace("\n", " ")
-                    t = m.get("turn") or ""
-                    matches.append(f"  [turn {t}] [{role}] {preview}")
+                    t = m.get("conversation_round") or ""
+                    matches.append(f"  [round {t}] [{role}] {preview}")
             if matches:
                 title = ses["title"] or f"Session #{ses['id']}"
                 results.append(f"Session: {title}")

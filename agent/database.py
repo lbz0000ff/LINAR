@@ -58,11 +58,20 @@ def init_db():
     """)
     conn.commit()
 
-    # ── migration: add turn column if missing ──
+    # ── migration: add turn column if missing (legacy) ──
     try:
         conn.execute("ALTER TABLE messages ADD COLUMN turn INTEGER DEFAULT 0")
     except sqlite3.OperationalError:
         pass  # already exists
+
+    # ── migration 2026-06: rename turn → conversation_round ──
+    cols = [r[1] for r in conn.execute("PRAGMA table_info(messages)")]
+    if "turn" in cols and "conversation_round" not in cols:
+        try:
+            conn.execute("ALTER TABLE messages RENAME COLUMN turn TO conversation_round")
+        except sqlite3.OperationalError:
+            conn.execute("ALTER TABLE messages ADD COLUMN conversation_round INTEGER DEFAULT 0")
+            conn.execute("UPDATE messages SET conversation_round = turn WHERE turn IS NOT NULL")
 
     # ── migration: add reasoning column if missing ──
     try:
@@ -133,14 +142,14 @@ def update_session_marker(session_id: int, marker: str):
 # Messages
 # ---------------------------------------------------------------------------
 
-def save_message(session_id: int, role: str, content: str, tool_name: str = "", turn: int = 0, reasoning: str = "", tool_call_id: str = "", tool_calls: str = ""):
+def save_message(session_id: int, role: str, content: str, tool_name: str = "", conversation_round: int = 0, reasoning: str = "", tool_call_id: str = "", tool_calls: str = ""):
     conn = _get_connection()
     conn.execute(
-        "INSERT INTO messages (session_id, role, content, tool_name, turn, reasoning, tool_call_id, tool_calls) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-        (session_id, role, content, tool_name or None, turn, reasoning or None, tool_call_id or None, tool_calls or None),
+        "INSERT INTO messages (session_id, role, content, tool_name, conversation_round, reasoning, tool_call_id, tool_calls) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+        (session_id, role, content, tool_name or None, conversation_round, reasoning or None, tool_call_id or None, tool_calls or None),
     )
     conn.commit()
-    log.debug("Saved %s message to session #%s (turn=%s)", role, session_id, turn)
+    log.debug("Saved %s message to session #%s (round=%s)", role, session_id, conversation_round)
 
 
 # ---------------------------------------------------------------------------
@@ -151,7 +160,7 @@ def get_session_messages(session_id: int):
     """Return all messages for a session, oldest first."""
     conn = _get_connection()
     rows = conn.execute(
-        "SELECT id, role, content, tool_name, turn, created_at, reasoning, tool_call_id, tool_calls FROM messages WHERE session_id = ? ORDER BY id",
+        "SELECT id, role, content, tool_name, conversation_round, created_at, reasoning, tool_call_id, tool_calls FROM messages WHERE session_id = ? ORDER BY id",
         (session_id,),
     ).fetchall()
     return [dict(r) for r in rows]

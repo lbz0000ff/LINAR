@@ -136,7 +136,7 @@ mcp_servers:
 # Prompt File Loading Order
 prompt:
     files:
-        - system_prompt_base.md
         - SOUL.md
+        - system_prompt_base.md
         - USER.md
         - MEMORY.md

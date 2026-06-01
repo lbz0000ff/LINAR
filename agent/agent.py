@@ -53,7 +53,7 @@ class Agent:
         db.init_db()
         self.session_id = None
         # ── conversation turn counter ──
-        self._turn_counter = 0
+        self._conversation_round = 0
         # ── consecutive tool failure tracker ──
         self._tool_failures: dict[str, int] = {}
         # ── reasoning-only turn retry guard ──
@@ -81,12 +81,12 @@ class Agent:
                 if hasattr(t, 'agent_ref'):
                     t.agent_ref = self
         # ── config values ──
-        self.max_turns = cfg.get("max_turns", 5)
+        self.max_llm_calls = cfg.get("max_llm_calls", 5)
         self.chat_cfg = cfg.get("chat_history", {})
-        log.info("Agent initialized (model=%s, max_turns=%s)", self.llm.model, self.max_turns)
+        log.info("Agent initialized (model=%s, max_llm_calls=%s)", self.llm.model, self.max_llm_calls)
         self.max_history_chars = self.chat_cfg.get("max_chars", 10000)
         self.trim_to_chars = self.chat_cfg.get("trim_to", 5000)
-        self.protect_last_turns = self.chat_cfg.get("protect_last_turns", 3)
+        self.protect_last_rounds = self.chat_cfg.get("protect_last_rounds", 3)
         self.strategy = self.chat_cfg.get("strategy", "compact")
     def _build_prompt(self, cfg):
         """Load and join prompt files listed in config."""
@@ -169,9 +169,9 @@ class Agent:
         parts = [f"Chat history:{anchor}"]
         for msg in self.chat_history:
             role = msg["role"]
-            turn = msg.get("turn")
+            conversation_round = msg.get("round")
             if role == "user":
-                parts.append(f"[turn {turn}]\nUser: {msg['content']}")
+                parts.append(f"[round {conversation_round}]\nUser: {msg['content']}")
             elif role == "agent":
                 parts.append(f"Agent: {msg['content']}")
                 if msg.get("reasoning"):
@@ -511,7 +511,7 @@ class Agent:
         if total <= self.max_history_chars:
             return
         user_indices = [i for i, m in enumerate(self.chat_history) if m["role"] == "user"]
-        protect_count = min(self.protect_last_turns, len(user_indices))
+        protect_count = min(self.protect_last_rounds, len(user_indices))
         # ── Head protection: keep first 3 entries ──
         head_end = min(3, len(self.chat_history))
         # ── Tail protection: start of the last N user turns ──
@@ -566,17 +566,17 @@ class Agent:
             len(middle) - len(compacted),
         )
     def add_user_message(self, text: str):
-        """Append a user message with a [turn N] marker and archive it."""
+        """Append a user message with a [round N] marker and archive it."""
         if self.session_id is None:
             self.session_id = db.create_session()
             log.info("Created session #%s", self.session_id)
-        log.info("[session=%s turn=%s] User: %.120s", self.session_id, self._turn_counter + 1, text)
-        self._turn_counter += 1
+        log.info("[session=%s conversation_round=%s] User: %.120s", self.session_id, self._conversation_round + 1, text)
+        self._conversation_round += 1
         self.chat_history.append({
-            "role": "user", "content": text, "turn": self._turn_counter,
+            "role": "user", "content": text, "round": self._conversation_round,
         })
-        db.save_message(self.session_id, "user", text, turn=self._turn_counter)
-        if self._turn_counter == 1:
+        db.save_message(self.session_id, "user", text, conversation_round=self._conversation_round)
+        if self._conversation_round == 1:
             db.update_session_title(self.session_id, text[:80])
     def switch_session(self, session_id: int) -> bool:
         """Switch to an existing session. Returns False if not found."""
@@ -587,11 +587,11 @@ class Agent:
         log.info("Switched to session #%s", session_id)
         messages = db.get_session_messages(session_id)
         self.chat_history = []
-        max_turn = 0
+        max_round = 0
         for msg in messages:
-            turn = msg.get("turn", 0) or 0
-            if turn > max_turn:
-                max_turn = turn
+            conversation_round = msg.get("conversation_round", 0) or 0
+            if conversation_round > max_round:
+                max_round = conversation_round
             role = msg["role"]
             if role == "tool":
                 # content stores JSON: {"args": ..., "result": ...}
@@ -602,7 +602,7 @@ class Agent:
                         "name": msg.get("tool_name", ""),
                         "arguments": payload.get("args", ""),
                         "result": payload.get("result", ""),
-                        "turn": turn,
+                        "round": conversation_round,
                     }
                 except (json.JSONDecodeError, TypeError, KeyError):
                     entry = {
@@ -610,7 +610,7 @@ class Agent:
                         "name": msg.get("tool_name", ""),
                         "arguments": "",
                         "result": msg.get("content", ""),
-                        "turn": turn,
+                        "round": conversation_round,
                     }
                 tid = msg.get("tool_call_id")
                 if tid:
@@ -619,7 +619,7 @@ class Agent:
                 entry = {
                     "role": role,
                     "content": msg.get("content", ""),
-                    "turn": turn,
+                    "round": conversation_round,
                 }
                 if role == "agent" and msg.get("reasoning"):
                     entry["reasoning"] = msg["reasoning"]
@@ -631,25 +631,25 @@ class Agent:
                         except (json.JSONDecodeError, TypeError):
                             pass
             self.chat_history.append(entry)
-        self._turn_counter = max_turn
+        self._conversation_round = max_round
         self.session_id = session_id
         return True
     def get_current_session_info(self) -> dict:
         """Return info about the current session."""
         sess = db.get_session_by_id(self.session_id)
         if not sess:
-            return {"session_id": self.session_id, "turn": self._turn_counter}
+            return {"session_id": self.session_id, "round": self._conversation_round}
         return {
             "session_id": sess["id"],
             "title": sess.get("title", ""),
             "marker": sess.get("marker"),
             "created_at": sess.get("created_at", ""),
-            "turn": self._turn_counter,
+            "round": self._conversation_round,
         }
     def reset_session(self):
         """Start a fresh conversation session"""
         self.chat_history = []
-        self._turn_counter = 0
+        self._conversation_round = 0
         self.session_id = None
         log.info("Session reset")
     # ── interrupt ──────────────────────────────────────────
@@ -717,7 +717,7 @@ class Agent:
     def process_with_llm(self):
         """Run the LLM (streaming), handle tool calls, emit events.
         Loops until the agent produces a final answer (no tool calls).
-        max_turns=0 means unlimited; otherwise caps the number of LLM rounds.
+        max_llm_calls=0 means unlimited; otherwise caps the number of LLM rounds.
         """
         # ── reset interrupt state from any previous interrupted call ──
         self._interrupt_requested = False
@@ -735,11 +735,11 @@ class Agent:
                 self.chat_history.append({
                     'role': 'meta',
                     'content': '[SYSTEM] User interrupted. Report what was done so far.',
-                    'turn': self._turn_counter,
+                    'round': self._conversation_round,
                 })
                 break
             turn += 1
-            if self.max_turns > 0 and turn > self.max_turns:
+            if self.max_llm_calls > 0 and turn > self.max_llm_calls:
                 break
             llm_messages = self._build_llm_messages()
             self.emit({"type": "start"})
@@ -794,7 +794,7 @@ class Agent:
                 self.chat_history.append({
                     "role": "meta",
                     "content": "[SYSTEM] User interrupted. Report what was done so far.",
-                    "turn": self._turn_counter,
+                    "round": self._conversation_round,
                 })
                 break
             self.emit({"type": "done"})
@@ -814,7 +814,7 @@ class Agent:
             # Save assistant entry (with tool_calls if any, for structured messages)
             if text or reasoning or tool_calls:
                 entry: dict = {
-                    "role": "agent", "content": text, "turn": self._turn_counter,
+                    "role": "agent", "content": text, "round": self._conversation_round,
                 }
                 if reasoning:
                     entry["reasoning"] = reasoning
@@ -831,7 +831,7 @@ class Agent:
                         for tc in tool_calls
                     ]
                 self.chat_history.append(entry)
-                db.save_message(self.session_id, "agent", text, turn=self._turn_counter,
+                db.save_message(self.session_id, "agent", text, conversation_round=self._conversation_round,
                                 reasoning=reasoning,
                                 tool_calls=json.dumps([{
                                     "id": tc["id"], "type": "function",
@@ -861,8 +861,8 @@ class Agent:
             self._interrupted = False
             for tc in tool_calls:
                 log.info(
-                    "[session=%s turn=%s] Tool call: %s",
-                    self.session_id, self._turn_counter, tc["name"],
+                    "[session=%s conversation_round=%s] Tool call: %s",
+                    self.session_id, self._conversation_round, tc["name"],
                 )
                 # ── interrupt check before each tool ──
                 if self.stop_event.is_set() or self._interrupt_requested:
@@ -874,7 +874,7 @@ class Agent:
                             '[SYSTEM] User interrupted the task. '
                             'Stop and report what was done so far.'
                         ),
-                        'turn': self._turn_counter,
+                        'round': self._conversation_round,
                     })
                     break
                 # ── permission check ──
@@ -965,7 +965,7 @@ class Agent:
                                 f"Do NOT retry the same approach. Switch strategy "
                                 f"or use ask_user to get guidance."
                             ),
-                            "turn": self._turn_counter,
+                            "round": self._conversation_round,
                         })
                         self._tool_failures[tc["name"]] = 0
                 else:
@@ -987,7 +987,7 @@ class Agent:
                                         f"the same command. Use a different approach "
                                         f"(e.g., redirect to a file, use a Python script)."
                                     ),
-                                    "turn": self._turn_counter,
+                                    "round": self._conversation_round,
                                 })
                                 self._cmd_history.clear()
                     except (json.JSONDecodeError, KeyError, TypeError):
@@ -1002,7 +1002,7 @@ class Agent:
                             '[SYSTEM] User interrupted the task. '
                             'Stop and report what was done so far.'
                         ),
-                        'turn': self._turn_counter,
+                        'round': self._conversation_round,
                     })
                     break
                 self.chat_history.append({
@@ -1011,7 +1011,7 @@ class Agent:
                     "name": tc["name"],
                     "arguments": tc["arguments"],
                     "result": result_str,
-                    "turn": self._turn_counter,
+                    "round": self._conversation_round,
                 })
                 self.emit({
                     "type": "tool_result",
@@ -1028,7 +1028,7 @@ class Agent:
                 db.save_message(
                     self.session_id, "tool",
                     json.dumps({"args": tc["arguments"], "result": result_str}, ensure_ascii=False),
-                    tool_name=tc["name"], turn=self._turn_counter,
+                    tool_name=tc["name"], conversation_round=self._conversation_round,
                     tool_call_id=tc.get("id", ""),
                 )
             # ── compact history if needed ──
@@ -1037,8 +1037,8 @@ class Agent:
             if self._interrupted:
                 break
         log.info(
-            "[session=%s turn=%s] LLM done (tool_calls=%d)",
-            self.session_id, self._turn_counter, len(tool_calls),
+            "[session=%s conversation_round=%s] LLM done (tool_calls=%d)",
+            self.session_id, self._conversation_round, len(tool_calls),
         )
         self.emit({"type": "complete"})
         self.emit({"type": "ready"})
