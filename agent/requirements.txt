@@ -12,3 +12,4 @@ rich==15.0.0
 tavily==1.1.0
 trafilatura==2.0.0
 websockets==15.0
+flet>=0.27
