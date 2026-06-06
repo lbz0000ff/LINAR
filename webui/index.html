@@ -242,6 +242,7 @@
   #chat::-webkit-scrollbar-track { background: transparent; }
   #chat::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
 </style>
+<script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
 </head>
 <body>
 
@@ -362,6 +363,13 @@ function handleEvent(ev) {
         injectReasoning(currentMsgContainer, pendingReasoning.join(""));
         pendingReasoning = [];
       }
+      // Re-render agent message with proper markdown
+      if (currentMsgContainer && window.marked) {
+        const bubble = currentMsgContainer.querySelector(".bubble");
+        if (bubble && bubble.textContent) {
+          bubble.innerHTML = marked.parse(bubble.textContent);
+        }
+      }
       currentMsgContainer = null;
       break;
   }
@@ -374,7 +382,11 @@ function addMessage(type, text) {
 
   const bubble = document.createElement("div");
   bubble.className = "bubble";
-  bubble.textContent = text;
+  if (type === "agent" && window.marked) {
+    bubble.innerHTML = marked.parse(text);
+  } else {
+    bubble.textContent = text;
+  }
   el.appendChild(bubble);
 
   chat.appendChild(el);
@@ -401,7 +413,7 @@ function appendToken(text) {
 function injectReasoning(msgEl, text) {
   const toggle = document.createElement("div");
   toggle.className = "reasoning-toggle";
-  toggle.textContent = "🤔 思考过程 ▸";
+  toggle.textContent = "思考过程 ▸";
 
   const body = document.createElement("div");
   body.className = "reasoning-body";
@@ -409,7 +421,7 @@ function injectReasoning(msgEl, text) {
 
   toggle.onclick = () => {
     const open = body.classList.toggle("open");
-    toggle.textContent = open ? "🤔 思考过程 ▾" : "🤔 思考过程 ▸";
+    toggle.textContent = open ? "思考过程 ▾" : "思考过程 ▸";
   };
 
   const bubble = msgEl.querySelector(".bubble");
