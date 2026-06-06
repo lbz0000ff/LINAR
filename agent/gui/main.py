@@ -23,7 +23,7 @@ from logger import get_logger
 from orchestrator import Orchestrator
 from skill import load_skills_from_markdown
 from tool_registry import get_tools
-from agent import Agent
+from agent.agent import Agent
 
 log = get_logger(__name__)
 
