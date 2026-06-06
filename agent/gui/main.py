@@ -96,14 +96,14 @@ class LilyGUI:
         )
 
         self._expand_btn = ft.IconButton(
-            icon=ft.icons.OPEN_IN_FULL,
+            icon='open_in_full',
             icon_color=ft.Colors.with_opacity(0.5, "#ffffff"),
             tooltip="展开输入框",
             on_click=self._toggle_input_expand,
         )
 
         send_btn = ft.IconButton(
-            icon=ft.icons.SEND_ROUNDED,
+            icon='send',
             icon_color="#7c4dff",
             tooltip="发送",
             on_click=self._on_submit,
@@ -294,13 +294,13 @@ class LilyGUI:
             self.input_field.min_lines = 3
             self.input_field.max_lines = 10
             self.input_field.text_style = ft.TextStyle(color="#e0e0e0", size=14)
-            e.control.icon = ft.icons.CLOSE_FULLSCREEN
+            e.control.icon = 'close_fullscreen'
             e.control.tooltip = "收起输入框"
         else:
             self.input_field.multiline = False
             self.input_field.min_lines = None
             self.input_field.max_lines = None
-            e.control.icon = ft.icons.OPEN_IN_FULL
+            e.control.icon = 'open_in_full'
             e.control.tooltip = "展开输入框"
         self.page.update()
 
