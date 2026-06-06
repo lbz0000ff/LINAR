@@ -176,7 +176,18 @@ class LilyGUI:
             content_cols.append(ft.Column([reason_header, reason_body], spacing=2))
 
         # 消息文本
-        content_cols.append(ft.Text(text, style=style, selectable=True))
+        if msg_type == "agent":
+            md = ft.Markdown(
+                text or "",
+                extension_set=ft.MarkdownExtensionSet.GITHUB_FLAVORED,
+                code_theme="monokai-sublime",
+                selectable=True,
+                on_tap_link=lambda e: e.page.launch_url(e.data),
+            )
+            content_cols.append(md)
+            self._current_body_control = md
+        else:
+            content_cols.append(ft.Text(text, style=style, selectable=True))
 
         msg = ft.Container(
             content=ft.Column(content_cols, spacing=4),
@@ -209,10 +220,9 @@ class LilyGUI:
                 self._reasoning_buffer = []
             if self._current_response_msg is None:
                 return
-        col = self._current_response_msg.content
-        if col and len(col.controls) >= 2 and isinstance(col.controls[1], ft.Text):
-            existing = col.controls[1].value or ""
-            col.controls[1].value = existing + text
+        if self._current_body_control:
+            existing = self._current_body_control.value or ""
+            self._current_body_control.value = existing + text
 
     def _flush_ui(self):
         try:
