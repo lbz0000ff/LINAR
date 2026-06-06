@@ -242,6 +242,7 @@
   #chat::-webkit-scrollbar-track { background: transparent; }
   #chat::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
 </style>
+<!-- Load Markdown + Math libs -->
 <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.css">
 <script src="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.js"></script>
@@ -272,6 +273,7 @@ marked.use({
       catch(e) { return '$$' + tok.formula + '$$'; }
     }
   }]
+});
 });
 </script>
 </head>
@@ -471,8 +473,7 @@ document.addEventListener("keydown", (e) => {
   if (e.key === "/" && document.activeElement !== input) {
     e.preventDefault();
     input.focus();
-  }
-});
+  });
 </script>
 </body>
 </html>
