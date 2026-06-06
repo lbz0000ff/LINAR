@@ -398,7 +398,7 @@ function handleEvent(ev) {
       if (currentMsgContainer && window.marked) {
         const bubble = currentMsgContainer.querySelector(".bubble");
         if (bubble && bubble._fullText) {
-          bubble.innerHTML = marked.parse(bubble._fullText);
+          try { bubble.innerHTML = marked.parse(bubble._fullText); } catch(e) { bubble.textContent = bubble._fullText; }
         }
       }
       currentMsgContainer = null;
@@ -438,7 +438,8 @@ function appendToken(text) {
     if (!bubble._fullText) bubble._fullText = "";
     bubble._fullText += text;
     if (window.marked) {
-      bubble.innerHTML = marked.parse(bubble._fullText);
+      try { bubble.innerHTML = marked.parse(bubble._fullText); }
+      catch(e) { bubble.textContent = bubble._fullText; }
     } else {
       bubble.textContent = bubble._fullText;
     }
