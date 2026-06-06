@@ -34,6 +34,7 @@ class LilyGUI:
     def __init__(self, page: ft.Page):
         self.page = page
         self._token_count = 0
+        self._current_response_msg = None  # points to the active agent response
         self._setup_page()
 
         # ── 初始化 Agent ────────────────────────────────────
@@ -121,7 +122,7 @@ class LilyGUI:
     # ── 消息渲染 ─────────────────────────────────────────────
 
     def _add_message(self, msg_type: str, text: str, **kw):
-        if not text:
+        if not text and msg_type != "agent":
             return
         is_user = msg_type == "user"
         is_system = msg_type == "system"
@@ -149,15 +150,15 @@ class LilyGUI:
             padding=ft.padding.all(12),
         )
 
-        self.chat_list.controls.append(
-            ft.Container(
-                content=msg,
-                margin=ft.margin.only(
-                    left=60 if is_user else 0,
-                    right=0 if is_user else 60,
-                ),
-            )
+        wrapper = ft.Container(
+            content=msg,
+            margin=ft.margin.only(
+                left=60 if is_user else 0,
+                right=0 if is_user else 60,
+            ),
         )
+        self.chat_list.controls.append(wrapper)
+        return msg  # return the inner Column container for _current_response_msg
 
     def _append_token(self, text: str):
         """追加流式 token 到最后一条助手消息。"""
@@ -208,6 +209,7 @@ class LilyGUI:
 
         elif etype in ("complete", "done"):
             self._token_count = 0
+            self._current_response_msg = None  # next token is a new response
             self._flush_ui()
 
     # ── 用户输入 ─────────────────────────────────────────────
@@ -218,7 +220,8 @@ class LilyGUI:
             return
         self.input_field.value = ""
         self.input_field.focus()
-        # Display user message immediately (not waiting for agent echo)
+        # Display user message immediately
+        self._current_response_msg = None  # new round → new response
         self._add_message("user", text.strip())
         self._flush_ui()
         self.input_queue.put(text.strip())
