@@ -84,7 +84,7 @@ async def ws_handler(ws):
 
 # ── HTTP server (serves static files) ─────────────────────────
 
-_HTTP_HOST = "0.0.0.0"
+_HTTP_HOST = "127.0.0.1"
 _HTTP_PORT = 8080
 _WS_PORT = 8081
 
