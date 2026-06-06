@@ -24,7 +24,6 @@ from orchestrator import Orchestrator
 from skill import load_skills_from_markdown
 from tool_registry import get_tools
 from agent.agent import Agent
-from agent.gui.math_render import render_math
 
 log = get_logger(__name__)
 
@@ -182,6 +181,8 @@ class LilyGUI:
                 text or "",
                 extension_set=ft.MarkdownExtensionSet.GITHUB_FLAVORED,
                 code_theme="monokai-sublime",
+                latex_scale_factor=1.5,
+                latex_style=None,
                 selectable=True,
                 on_tap_link=lambda e: e.page.launch_url(e.data),
             )
