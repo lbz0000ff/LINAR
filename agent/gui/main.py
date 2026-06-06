@@ -37,7 +37,8 @@ class LilyGUI:
         self._current_response_msg = None
         self._input_expanded = False
         self._reasoning_buffer = []  # reason tokens for current response
-        self._reasoning_container = None  # points to reasoning body Container
+        self._reasoning_container = None
+        self._current_body_control = None  # points to Markdown body for streaming
         self._setup_page()
 
         # ── 初始化 Agent ────────────────────────────────────
