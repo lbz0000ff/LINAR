@@ -141,7 +141,7 @@ class LilyGUI:
                 ft.Text(text, style=style, selectable=True),
             ], spacing=2),
             bgcolor=bubble_color,
-            border_radius=ft.border_only(
+            border_radius=ft.border_radius.only(
                 top_left=18 if is_user else 8,
                 top_right=8 if is_user else 18,
                 bottom_left=18, bottom_right=18,
