@@ -243,6 +243,37 @@
   #chat::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
 </style>
 <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.css">
+<script src="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.js"></script>
+<script>
+marked.use({
+  extensions: [{
+    name: 'inlineMath',
+    level: 'inline',
+    start(src) { return src.indexOf('$'); },
+    tokenizer(src) {
+      const m = src.match(/^\$([^$]+?)\$/);
+      if (m) return {type:'inlineMath', raw:m[0], formula:m[1]};
+    },
+    renderer(tok) {
+      try { return katex.renderToString(tok.formula, {throwOnError: false}); }
+      catch(e) { return '$' + tok.formula + '$'; }
+    }
+  }, {
+    name: 'blockMath',
+    level: 'block',
+    start(src) { return src.indexOf('$$'); },
+    tokenizer(src) {
+      const m = src.match(/^\$\$([\s\S]+?)\$\$/);
+      if (m) return {type:'blockMath', raw:m[0], formula:m[1]};
+    },
+    renderer(tok) {
+      try { return katex.renderToString(tok.formula, {displayMode:true, throwOnError: false}); }
+      catch(e) { return '$$' + tok.formula + '$$'; }
+    }
+  }]
+});
+</script>
 </head>
 <body>
 
