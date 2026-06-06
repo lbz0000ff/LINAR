@@ -161,16 +161,13 @@ class LilyGUI:
         return msg  # return the inner Column container for _current_response_msg
 
     def _append_token(self, text: str):
-        """追加流式 token 到最后一条助手消息。"""
-        if not self.chat_list.controls:
-            self._add_message("agent", text)
-            return
-        last = self.chat_list.controls[-1]
-        if not hasattr(last, "content") or not hasattr(last.content, "content"):
-            self._add_message("agent", text)
-            return
-        col = last.content.content
-        if len(col.controls) >= 2 and isinstance(col.controls[1], ft.Text):
+        """追加流式 token 到当前活跃的助手回复消息。"""
+        if self._current_response_msg is None:
+            self._current_response_msg = self._add_message("agent", "")
+            if self._current_response_msg is None:
+                return
+        col = self._current_response_msg.content
+        if col and len(col.controls) >= 2 and isinstance(col.controls[1], ft.Text):
             existing = col.controls[1].value or ""
             col.controls[1].value = existing + text
 
