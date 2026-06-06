@@ -102,6 +102,14 @@ def _start_http():
     server.serve_forever()
 
 
+async def _ws_main():
+    async with websockets.serve(ws_handler, _HTTP_HOST, _WS_PORT):
+        log.info("WS server: ws://%s:%d", _HTTP_HOST, _WS_PORT)
+        global _ws_loop
+        _ws_loop = asyncio.get_running_loop()
+        await asyncio.Future()  # run forever
+
+
 def main():
     # Start Agent thread
     t = threading.Thread(target=_run_agent, daemon=True, name="agent")
@@ -111,14 +119,7 @@ def main():
     threading.Thread(target=_start_http, daemon=True, name="http").start()
 
     # Start WebSocket server (main thread)
-    global _ws_loop
-    _ws_loop = asyncio.new_event_loop()
-    asyncio.set_event_loop(_ws_loop)
-
-    start_server = websockets.serve(ws_handler, _HTTP_HOST, _WS_PORT)
-    _ws_loop.run_until_complete(start_server)
-    log.info("WS server: ws://%s:%d", _HTTP_HOST, _WS_PORT)
-    _ws_loop.run_forever()
+    asyncio.run(_ws_main())
 
 
 if __name__ == "__main__":
