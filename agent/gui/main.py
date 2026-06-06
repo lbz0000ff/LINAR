@@ -184,11 +184,7 @@ class LilyGUI:
     def _on_event(self, event: dict):
         etype = event.get("type", "")
 
-        if etype == "user_echo":
-            self._add_message("user", event.get("data", ""))
-            self._flush_ui()
-
-        elif etype == "token":
+        if etype == "token":
             self._append_token(event.get("data", ""))
             self._token_count += 1
             if self._token_count % 5 == 0:
@@ -222,7 +218,9 @@ class LilyGUI:
             return
         self.input_field.value = ""
         self.input_field.focus()
-        self.page.update()
+        # Display user message immediately (not waiting for agent echo)
+        self._add_message("user", text.strip())
+        self._flush_ui()
         self.input_queue.put(text.strip())
 
     def _run_agent(self):
