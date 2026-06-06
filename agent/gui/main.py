@@ -119,7 +119,6 @@ class LilyGUI:
             ),
         )
 
-        self._add_message("system", "EchoLily 已就绪。")
         self.page.update()
 
     # ── 消息渲染 ─────────────────────────────────────────────
@@ -160,10 +159,11 @@ class LilyGUI:
                     self.page.update()
                 return toggle
 
-            reason_header = ft.Text(
-                "🤔 思考过程 ▸", size=12, color="#888888",
+            reason_header = ft.Container(
+                content=ft.Text("🤔 思考过程 ▸", size=12, color="#888888"),
+                on_click=make_toggle(reason_body),
+                padding=ft.padding.symmetric(vertical=4),
             )
-            reason_header.on_click = make_toggle(reason_body)
 
             content_cols.append(ft.Column([reason_header, reason_body], spacing=2))
 
