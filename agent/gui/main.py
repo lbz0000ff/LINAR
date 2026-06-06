@@ -24,6 +24,7 @@ from orchestrator import Orchestrator
 from skill import load_skills_from_markdown
 from tool_registry import get_tools
 from agent.agent import Agent
+from agent.gui.math_render import render_math
 
 log = get_logger(__name__)
 
