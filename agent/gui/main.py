@@ -94,6 +94,13 @@ class LilyGUI:
             on_submit=self._on_submit,
         )
 
+        self._expand_btn = ft.IconButton(
+            icon=ft.icons.OPEN_IN_FULL,
+            icon_color=ft.colors.with_opacity(0.5, "#ffffff"),
+            tooltip="展开输入框",
+            on_click=self._toggle_input_expand,
+        )
+
         send_btn = ft.IconButton(
             icon=ft.icons.SEND_ROUNDED,
             icon_color="#7c4dff",
@@ -110,7 +117,7 @@ class LilyGUI:
             ft.Divider(height=1, color=ft.colors.with_opacity(0.1, "#ffffff")),
             ft.Container(
                 content=ft.Row(
-                    [self.input_field, send_btn],
+                    [self.input_field, send_btn, self._expand_btn],
                     spacing=8,
                     vertical_alignment=ft.CrossAxisAlignment.CENTER,
                 ),
