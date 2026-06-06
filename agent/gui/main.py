@@ -73,19 +73,19 @@ class LilyGUI:
         self.page.theme_mode = ft.ThemeMode.DARK
         self.page.padding = 0
         self.page.spacing = 0
-        self.page.window_width = 1100
-        self.page.window_height = 750
+        self.page.width = 1100
+        self.page.height = 750
 
         self.chat_list = ft.ListView(
             expand=True,
             spacing=4,
-            padding=ft.padding.only(left=16, right=16, top=16, bottom=8),
+            padding=ft.Padding(left=16, right=16, top=16, bottom=8),
             auto_scroll=True,
         )
 
         self.input_field = ft.TextField(
             hint_text="输入消息…",
-            border_color=ft.colors.with_opacity(0.3, "#ffffff"),
+            border_color=ft.Colors.with_opacity(0.3, "#ffffff"),
             focused_border_color="#7c4dff",
             cursor_color="#7c4dff",
             text_style=ft.TextStyle(color="#e0e0e0", size=14),
@@ -97,7 +97,7 @@ class LilyGUI:
 
         self._expand_btn = ft.IconButton(
             icon=ft.icons.OPEN_IN_FULL,
-            icon_color=ft.colors.with_opacity(0.5, "#ffffff"),
+            icon_color=ft.Colors.with_opacity(0.5, "#ffffff"),
             tooltip="展开输入框",
             on_click=self._toggle_input_expand,
         )
@@ -115,14 +115,14 @@ class LilyGUI:
                 expand=True,
                 bgcolor="#1a1a2e",
             ),
-            ft.Divider(height=1, color=ft.colors.with_opacity(0.1, "#ffffff")),
+            ft.Divider(height=1, color=ft.Colors.with_opacity(0.1, "#ffffff")),
             ft.Container(
                 content=ft.Row(
                     [self.input_field, send_btn, self._expand_btn],
                     spacing=8,
                     vertical_alignment=ft.CrossAxisAlignment.CENTER,
                 ),
-                padding=ft.padding.only(left=16, right=16, top=8, bottom=16),
+                padding=ft.Padding(left=16, right=16, top=8, bottom=16),
                 bgcolor="#0d1117",
             ),
         )
@@ -157,7 +157,7 @@ class LilyGUI:
                     ft.Text(reasoning, size=12, color="#888888", italic=True, selectable=True),
                 ]),
                 visible=False,
-                padding=ft.padding.all(4),
+                padding=ft.Padding(4,4,4,4),
             )
             self._reasoning_container = reason_body
 
@@ -170,7 +170,7 @@ class LilyGUI:
             reason_header = ft.Container(
                 content=ft.Text("🤔 思考过程 ▸", size=12, color="#888888"),
                 on_click=make_toggle(reason_body),
-                padding=ft.padding.symmetric(vertical=4),
+                padding=ft.Padding(0,4,0,4),
             )
 
             content_cols.append(ft.Column([reason_header, reason_body], spacing=2))
@@ -194,12 +194,12 @@ class LilyGUI:
         msg = ft.Container(
             content=ft.Column(content_cols, spacing=4),
             bgcolor=bubble_color,
-            border_radius=ft.border_radius.only(
+            border_radius=ft.BorderRadius(
                 top_left=18 if is_user else 8,
                 top_right=8 if is_user else 18,
                 bottom_left=18, bottom_right=18,
             ),
-            padding=ft.padding.all(12),
+            padding=ft.Padding(12,12,12,12),
         )
 
         wrapper = ft.Container(
@@ -353,19 +353,19 @@ class LilyGUI:
 
         btn_allow = ft.ElevatedButton(
             "✓ 允许", on_click=make_handler(True),
-            style=ft.ButtonStyle(bgcolor=ft.colors.with_opacity(0.2, "#4caf50"), color="#4caf50"),
+            style=ft.ButtonStyle(bgcolor=ft.Colors.with_opacity(0.2, "#4caf50"), color="#4caf50"),
         )
         btn_deny = ft.ElevatedButton(
             "✗ 拒绝", on_click=make_handler(False),
-            style=ft.ButtonStyle(bgcolor=ft.colors.with_opacity(0.2, "#f44336"), color="#f44336"),
+            style=ft.ButtonStyle(bgcolor=ft.Colors.with_opacity(0.2, "#f44336"), color="#f44336"),
         )
         btn_always = ft.TextButton(
             "永久允许", on_click=make_handler("always"),
-            style=ft.ButtonStyle(color=ft.colors.with_opacity(0.5, "#4caf50")),
+            style=ft.ButtonStyle(color=ft.Colors.with_opacity(0.5, "#4caf50")),
         )
         btn_never = ft.TextButton(
             "永久拒绝", on_click=make_handler("never"),
-            style=ft.ButtonStyle(color=ft.colors.with_opacity(0.5, "#f44336")),
+            style=ft.ButtonStyle(color=ft.Colors.with_opacity(0.5, "#f44336")),
         )
 
         perm_msg = ft.Container(
@@ -376,7 +376,7 @@ class LilyGUI:
             ], spacing=6),
             bgcolor="#1e1e2e",
             border_radius=8,
-            padding=ft.padding.all(12),
+            padding=ft.Padding(12,12,12,12),
             margin=ft.margin.only(left=40, right=40, top=4, bottom=4),
         )
         self.chat_list.controls.append(perm_msg)
@@ -392,4 +392,4 @@ def main(page: ft.Page):
 
 
 if __name__ == "__main__":
-    ft.app(target=main)
+    ft.run(target=main)
