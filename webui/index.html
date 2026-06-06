@@ -247,6 +247,7 @@
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.css">
 <script src="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.js"></script>
 <script>
+if (typeof marked !== "undefined") {
 marked.use({
   extensions: [{
     name: 'inlineMath',
@@ -275,6 +276,7 @@ marked.use({
   }]
 });
 });
+}
 </script>
 </head>
 <body>
