@@ -67,7 +67,7 @@ class LilyGUI:
 
     def _setup_page(self):
         self.page.title = "EchoLily"
-        self.page.theme_mode = ft.ThemeMode.DARK
+        self.page.theme_mode = ft.ThemeMode.LIGHT
         self.page.padding = 0
         self.page.spacing = 0
         self.page.width = 1100
@@ -82,11 +82,11 @@ class LilyGUI:
 
         self.input_field = ft.TextField(
             hint_text="输入消息…",
-            border_color="rgba(255,255,255,0.3)",
-            focused_border_color="#7c4dff",
-            cursor_color="#7c4dff",
-            text_style=ft.TextStyle(color="#e0e0e0", size=14),
-            bgcolor="rgba(255,255,255,0.08)",
+            border_color="rgba(0,0,0,0.15)",
+            focused_border_color="#4285f4",
+            cursor_color="#4285f4",
+            text_style=ft.TextStyle(color="#1a1a1a", size=14),
+            bgcolor="rgba(255,255,255,0.9)",
             border_radius=8,
             expand=True,
             on_submit=self._on_submit,
@@ -94,14 +94,14 @@ class LilyGUI:
 
         self._expand_btn = ft.IconButton(
             icon=ft.Icons.OPEN_IN_FULL,
-            icon_color="rgba(255,255,255,0.5)",
+            icon_color="rgba(0,0,0,0.4)",
             tooltip="展开输入框",
             on_click=self._toggle_input_expand,
         )
 
         send_btn = ft.IconButton(
             icon=ft.Icons.SEND,
-            icon_color="#7c4dff",
+            icon_color="#4285f4",
             tooltip="发送",
             on_click=self._on_submit,
         )
@@ -110,9 +110,9 @@ class LilyGUI:
             ft.Container(
                 content=self.chat_list,
                 expand=True,
-                bgcolor="#0a0a1a",
+                bgcolor="#f5f5f0",
             ),
-            ft.Divider(height=1, color="rgba(255,255,255,0.05)"),
+            ft.Divider(height=1, color="rgba(0,0,0,0.08)"),
             ft.Container(
                 content=ft.Row(
                     [self.input_field, self._expand_btn, send_btn],
@@ -120,7 +120,7 @@ class LilyGUI:
                     vertical_alignment=ft.CrossAxisAlignment.CENTER,
                 ),
                 padding=ft.Padding(left=16, right=16, top=8, bottom=16),
-                bgcolor="rgba(255,255,255,0.08)",
+                bgcolor="rgba(255,255,255,0.9)",
             ),
         )
 
@@ -133,13 +133,13 @@ class LilyGUI:
             return
         is_user = msg_type == "user"
         is_system = msg_type == "system"
-        bubble_color = "rgba(124,77,255,0.35)" if is_user else "rgba(15,52,96,0.5)" if is_system else "rgba(255,255,255,0.06)"
+        bubble_color = "rgba(66,133,244,0.12)" if is_user else "rgba(200,200,200,0.3)" if is_system else "rgba(255,255,255,0.7)"
 
         ts = kw.get("timestamp", "")
         style = ft.TextStyle(color="#ffffff" if is_user else "#b0b0b0", size=14)
         if msg_type in ("tool_call", "tool_result"):
             style = ft.TextStyle(
-                color="#ffab40" if msg_type == "tool_call" else "#9e9e9e",
+                color="#4285f4" if msg_type == "tool_call" else "#9e9e9e",
                 size=13, font_family="monospace",
             )
 
@@ -149,7 +149,7 @@ class LilyGUI:
         if msg_type == "agent" and reasoning:
             reason_body = ft.Container(
                 content=ft.Column([
-                    ft.Text(reasoning, size=12, color="#888888", italic=True, selectable=True),
+                    ft.Text(reasoning, size=12, color="#666666", italic=True, selectable=True),
                 ]),
                 visible=False,
                 padding=ft.Padding(4,4,4,4),
@@ -163,7 +163,7 @@ class LilyGUI:
                     self.page.update()
                 return toggle
 
-            header_text = ft.Text("思考过程 ▸", size=12, color="#888888")
+            header_text = ft.Text("思考过程 ▸", size=12, color="#666666")
             reason_header = ft.Container(
                 content=header_text,
                 on_click=make_toggle(reason_body, header_text),
@@ -199,15 +199,15 @@ class LilyGUI:
             padding=ft.Padding(12,12,12,12),
             blur=ft.Blur(8, 8, ft.BlurTileMode.MIRROR),
             border=ft.Border(
-                ft.BorderSide(0.5, "rgba(255,255,255,0.15)"),
-                ft.BorderSide(0.5, "rgba(255,255,255,0.15)"),
-                ft.BorderSide(0.5, "rgba(255,255,255,0.15)"),
-                ft.BorderSide(0.5, "rgba(255,255,255,0.15)"),
+                ft.BorderSide(0.5, "rgba(0,0,0,0.08)"),
+                ft.BorderSide(0.5, "rgba(0,0,0,0.08)"),
+                ft.BorderSide(0.5, "rgba(0,0,0,0.08)"),
+                ft.BorderSide(0.5, "rgba(0,0,0,0.08)"),
             ),
             shadow=ft.BoxShadow(
                 spread_radius=1,
                 blur_radius=12,
-                color="rgba(124,77,255,0.15)" if is_user else "rgba(0,0,0,0.3)",
+                color="rgba(66,133,244,0.2)" if is_user else "rgba(0,0,0,0.08)",
                 offset=ft.Offset(0, 4),
             ),
         )
@@ -240,6 +240,7 @@ class LilyGUI:
         if self._current_body_control:
             existing = self._current_body_control.value or ""
             self._current_body_control.value = existing + text
+            self._current_body_control.update()
 
     def _flush_ui(self):
         try:
@@ -254,9 +255,7 @@ class LilyGUI:
 
         if etype == "token":
             self._append_token(event.get("data", ""))
-            self._token_count += 1
-            if self._token_count % 5 == 0:
-                self._flush_ui()
+            self._flush_ui()
 
         elif etype == "reasoning_token":
             data = event.get("data", "")
@@ -383,11 +382,11 @@ class LilyGUI:
 
         perm_msg = ft.Container(
             content=ft.Column([
-                ft.Text(f"🔒 允许调用 {tool_name}？", size=13, color="#ffab40"),
-                ft.Text(f"参数: {json.dumps(args, ensure_ascii=False)[:200]}", size=11, color="#888888"),
+                ft.Text(f"🔒 允许调用 {tool_name}？", size=13, color="#4285f4"),
+                ft.Text(f"参数: {json.dumps(args, ensure_ascii=False)[:200]}", size=11, color="#666666"),
                 ft.Row([btn_allow, btn_deny, btn_always, btn_never], spacing=8),
             ], spacing=6),
-            bgcolor="#1e1e2e",
+            bgcolor="rgba(255,255,255,0.8)",
             border_radius=8,
             padding=ft.Padding(12,12,12,12),
             margin=ft.Padding(left=40, right=40, top=4, bottom=4),
