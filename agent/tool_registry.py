@@ -24,7 +24,7 @@ from config import load_config
 from mcp_server import MCPServer
 from tool.mcp_tools.mcp_tool import MCPTool
 
-_MCP_START_TIMEOUT = 5  # seconds per server
+_MCP_START_TIMEOUT = 8  # seconds per server
 
 _mcp_servers: list[MCPServer] = []
 _mcp_initialized = False
@@ -125,9 +125,9 @@ def _init_mcp_servers() -> dict:
             _pool = concurrent.futures.ThreadPoolExecutor(max_workers=1)
             fut = _pool.submit(server.start)
             try:
-                fut.result(timeout=_MCP_START_TIMEOUT)
+                fut.result(timeout=scfg.get("start_timeout", _MCP_START_TIMEOUT))
             except concurrent.futures.TimeoutError:
-                log.warning("MCP server '%s' timed out (%ds) — killing process", name, _MCP_START_TIMEOUT)
+                log.warning("MCP server '%s' timed out (%ds) — killing process", name, scfg.get("start_timeout", _MCP_START_TIMEOUT))
                 server._killed_on_timeout = True
                 server.stop()
                 _pool.shutdown(wait=False)
