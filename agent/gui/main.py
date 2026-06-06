@@ -14,15 +14,15 @@ from datetime import datetime
 import flet as ft
 
 # ── agent 初始化 ─────────────────────────────────────────────
-_AGENT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-sys.path.insert(0, _AGENT_DIR)
+_PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+sys.path.insert(0, _PROJECT_ROOT)
 
-from config import load_config
-from logger import get_logger
-from orchestrator import Orchestrator
-from skill import load_skills_from_markdown
-from tool_registry import get_tools
-from agent import Agent
+from agent.config import load_config
+from agent.logger import get_logger
+from agent.orchestrator import Orchestrator
+from agent.skill import load_skills_from_markdown
+from agent.tool_registry import get_tools
+from agent.agent import Agent
 
 log = get_logger(__name__)
 
@@ -39,7 +39,7 @@ class LilyGUI:
         _cfg = load_config()
         _enabled = _cfg.get("tools", {}).get("enabled_sets", None)
         tools = get_tools(_enabled)
-        _skills_dir = os.path.join(os.path.dirname(_AGENT_DIR), "skills")
+        _skills_dir = os.path.join(_PROJECT_ROOT, "skills")
         if os.path.isdir(_skills_dir):
             load_skills_from_markdown(_skills_dir)
 
