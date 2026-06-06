@@ -15,14 +15,15 @@ import flet as ft
 
 # ── agent 初始化 ─────────────────────────────────────────────
 _PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-sys.path.insert(0, _PROJECT_ROOT)
+_AGENT_DIR = os.path.join(_PROJECT_ROOT, "agent")
+sys.path.insert(0, _AGENT_DIR)
 
-from agent.config import load_config
-from agent.logger import get_logger
-from agent.orchestrator import Orchestrator
-from agent.skill import load_skills_from_markdown
-from agent.tool_registry import get_tools
-from agent.agent import Agent
+from config import load_config
+from logger import get_logger
+from orchestrator import Orchestrator
+from skill import load_skills_from_markdown
+from tool_registry import get_tools
+from agent import Agent
 
 log = get_logger(__name__)
 
