@@ -68,8 +68,8 @@ class LilyGUI:
         self.page.theme_mode = ft.ThemeMode.DARK
         self.page.padding = 0
         self.page.spacing = 0
-        self.page.window.width = 1100
-        self.page.window.height = 750
+        self.page.width = 1100
+        self.page.height = 750
 
         self.chat_list = ft.ListView(
             expand=True,
