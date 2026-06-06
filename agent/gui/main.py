@@ -34,7 +34,10 @@ class LilyGUI:
     def __init__(self, page: ft.Page):
         self.page = page
         self._token_count = 0
-        self._current_response_msg = None  # points to the active agent response
+        self._current_response_msg = None
+        self._input_expanded = False
+        self._reasoning_buffer = []  # reason tokens for current response
+        self._reasoning_container = None  # points to reasoning body Container
         self._setup_page()
 
         # ── 初始化 Agent ────────────────────────────────────
@@ -136,11 +139,39 @@ class LilyGUI:
                 size=13, font_family="monospace",
             )
 
+        # 构建消息内容列
+        content_cols = []
+
+        # 推理内容（agent 消息，可折叠）
+        reasoning = kw.get("reasoning", "")
+        if msg_type == "agent" and reasoning:
+            reason_body = ft.Container(
+                content=ft.Column([
+                    ft.Text(reasoning, size=12, color="#888888", italic=True, selectable=True),
+                ]),
+                visible=False,
+                padding=ft.padding.all(4),
+            )
+            self._reasoning_container = reason_body
+
+            def make_toggle(rb):
+                def toggle(e):
+                    rb.visible = not rb.visible
+                    self.page.update()
+                return toggle
+
+            reason_header = ft.Text(
+                "🤔 思考过程 ▸", size=12, color="#888888",
+            )
+            reason_header.on_click = make_toggle(reason_body)
+
+            content_cols.append(ft.Column([reason_header, reason_body], spacing=2))
+
+        # 消息文本
+        content_cols.append(ft.Text(text, style=style, selectable=True))
+
         msg = ft.Container(
-            content=ft.Column([
-                ft.Text(ts, size=11, color=ft.colors.with_opacity(0.4, "#ffffff")),
-                ft.Text(text, style=style, selectable=True),
-            ], spacing=2),
+            content=ft.Column(content_cols, spacing=4),
             bgcolor=bubble_color,
             border_radius=ft.border_radius.only(
                 top_left=18 if is_user else 8,
@@ -163,7 +194,11 @@ class LilyGUI:
     def _append_token(self, text: str):
         """追加流式 token 到当前活跃的助手回复消息。"""
         if self._current_response_msg is None:
-            self._current_response_msg = self._add_message("agent", "")
+            # 如果有推理内容，传给 _add_message
+            reason_text = "".join(self._reasoning_buffer) if self._reasoning_buffer else ""
+            self._current_response_msg = self._add_message("agent", "", reasoning=reason_text)
+            if self._reasoning_buffer:
+                self._reasoning_buffer = []
             if self._current_response_msg is None:
                 return
         col = self._current_response_msg.content
@@ -189,7 +224,15 @@ class LilyGUI:
                 self._flush_ui()
 
         elif etype == "reasoning_token":
-            pass
+            data = event.get("data", "")
+            self._reasoning_buffer.append(data)
+            # 如果 reasoning container 已存在，实时追加内容
+            if self._reasoning_container:
+                col = self._reasoning_container.content
+                if col and len(col.controls) >= 1 and isinstance(col.controls[0], ft.Text):
+                    col.controls[0].value = "".join(self._reasoning_buffer)
+                    if self._token_count % 5 == 0:
+                        self._flush_ui()
 
         elif etype == "tool_call":
             self._add_message("tool_call", f"⚙ 调用工具: {event.get('name', '?')}")
@@ -223,6 +266,24 @@ class LilyGUI:
         self._flush_ui()
         self.input_queue.put(text.strip())
 
+    def _toggle_input_expand(self, e=None):
+        """展开/折叠输入框。"""
+        self._input_expanded = not self._input_expanded
+        if self._input_expanded:
+            self.input_field.multiline = True
+            self.input_field.min_lines = 3
+            self.input_field.max_lines = 10
+            self.input_field.text_style = ft.TextStyle(color="#e0e0e0", size=14)
+            e.control.icon = ft.icons.CLOSE_FULLSCREEN
+            e.control.tooltip = "收起输入框"
+        else:
+            self.input_field.multiline = False
+            self.input_field.min_lines = None
+            self.input_field.max_lines = None
+            e.control.icon = ft.icons.OPEN_IN_FULL
+            e.control.tooltip = "展开输入框"
+        self.page.update()
+
     def _run_agent(self):
         while True:
             text = self.input_queue.get()
@@ -255,34 +316,51 @@ class LilyGUI:
         return result[0]
 
     def _confirm_tool(self, tool_name: str, args: dict) -> bool | None:
+        """权限确认 — 内联按钮（非弹窗）。"""
         result = [None]
         done = threading.Event()
+        import json
 
-        def on_allow(e):
-            result[0] = True
-            dlg.open = False
-            done.set()
-            self.page.update()
+        def make_handler(value):
+            def handler(e):
+                result[0] = value
+                done.set()
+                # 移除按钮行
+                if len(self.chat_list.controls) > 0:
+                    self.chat_list.controls.pop()
+                self.page.update()
+            return handler
 
-        def on_deny(e):
-            result[0] = False
-            dlg.open = False
-            done.set()
-            self.page.update()
-
-        dlg = ft.AlertDialog(
-            title=ft.Text(f"允许调用 {tool_name}？"),
-            content=ft.Text(
-                f"参数:\n{json.dumps(args, indent=2, ensure_ascii=False)[:500]}"
-            ),
-            actions=[
-                ft.TextButton("拒绝", on_click=on_deny),
-                ft.TextButton("允许", on_click=on_allow),
-            ],
+        btn_allow = ft.ElevatedButton(
+            "✓ 允许", on_click=make_handler(True),
+            style=ft.ButtonStyle(bgcolor=ft.colors.with_opacity(0.2, "#4caf50"), color="#4caf50"),
         )
-        self.page.dialog = dlg
-        dlg.open = True
-        self.page.update()
+        btn_deny = ft.ElevatedButton(
+            "✗ 拒绝", on_click=make_handler(False),
+            style=ft.ButtonStyle(bgcolor=ft.colors.with_opacity(0.2, "#f44336"), color="#f44336"),
+        )
+        btn_always = ft.TextButton(
+            "永久允许", on_click=make_handler("always"),
+            style=ft.ButtonStyle(color=ft.colors.with_opacity(0.5, "#4caf50")),
+        )
+        btn_never = ft.TextButton(
+            "永久拒绝", on_click=make_handler("never"),
+            style=ft.ButtonStyle(color=ft.colors.with_opacity(0.5, "#f44336")),
+        )
+
+        perm_msg = ft.Container(
+            content=ft.Column([
+                ft.Text(f"🔒 允许调用 {tool_name}？", size=13, color="#ffab40"),
+                ft.Text(f"参数: {json.dumps(args, ensure_ascii=False)[:200]}", size=11, color="#888888"),
+                ft.Row([btn_allow, btn_deny, btn_always, btn_never], spacing=8),
+            ], spacing=6),
+            bgcolor="#1e1e2e",
+            border_radius=8,
+            padding=ft.padding.all(12),
+            margin=ft.margin.only(left=40, right=40, top=4, bottom=4),
+        )
+        self.chat_list.controls.append(perm_msg)
+        self._flush_ui()
         done.wait()
         return result[0]
 
