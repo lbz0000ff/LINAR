@@ -1,0 +1,429 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>EchoLily</title>
+<style>
+  :root {
+    --bg: #f4f3ef;
+    --surface: #ffffff;
+    --text: #1a1a1a;
+    --text-muted: #8b8b8b;
+    --accent: #2b5f8a;
+    --accent-soft: rgba(43, 95, 138, 0.08);
+    --user-bubble: #2b5f8a;
+    --user-text: #ffffff;
+    --border: rgba(0,0,0,0.06);
+    --shadow: rgba(0,0,0,0.04);
+    --radius: 16px;
+    --font: "Inter", -apple-system, BlinkMacSystemFont, sans-serif;
+
+    --tool-call: #8b6914;
+    --tool-result: #6b6b6b;
+    --code-bg: #f0eee9;
+    --reasoning-bg: #f0eee9;
+  }
+
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  body {
+    font-family: var(--font);
+    background: var(--bg);
+    color: var(--text);
+    height: 100vh;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    line-height: 1.5;
+  }
+
+  /* ── Header ── */
+  header {
+    padding: 16px 24px;
+    border-bottom: 1px solid var(--border);
+    background: rgba(255,255,255,0.6);
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    flex-shrink: 0;
+  }
+
+  header h1 {
+    font-size: 15px;
+    font-weight: 500;
+    letter-spacing: 0.3px;
+    color: var(--text);
+  }
+
+  .status {
+    width: 8px; height: 8px;
+    border-radius: 50%;
+    background: #ccc;
+    transition: background 0.3s;
+  }
+  .status.connected { background: #4caf50; }
+  .status.processing { background: #ff9800; }
+
+  /* ── Chat ── */
+  #chat {
+    flex: 1;
+    overflow-y: auto;
+    padding: 20px 24px;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+  }
+
+  .msg { max-width: 75%; animation: fadeIn 0.2s ease; }
+  @keyframes fadeIn { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: translateY(0); } }
+
+  .msg.user { align-self: flex-end; }
+  .msg.agent, .msg.system { align-self: flex-start; }
+  .msg.tool_call, .msg.tool_result { align-self: flex-start; max-width: 85%; }
+
+  .msg .bubble {
+    padding: 10px 16px;
+    border-radius: var(--radius);
+    font-size: 14px;
+    line-height: 1.6;
+    word-wrap: break-word;
+  }
+
+  .msg.user .bubble {
+    background: var(--user-bubble);
+    color: var(--user-text);
+    border-bottom-right-radius: 4px;
+  }
+
+  .msg.agent .bubble {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    box-shadow: 0 1px 3px var(--shadow);
+    border-bottom-left-radius: 4px;
+  }
+
+  .msg.system .bubble {
+    background: var(--accent-soft);
+    color: var(--text);
+    border-radius: 8px;
+    font-size: 13px;
+    text-align: center;
+    max-width: 100%;
+  }
+
+  .msg.tool_call .bubble {
+    background: transparent;
+    color: var(--tool-call);
+    font-size: 12px;
+    font-family: 'SFMono-Regular', Consolas, monospace;
+    padding: 4px 12px;
+    border-left: 2px solid var(--tool-call);
+    border-radius: 0 4px 4px 0;
+  }
+
+  .msg.tool_result .bubble {
+    background: transparent;
+    color: var(--tool-result);
+    font-size: 12px;
+    font-family: 'SFMono-Regular', Consolas, monospace;
+    padding: 4px 12px;
+    border-left: 2px solid var(--tool-result);
+    border-radius: 0 4px 4px 0;
+  }
+
+  .msg .timestamp {
+    font-size: 10px;
+    color: var(--text-muted);
+    margin-top: 4px;
+    padding: 0 4px;
+  }
+
+  /* Reasoning */
+  .reasoning-toggle {
+    font-size: 12px;
+    color: var(--text-muted);
+    cursor: pointer;
+    user-select: none;
+    padding: 2px 0;
+  }
+  .reasoning-toggle:hover { color: var(--text); }
+  .reasoning-body {
+    display: none;
+    background: var(--reasoning-bg);
+    border-radius: 8px;
+    padding: 8px 12px;
+    margin: 4px 0 8px 0;
+    font-size: 13px;
+    color: var(--text-muted);
+    font-style: italic;
+    line-height: 1.5;
+  }
+  .reasoning-body.open { display: block; }
+
+  /* Markdown in agent messages */
+  .msg.agent .bubble p { margin: 4px 0; }
+  .msg.agent .bubble pre {
+    background: var(--code-bg);
+    border-radius: 8px;
+    padding: 12px;
+    overflow-x: auto;
+    font-size: 13px;
+    margin: 8px 0;
+  }
+  .msg.agent .bubble code {
+    background: var(--code-bg);
+    padding: 2px 6px;
+    border-radius: 4px;
+    font-size: 13px;
+  }
+  .msg.agent .bubble pre code { background: none; padding: 0; }
+  .msg.agent .bubble ul, .msg.agent .bubble ol { padding-left: 20px; margin: 4px 0; }
+  .msg.agent .bubble blockquote {
+    border-left: 3px solid var(--border);
+    padding-left: 12px;
+    color: var(--text-muted);
+    margin: 8px 0;
+  }
+
+  /* ── Input ── */
+  footer {
+    padding: 16px 24px;
+    border-top: 1px solid var(--border);
+    background: rgba(255,255,255,0.6);
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
+    flex-shrink: 0;
+  }
+
+  .input-row {
+    display: flex;
+    gap: 8px;
+    align-items: flex-end;
+  }
+
+  #input {
+    flex: 1;
+    padding: 10px 16px;
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    font-size: 14px;
+    font-family: var(--font);
+    background: var(--surface);
+    color: var(--text);
+    outline: none;
+    resize: none;
+    min-height: 44px;
+    max-height: 150px;
+    line-height: 1.5;
+    transition: border-color 0.2s;
+  }
+  #input:focus { border-color: var(--accent); }
+
+  #send {
+    padding: 10px 20px;
+    background: var(--accent);
+    color: white;
+    border: none;
+    border-radius: 12px;
+    font-size: 14px;
+    font-family: var(--font);
+    cursor: pointer;
+    transition: opacity 0.2s;
+    white-space: nowrap;
+  }
+  #send:hover { opacity: 0.85; }
+  #send:disabled { opacity: 0.4; cursor: not-allowed; }
+
+  /* ── Scrollbar ── */
+  #chat::-webkit-scrollbar { width: 6px; }
+  #chat::-webkit-scrollbar-track { background: transparent; }
+  #chat::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+</style>
+</head>
+<body>
+
+<header>
+  <span class="status" id="status"></span>
+  <h1>EchoLily</h1>
+</header>
+
+<div id="chat"></div>
+
+<footer>
+  <div class="input-row">
+    <textarea id="input" placeholder="输入消息…" rows="1"></textarea>
+    <button id="send" disabled>发送</button>
+  </div>
+</footer>
+
+<script>
+const WS_URL = "ws://localhost:8081";
+const chat = document.getElementById("chat");
+const input = document.getElementById("input");
+const sendBtn = document.getElementById("send");
+const statusDot = document.getElementById("status");
+
+let ws = null;
+let currentMsgContainer = null;  // for streaming tokens
+let currentReasoning = null;     // reasoning text for current response
+let pendingReasoning = [];       // accumulated reasoning tokens
+
+// ── Auto-resize textarea ──
+input.addEventListener("input", () => {
+  input.style.height = "auto";
+  input.style.height = Math.min(input.scrollHeight, 150) + "px";
+  sendBtn.disabled = !input.value.trim();
+});
+
+// ── Send ──
+function send() {
+  const text = input.value.trim();
+  if (!text || !ws) return;
+  ws.send(JSON.stringify({ type: "message", data: text }));
+  addMessage("user", text);
+  input.value = "";
+  input.style.height = "auto";
+  sendBtn.disabled = true;
+  currentMsgContainer = null;
+  pendingReasoning = [];
+  statusDot.className = "status processing";
+  // Auto scroll
+  chat.scrollTop = chat.scrollHeight;
+}
+
+input.addEventListener("keydown", (e) => {
+  if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send(); }
+});
+sendBtn.addEventListener("click", send);
+
+// ── Connect WebSocket ──
+function connect() {
+  ws = new WebSocket(WS_URL);
+
+  ws.onopen = () => {
+    statusDot.className = "status connected";
+    sendBtn.disabled = false;
+  };
+
+  ws.onmessage = (e) => {
+    const ev = JSON.parse(e.data);
+    handleEvent(ev);
+  };
+
+  ws.onclose = () => {
+    statusDot.className = "status";
+    sendBtn.disabled = true;
+    setTimeout(connect, 2000);
+  };
+
+  ws.onerror = () => ws.close();
+}
+
+connect();
+
+// ── Events ──
+function handleEvent(ev) {
+  switch (ev.type) {
+    case "ready":
+      statusDot.className = "status connected";
+      break;
+
+    case "token":
+      appendToken(ev.data || "");
+      break;
+
+    case "reasoning_token":
+      pendingReasoning.push(ev.data || "");
+      break;
+
+    case "tool_call":
+      addMessage("tool_call", "⚙ " + (ev.name || "?"));
+      chat.scrollTop = chat.scrollHeight;
+      break;
+
+    case "tool_result":
+      let r = (ev.result || "").toString().slice(0, 300);
+      addMessage("tool_result", "→ " + r);
+      chat.scrollTop = chat.scrollHeight;
+      break;
+
+    case "error":
+      addMessage("system", "✖ " + (ev.data || ""));
+      chat.scrollTop = chat.scrollHeight;
+      break;
+
+    case "complete":
+    case "done":
+      // Inject reasoning into the just-completed message
+      if (pendingReasoning.length && currentMsgContainer) {
+        injectReasoning(currentMsgContainer, pendingReasoning.join(""));
+        pendingReasoning = [];
+      }
+      currentMsgContainer = null;
+      break;
+  }
+}
+
+// ── Messages ──
+function addMessage(type, text) {
+  const el = document.createElement("div");
+  el.className = "msg " + type;
+
+  const bubble = document.createElement("div");
+  bubble.className = "bubble";
+  bubble.textContent = text;
+  el.appendChild(bubble);
+
+  chat.appendChild(el);
+  chat.scrollTop = chat.scrollHeight;
+
+  // Track current agent message for streaming
+  if (type === "agent") {
+    currentMsgContainer = el;
+  }
+}
+
+function appendToken(text) {
+  if (!currentMsgContainer) {
+    // First token — create agent message
+    addMessage("agent", "");
+  }
+  const bubble = currentMsgContainer.querySelector(".bubble");
+  if (bubble) {
+    bubble.textContent += text;
+    chat.scrollTop = chat.scrollHeight;
+  }
+}
+
+function injectReasoning(msgEl, text) {
+  const toggle = document.createElement("div");
+  toggle.className = "reasoning-toggle";
+  toggle.textContent = "🤔 思考过程 ▸";
+
+  const body = document.createElement("div");
+  body.className = "reasoning-body";
+  body.textContent = text;
+
+  toggle.onclick = () => {
+    const open = body.classList.toggle("open");
+    toggle.textContent = open ? "🤔 思考过程 ▾" : "🤔 思考过程 ▸";
+  };
+
+  const bubble = msgEl.querySelector(".bubble");
+  bubble.parentNode.insertBefore(toggle, bubble);
+  bubble.parentNode.insertBefore(body, bubble);
+}
+
+// ── Keyboard shortcut ──
+document.addEventListener("keydown", (e) => {
+  if (e.key === "/" && document.activeElement !== input) {
+    e.preventDefault();
+    input.focus();
+  }
+});
+</script>
+</body>
+</html>
