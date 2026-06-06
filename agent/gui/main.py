@@ -89,7 +89,7 @@ class LilyGUI:
             focused_border_color="#7c4dff",
             cursor_color="#7c4dff",
             text_style=ft.TextStyle(color="#e0e0e0", size=14),
-            bgcolor="#16213e",
+            bgcolor="#0d1117",
             border_radius=8,
             expand=True,
             on_submit=self._on_submit,
@@ -123,7 +123,7 @@ class LilyGUI:
                     vertical_alignment=ft.CrossAxisAlignment.CENTER,
                 ),
                 padding=ft.padding.only(left=16, right=16, top=8, bottom=16),
-                bgcolor="#16213e",
+                bgcolor="#0d1117",
             ),
         )
 
@@ -136,7 +136,7 @@ class LilyGUI:
             return
         is_user = msg_type == "user"
         is_system = msg_type == "system"
-        bubble_color = "#7c4dff" if is_user else "#0f3460" if is_system else "#16213e"
+        bubble_color = "#7c4dff" if is_user else "#0f3460" if is_system else "#0d1117"
 
         ts = kw.get("timestamp", "")
         style = ft.TextStyle(color="#ffffff" if is_user else "#b0b0b0", size=14)
