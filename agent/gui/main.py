@@ -201,7 +201,7 @@ class LilyGUI:
 
         wrapper = ft.Container(
             content=msg,
-            margin=ft.margin.only(
+            margin=ft.Padding(
                 left=60 if is_user else 0,
                 right=0 if is_user else 60,
             ),
@@ -272,12 +272,12 @@ class LilyGUI:
 
     # ── 用户输入 ─────────────────────────────────────────────
 
-    def _on_submit(self, e=None):
+    async def _on_submit(self, e=None):
         text = self.input_field.value
         if not text or not text.strip():
             return
         self.input_field.value = ""
-        self.input_field.focus()
+        await self.input_field.focus()
         self._current_response_msg = None
         self._add_message("user", text.strip())
         self._flush_ui()
@@ -371,7 +371,7 @@ class LilyGUI:
             bgcolor="#1e1e2e",
             border_radius=8,
             padding=ft.Padding(12,12,12,12),
-            margin=ft.margin.only(left=40, right=40, top=4, bottom=4),
+            margin=ft.Padding(left=40, right=40, top=4, bottom=4),
         )
         self.chat_list.controls.append(perm_msg)
         self._flush_ui()
