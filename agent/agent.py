@@ -726,7 +726,7 @@ class Agent:
         # ── re-read prompt files so memory writes take effect immediately ──
         if not self._skill_active:
             self.llm.system_prompt = self._build_prompt(self.cfg)
-        turn = 0
+        llm_call = 0
         while True:
             # ── interrupt check before starting a new LLM round ──
             if self._interrupt_requested or self.stop_event.is_set():
@@ -738,8 +738,8 @@ class Agent:
                     'round': self._conversation_round,
                 })
                 break
-            turn += 1
-            if self.max_llm_calls > 0 and turn > self.max_llm_calls:
+            llm_call += 1
+            if self.max_llm_calls > 0 and llm_call > self.max_llm_calls:
                 break
             llm_messages = self._build_llm_messages()
             self.emit({"type": "start"})

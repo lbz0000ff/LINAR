@@ -18,7 +18,7 @@ class SessionCommand(Command):
             info = terminal.agent.get_current_session_info()
             terminal.console.print(
                 f"\n  Session #{info['session_id']}"
-                f"  |  Turn {info['turn']}"
+                f"  |  Round {info['round']}"
                 f"  |  {info.get('title', 'untitled')[:60]}"
             )
             return True

@@ -17,7 +17,6 @@ from tool.basic_tools.tool_skill import Tool_SkillView
 from tool.basic_tools.tool_plan import Tool_PlanAdvance, Tool_PlanStatus
 from tool.basic_tools.tool_vision import Tool_VisionQuery
 from tool.basic_tools.tool_promise import Tool_ResolvePromise
-from tool.basic_tools.tool_watch import Tool_Watch
 from tool.basic_tools.tool_cancel_promise import Tool_CancelPromise
 
 # ── MCP support ──────────────────────────────────────────────
@@ -199,7 +198,6 @@ _TOOL_CLASSES = {
     "plan_status": Tool_PlanStatus,
     "vision_query": Tool_VisionQuery,
     "resolve_promise": Tool_ResolvePromise,
-    "watch": Tool_Watch,
     "cancel_promise": Tool_CancelPromise,
 }
 
@@ -210,11 +208,10 @@ _TOOLSETS = {
         "read_file", "write_file", "delete_file",
         "delete_dir", "patch_file", "search_files",
     ],
-    "shell": ["cmd_execute"],
+    "shell": ["cmd_execute", "cancel_promise"],
     "web": ["web_fetch", "web_search"],
     "memory": ["remember", "recall"],
     "interactive": ["ask_user", "skill_view", "resolve_promise"],
-    "shell": ["cmd_execute", "watch", "cancel_promise"],
     "plan": ["plan_advance", "plan_status"],
     "vision": ["vision_query"],
     "mcp": [],  # placeholder — MCP tools are injected dynamically
@@ -272,7 +269,6 @@ _all_tools = {
     "plan_status": Tool_PlanStatus(),
     "vision_query": Tool_VisionQuery(),
     "resolve_promise": Tool_ResolvePromise(),
-    "watch": Tool_Watch(),
     "cancel_promise": Tool_CancelPromise(),
 }
 
