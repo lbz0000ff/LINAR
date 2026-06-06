@@ -397,8 +397,8 @@ function handleEvent(ev) {
       // Re-render agent message with proper markdown
       if (currentMsgContainer && window.marked) {
         const bubble = currentMsgContainer.querySelector(".bubble");
-        if (bubble && bubble.textContent) {
-          bubble.innerHTML = marked.parse(bubble.textContent);
+        if (bubble && bubble._fullText) {
+          bubble.innerHTML = marked.parse(bubble._fullText);
         }
       }
       currentMsgContainer = null;
@@ -431,12 +431,17 @@ function addMessage(type, text) {
 
 function appendToken(text) {
   if (!currentMsgContainer) {
-    // First token — create agent message
     addMessage("agent", "");
   }
   const bubble = currentMsgContainer.querySelector(".bubble");
   if (bubble) {
-    bubble.textContent += text;
+    if (!bubble._fullText) bubble._fullText = "";
+    bubble._fullText += text;
+    if (window.marked) {
+      bubble.innerHTML = marked.parse(bubble._fullText);
+    } else {
+      bubble.textContent = bubble._fullText;
+    }
     chat.scrollTop = chat.scrollHeight;
   }
 }
