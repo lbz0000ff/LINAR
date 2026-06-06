@@ -86,7 +86,7 @@ class LilyGUI:
             focused_border_color="#7c4dff",
             cursor_color="#7c4dff",
             text_style=ft.TextStyle(color="#e0e0e0", size=14),
-            bgcolor="#0d1117",
+            bgcolor="rgba(255,255,255,0.08)",
             border_radius=8,
             expand=True,
             on_submit=self._on_submit,
@@ -110,9 +110,9 @@ class LilyGUI:
             ft.Container(
                 content=self.chat_list,
                 expand=True,
-                bgcolor="#1a1a2e",
+                bgcolor="#0a0a1a",
             ),
-            ft.Divider(height=1, color="rgba(255,255,255,0.1)"),
+            ft.Divider(height=1, color="rgba(255,255,255,0.05)"),
             ft.Container(
                 content=ft.Row(
                     [self.input_field, self._expand_btn, send_btn],
@@ -120,7 +120,7 @@ class LilyGUI:
                     vertical_alignment=ft.CrossAxisAlignment.CENTER,
                 ),
                 padding=ft.Padding(left=16, right=16, top=8, bottom=16),
-                bgcolor="#0d1117",
+                bgcolor="rgba(255,255,255,0.08)",
             ),
         )
 
@@ -133,7 +133,7 @@ class LilyGUI:
             return
         is_user = msg_type == "user"
         is_system = msg_type == "system"
-        bubble_color = "#7c4dff" if is_user else "#0f3460" if is_system else "#0d1117"
+        bubble_color = "rgba(124,77,255,0.35)" if is_user else "rgba(15,52,96,0.5)" if is_system else "rgba(255,255,255,0.06)"
 
         ts = kw.get("timestamp", "")
         style = ft.TextStyle(color="#ffffff" if is_user else "#b0b0b0", size=14)
@@ -197,6 +197,19 @@ class LilyGUI:
                 bottom_left=18, bottom_right=18,
             ),
             padding=ft.Padding(12,12,12,12),
+            blur=ft.Blur(8, 8, ft.BlurTileMode.MIRROR),
+            border=ft.Border(
+                ft.BorderSide(0.5, "rgba(255,255,255,0.15)"),
+                ft.BorderSide(0.5, "rgba(255,255,255,0.15)"),
+                ft.BorderSide(0.5, "rgba(255,255,255,0.15)"),
+                ft.BorderSide(0.5, "rgba(255,255,255,0.15)"),
+            ),
+            shadow=ft.BoxShadow(
+                spread_radius=1,
+                blur_radius=12,
+                color="rgba(124,77,255,0.15)" if is_user else "rgba(0,0,0,0.3)",
+                offset=ft.Offset(0, 4),
+            ),
         )
 
         wrapper = ft.Container(
@@ -204,6 +217,12 @@ class LilyGUI:
             margin=ft.Padding(
                 left=60 if is_user else 0,
                 right=0 if is_user else 60,
+            ),
+            animate=ft.Animation(300, "ease_in_out"),
+            on_hover=lambda e: setattr(
+                e.control, "scale", ft.Scale(1.02)
+            ) if e.data == "true" else setattr(
+                e.control, "scale", ft.Scale(1)
             ),
         )
         self.chat_list.controls.append(wrapper)
