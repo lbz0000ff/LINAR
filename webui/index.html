@@ -297,6 +297,7 @@ marked.use({
 
 <script>
 const WS_URL = "ws://127.0.0.1:8081";
+console.log("Connecting to WS:", WS_URL);
 const chat = document.getElementById("chat");
 const input = document.getElementById("input");
 const sendBtn = document.getElementById("send");
@@ -349,13 +350,19 @@ function connect() {
     handleEvent(ev);
   };
 
-  ws.onclose = () => {
+  ws.onclose = (e) => {
+    console.warn("WS closed", e.code, e.reason);
     statusDot.className = "status";
+    statusDot.title = "连接断开 (code: " + (e.code || "?") + ")";
     sendBtn.disabled = true;
     setTimeout(connect, 2000);
   };
 
-  ws.onerror = () => ws.close();
+  ws.onerror = (e) => {
+    console.error("WS error", e);
+    statusDot.title = "WebSocket 连接失败";
+    ws.close();
+  };
 }
 
 connect();
