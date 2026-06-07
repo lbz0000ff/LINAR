@@ -79,7 +79,13 @@ async def ws_handler(ws):
             t = data.get("type")
             if t == "message":
                 text = data.get("data", "")
+                files = data.get("files", [])
+                files = data.get("files", [])
+                if files:
+                    text += " [附件] " + ", ".join(files)
                 _input_queue.put(text)
+
+
             elif t == "list_sessions":
                 sessions = db.get_recent_sessions(50)
                 await ws.send(json.dumps({"type": "sessions", "data": sessions}, ensure_ascii=False, default=str))
