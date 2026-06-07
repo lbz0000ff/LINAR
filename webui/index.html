@@ -287,7 +287,7 @@ async function send(){
   if(filePaths.length)msg.files=filePaths;
   ws.send(JSON.stringify(msg));
   let display=t||"(文件)";
-  addMsg("user",display);input.value="";input.style.height="auto";
+  addMsg("user",display,filePaths);input.value="";input.style.height="auto";
   sendBtn.disabled=true;currentMsgContainer=null;pendingReasoning=[];
   statusDot.className="status processing";chat.scrollTop=chat.scrollHeight;
 }
@@ -318,7 +318,7 @@ function connect(){
       case "token":appendToken(ev.data||"");break;
       case "reasoning_token":pendingReasoning.push(ev.data||"");break;
       case "tool_call":addMsg("tool_call","⚙ "+(ev.name||"?"));chat.scrollTop=chat.scrollHeight;break;
-      case "tool_result":let r=(ev.result||"").toString().slice(0,300);addMsg("tool_result","→ "+r);chat.scrollTop=chat.scrollHeight;break;
+      case "tool_result":let r=(ev.result||"").toString().slice(0,120);addMsg("tool_result","→ "+r);chat.scrollTop=chat.scrollHeight;break;
       case "error":addMsg("system","✖ "+(ev.data||""));chat.scrollTop=chat.scrollHeight;break;
       case "complete":case "done":
         if(pendingReasoning.length&&currentMsgContainer){injectReasoning(currentMsgContainer,pendingReasoning.join(""));pendingReasoning=[]}
@@ -381,11 +381,30 @@ function renderSessions_highlight(id){
 function escapeHtml(t){const d=document.createElement("div");d.textContent=t;return d.innerHTML}
 
 // Messages
-function addMsg(type,text){
+function addMsg(type,text,files){
   const el=document.createElement("div");el.className="msg "+type;
   const b=document.createElement("div");b.className="bubble";
   if(type==="agent"&&window.marked){b.innerHTML=marked.parse(text)}else{b.textContent=text}
-  el.appendChild(b);chat.appendChild(el);chat.scrollTop=chat.scrollHeight;
+  el.appendChild(b);
+  // Show attached images in user messages
+  if(files&&files.length){
+    const imgWrap=document.createElement("div");imgWrap.style.marginTop="8px";
+    for(const fp of files){
+      if(fp.match(/\.(jpg|jpeg|png|gif|webp)$/i)){
+        const fname=fp.split("\\").pop().split("/").pop();
+        const img=document.createElement("img");
+        img.src="/uploads/"+fname;
+        img.style.maxWidth="200px";img.style.maxHeight="200px";img.style.borderRadius="8px";img.style.marginTop="4px";
+        imgWrap.appendChild(img);
+      }else{
+        const fn=document.createElement("div");fn.style.fontSize="11px";fn.style.color="rgba(255,255,255,0.7)";fn.style.marginTop="4px";
+        fn.textContent="📎 "+fp.split("\\").pop().split("/").pop();
+        imgWrap.appendChild(fn);
+      }
+    }
+    el.appendChild(imgWrap);
+  }
+  chat.appendChild(el);chat.scrollTop=chat.scrollHeight;
   if(type==="agent"||!currentMsgContainer)currentMsgContainer=el;
 }
 
