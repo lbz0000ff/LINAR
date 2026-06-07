@@ -64,6 +64,11 @@ def _run_agent():
         text = _input_queue.get()
         if text is None:
             break
+        if text.startswith("__SWITCH_SESSION__:"):
+            sid = int(text.split(":")[1])
+            agent.switch_session(sid)
+            _broadcast({"type": "session_switched", "session_id": sid})
+            continue
         orchestrator.start(text)
         _broadcast({"type": "ready"})
 
@@ -89,6 +94,11 @@ async def ws_handler(ws):
                 import database as db
                 sid = db.create_session()
                 await ws.send(json.dumps({"type": "new_session_created", "session_id": sid}, ensure_ascii=False))
+            elif t == "switch_session":
+                sid = int(data.get("id", 0))
+                # We'll queue a switch command for the agent thread
+                _input_queue.put(f"__SWITCH_SESSION__:{sid}")
+                await ws.send(json.dumps({"type": "session_switched", "session_id": sid}, ensure_ascii=False))
 
 
             elif t == "list_sessions":

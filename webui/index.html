@@ -372,7 +372,7 @@ function connect(){
       case "tool_call":addMsg("tool_call","⚙ "+(ev.name||"?"));chat.scrollTop=chat.scrollHeight;break;
       case "tool_result":let r=(ev.result||"").toString().slice(0,120);addMsg("tool_result","→ "+r);chat.scrollTop=chat.scrollHeight;break;
       case "error":addMsg("system","✖ "+(ev.data||""));chat.scrollTop=chat.scrollHeight;break;
-      case "complete":case "done":setProcessing(false);
+      case "complete":case "done":
         if(pendingReasoning.length){
           const rt=pendingReasoning.join("");pendingReasoning=[];
           if(currentMsgContainer){
@@ -391,7 +391,7 @@ function connect(){
             if(!hr){currentMsgContainer.remove()}else{b.style.display="none"}
           }
         }
-        currentMsgContainer=null;break;
+        setProcessing(false);currentMsgContainer=null;break;
       case "sessions":renderSessions(ev.data);break;
       case "session_msgs":loadSessionMessages(ev.session_id,ev.title,ev.data);break;
       case "config_json":renderConfigForm(ev.data||{});break;
@@ -420,7 +420,7 @@ function renderSessions(sessions){
     el.addEventListener("click",()=>{
       const id=parseInt(el.dataset.id);
       if(id===currentSessionId)return;
-      if(ws)ws.send(JSON.stringify({type:"get_session",id}));
+      if(ws)ws.send(JSON.stringify({type:"switch_session",id}));setTimeout(()=>{if(ws)ws.send(JSON.stringify({type:"get_session",id}))},100);
     });
   });
 }
