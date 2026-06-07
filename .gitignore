@@ -32,4 +32,5 @@ docs/
 #Exclude all skills except basic skills
 skills/*
 !skills/skill-writer
-!skills/system-guide
+!skills/system-guidewebui/uploads/
+webui/reasoning_debug*.txt
