@@ -244,10 +244,15 @@ function renderAttachments(){
       (isImg?'<img src="'+URL.createObjectURL(f.file)+'">':'')+
       '<span class="name">'+f.name+'</span>'+
       '<span class="size">'+sz+unit+'</span>'+
-      '<span class="del" onclick="removeFile(''+f.id+'')">×</span></div>';
+      '<span class="del" data-id="'+f.id+'">×</span></div>';
   }
   cont.innerHTML=html;
 }
+
+document.getElementById("attachments").addEventListener("click",function(e){
+  const del=e.target.closest(".del");
+  if(del){removeFile(del.dataset.id)}
+});
 
 function removeFile(id){
   pendingFiles=pendingFiles.filter(f=>f.id!==id);
