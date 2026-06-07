@@ -247,7 +247,6 @@ const mainTitle=document.getElementById("main-title");
 
 let ws=null;
 let currentMsgContainer=null;
-let pendingReasoning=[];
 let currentSessionId=null;
 let isSettingsOpen=false;
 
@@ -340,7 +339,7 @@ async function send(){
   ws.send(JSON.stringify(msg));
   let display=t||"(文件)";
   addMsg("user",display,filePaths);input.value="";input.style.height="auto";
-  sendBtn.disabled=true;currentMsgContainer=null;pendingReasoning=[];
+  sendBtn.disabled=true;currentMsgContainer=null;
   statusDot.className="status processing";chat.scrollTop=chat.scrollHeight;setProcessing(true);
 }
 input.addEventListener("keydown",e=>{if(e.key==="Enter"&&!e.shiftKey){e.preventDefault();send()}});
@@ -368,20 +367,11 @@ function connect(){
     switch(ev.type){
       case "ready":statusDot.className="status connected";break;
       case "token":appendToken(ev.data||"");break;
-      case "reasoning_token":pendingReasoning.push(ev.data||"");break;
+      case "reasoning_token":appendReasoning(ev.data||"");break;
       case "tool_call":addMsg("tool_call","⚙ "+(ev.name||"?"));chat.scrollTop=chat.scrollHeight;break;
       case "tool_result":let r=(ev.result||"").toString().slice(0,120);addMsg("tool_result","→ "+r);chat.scrollTop=chat.scrollHeight;break;
       case "error":addMsg("system","✖ "+(ev.data||""));chat.scrollTop=chat.scrollHeight;break;
       case "complete":case "done":
-        if(pendingReasoning.length){
-          const rt=pendingReasoning.join("");pendingReasoning=[];
-          if(currentMsgContainer){
-            injectReasoning(currentMsgContainer,rt);
-          }else if(rt.trim()){
-            addMsg("agent","");
-            if(currentMsgContainer)injectReasoning(currentMsgContainer,rt);
-          }
-        }
         if(currentMsgContainer&&window.marked){
           const b=currentMsgContainer.querySelector(".bubble");
           if(b&&b._fullText&&b._fullText.trim()){
