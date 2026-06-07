@@ -196,7 +196,7 @@ marked.use({extensions:[{
 <!-- Sidebar -->
 <button id="btn-collapse-sidebar" style="position:absolute;top:12px;left:248px;z-index:100;background:var(--glass-bg);backdrop-filter:blur(8px);border:1px solid var(--border);border-radius:6px;cursor:pointer;font-size:12px;color:var(--text-muted);padding:4px 6px;transition:left 0.3s" title="收起侧边栏">◀</button>
   <aside class="sidebar" id="sidebar">
-    <div class="sidebar-top" id="session-list">
+    <div class="sidebar-top" id="session-list"><div style="padding:4px 8px 8px"><button id="btn-new-chat" style="width:100%;padding:8px;background:var(--accent);color:white;border:none;border-radius:8px;font-size:13px;cursor:pointer;font-family:inherit">✚ 新的对话</button></div>
     <div class="sidebar-section-title">会话记录</div>
   </div>
   <div class="sidebar-bottom">
@@ -224,7 +224,7 @@ marked.use({extensions:[{
 <div class="input-row">
     <button id="upload-btn" title="上传文件">📎</button>
     <textarea id="input" placeholder="输入消息…" rows="1"></textarea>
-    <button id="send" disabled>发送</button>
+    <button id="send" disabled style="display:inline-flex;align-items:center;gap:4px;padding:10px 16px;background:var(--accent);color:white;border:none;border-radius:12px;font-size:14px;cursor:pointer;font-family:inherit;transition:opacity 0.2s;white-space:nowrap"><span id="send-icon">▶</span> <span id="send-text">发送</span></button>
     <input type="file" id="file-input" multiple hidden>
   </div>
 </footer>
@@ -341,7 +341,7 @@ async function send(){
   let display=t||"(文件)";
   addMsg("user",display,filePaths);input.value="";input.style.height="auto";
   sendBtn.disabled=true;currentMsgContainer=null;pendingReasoning=[];
-  statusDot.className="status processing";chat.scrollTop=chat.scrollHeight;
+  statusDot.className="status processing";chat.scrollTop=chat.scrollHeight;setProcessing(true);
 }
 input.addEventListener("keydown",e=>{if(e.key==="Enter"&&!e.shiftKey){e.preventDefault();send()}});
 sendBtn.addEventListener("click",send);
@@ -372,7 +372,7 @@ function connect(){
       case "tool_call":addMsg("tool_call","⚙ "+(ev.name||"?"));chat.scrollTop=chat.scrollHeight;break;
       case "tool_result":let r=(ev.result||"").toString().slice(0,120);addMsg("tool_result","→ "+r);chat.scrollTop=chat.scrollHeight;break;
       case "error":addMsg("system","✖ "+(ev.data||""));chat.scrollTop=chat.scrollHeight;break;
-      case "complete":case "done":
+      case "complete":case "done":setProcessing(false);
         if(pendingReasoning.length){
           const rt=pendingReasoning.join("");pendingReasoning=[];
           if(currentMsgContainer){
@@ -395,6 +395,7 @@ function connect(){
       case "sessions":renderSessions(ev.data);break;
       case "session_msgs":loadSessionMessages(ev.session_id,ev.title,ev.data);break;
       case "config_json":renderConfigForm(ev.data||{});break;
+      case "new_session_created":location.reload();break;
       case "config_saved":document.getElementById("btn-save-config").textContent="已保存";setTimeout(()=>{const b=document.getElementById("btn-save-config");if(b)b.textContent="保存"},2000);break;
     }
   };

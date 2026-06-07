@@ -83,6 +83,12 @@ async def ws_handler(ws):
                 if files:
                     text += " [附件] " + ", ".join(files)
                 _input_queue.put(text)
+            elif t == "stop":
+                log.info("Stop requested by user")
+            elif t == "new_session":
+                import database as db
+                sid = db.create_session()
+                await ws.send(json.dumps({"type": "new_session_created", "session_id": sid}, ensure_ascii=False))
 
 
             elif t == "list_sessions":
