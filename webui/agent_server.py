@@ -80,7 +80,6 @@ async def ws_handler(ws):
             if t == "message":
                 text = data.get("data", "")
                 files = data.get("files", [])
-                files = data.get("files", [])
                 if files:
                     text += " [附件] " + ", ".join(files)
                 _input_queue.put(text)
@@ -101,11 +100,15 @@ async def ws_handler(ws):
                     text = f.read()
                 await ws.send(json.dumps({"type": "config", "data": text}, ensure_ascii=False))
             elif t == "get_config_json":
-                import yaml
-                cfg_path = _CONFIG_PATH
-                with open(cfg_path, "r", encoding="utf-8") as f:
-                    cfg = yaml.safe_load(f)
-                await ws.send(json.dumps({"type": "config_json", "data": cfg}, ensure_ascii=False, default=str))
+                try:
+                    import yaml
+                    cfg_path = _CONFIG_PATH
+                    with open(cfg_path, "r", encoding="utf-8") as f:
+                        cfg = yaml.safe_load(f)
+                    await ws.send(json.dumps({"type": "config_json", "data": cfg}, ensure_ascii=False, default=str))
+                except Exception as e:
+                    log.error("get_config_json failed: %s", e)
+                    await ws.send(json.dumps({"type": "config_json", "data": {"error": str(e)}}, ensure_ascii=False))
             elif t == "save_config":
                 cfg_path = _CONFIG_PATH
                 with open(cfg_path, "w", encoding="utf-8") as f:
