@@ -122,9 +122,143 @@ footer{padding:12px 20px;border-top:1px solid var(--border);background:rgba(255,
 #chat::-webkit-scrollbar-track{background:transparent}
 #chat::-webkit-scrollbar-thumb{background:var(--border);border-radius:2px}
 </style>
-<script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js">
+function renderConfigForm(cfg){
+  const form=document.getElementById("config-form");
+  if(!form)return;
+  let html="";
+  const sections={
+    "LLM":["llm","aux","vision"],
+    "Behavior":["max_llm_calls","show_reasoning","show_tool_calls"],
+    "Memory":["max_memory_length","max_user_preferences_length"],
+    "Tools":["tools"],
+    "MCP Servers":["mcp_servers"],
+    "Logging":["logging"],
+  };
+  for(const [title,keys] of Object.entries(sections)){
+    html+='<div style="background:var(--surface);border-radius:12px;padding:16px;border:1px solid var(--border)">';
+    html+='<h3 style="font-size:14px;font-weight:600;margin-bottom:12px;color:var(--text-muted)">'+title+'</h3>';
+    for(const k of keys){
+      const v=cfg[k];
+      if(v===undefined)continue;
+      if(typeof v==="object"&&!Array.isArray(v)){
+        for(const [sk,sv] of Object.entries(v)){
+          html+=renderField(k+"."+sk,sv,sk);
+        }
+      }else{
+        html+=renderField(k,v,k);
+      }
+    }
+    html+='</div>';
+  }
+  form.innerHTML=html;
+}
+
+function renderField(key,val,label){
+  const lbl=label.replace(/_/g," ");
+  const name="cfg_"+key.replace(/[^a-zA-Z0-9]/g,"_");
+  let input="";
+  const t=typeof val;
+  if(val===true||val===false){
+    input="<label style=\"display:flex;align-items:center;gap:8px;cursor:pointer\">"+
+      "<input type=\"checkbox\" "+(val?"checked":"")+" data-key=\""+key+"\" class=\"cfg-field\" "+
+      "onchange=\"pendingConfigChanges=true\">"+
+      "<span>"+lbl+"</span></label>";
+  }else if(t==="number"){
+    input="<div style=\"display:flex;align-items:center;gap:8px\">"+
+      "<span style=\"font-size:13px;min-width:100px\">"+lbl+"</span>"+
+      "<input type=\"number\" value=\""+val+"\" data-key=\""+key+"\" class=\"cfg-field\" style=\"flex:1;padding:6px 10px;border:1px solid var(--border);border-radius:6px;font-size:13px;outline:none\" "+
+      "onchange=\"pendingConfigChanges=true\">"+
+      (key==="temperature"?"<span style=\"font-size:11px;color:var(--text-muted)\">0-1</span>":"")+
+      "</div>";
+  }else if(Array.isArray(val)){
+    input="<div style=\"margin-bottom:8px\"><span style=\"font-size:13px;font-weight:500;display:block;margin-bottom:4px\">"+lbl+"</span>";
+    for(const item of val){
+      input+='<label style="display:flex;align-items:center;gap:6px;font-size:13px;padding:2px 0">'+
+        '<input type="checkbox" checked disabled style="opacity:0.5"> '+escapeHtml(item)+'</label>';
+    }
+    input+='<div style="font-size:11px;color:var(--text-muted);margin-top:4px">编辑 config.yaml 修改</div></div>';
+  }else{
+    input="<div style=\"display:flex;align-items:center;gap:8px\">"+
+      "<span style=\"font-size:13px;min-width:100px\">"+lbl+"</span>"+
+      "<input type=\"text\" value=\""+escapeHtml(String(val))+"\" data-key=\""+key+"\" class=\"cfg-field\" style=\"flex:1;padding:6px 10px;border:1px solid var(--border);border-radius:6px;font-size:13px;outline:none\" "+
+      "onchange=\"pendingConfigChanges=true\">"+
+      "</div>";
+  }
+  return input;
+}
+
+var pendingConfigChanges=false;
+</script>
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.css">
-<script src="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.js">
+function renderConfigForm(cfg){
+  const form=document.getElementById("config-form");
+  if(!form)return;
+  let html="";
+  const sections={
+    "LLM":["llm","aux","vision"],
+    "Behavior":["max_llm_calls","show_reasoning","show_tool_calls"],
+    "Memory":["max_memory_length","max_user_preferences_length"],
+    "Tools":["tools"],
+    "MCP Servers":["mcp_servers"],
+    "Logging":["logging"],
+  };
+  for(const [title,keys] of Object.entries(sections)){
+    html+='<div style="background:var(--surface);border-radius:12px;padding:16px;border:1px solid var(--border)">';
+    html+='<h3 style="font-size:14px;font-weight:600;margin-bottom:12px;color:var(--text-muted)">'+title+'</h3>';
+    for(const k of keys){
+      const v=cfg[k];
+      if(v===undefined)continue;
+      if(typeof v==="object"&&!Array.isArray(v)){
+        for(const [sk,sv] of Object.entries(v)){
+          html+=renderField(k+"."+sk,sv,sk);
+        }
+      }else{
+        html+=renderField(k,v,k);
+      }
+    }
+    html+='</div>';
+  }
+  form.innerHTML=html;
+}
+
+function renderField(key,val,label){
+  const lbl=label.replace(/_/g," ");
+  const name="cfg_"+key.replace(/[^a-zA-Z0-9]/g,"_");
+  let input="";
+  const t=typeof val;
+  if(val===true||val===false){
+    input="<label style=\"display:flex;align-items:center;gap:8px;cursor:pointer\">"+
+      "<input type=\"checkbox\" "+(val?"checked":"")+" data-key=\""+key+"\" class=\"cfg-field\" "+
+      "onchange=\"pendingConfigChanges=true\">"+
+      "<span>"+lbl+"</span></label>";
+  }else if(t==="number"){
+    input="<div style=\"display:flex;align-items:center;gap:8px\">"+
+      "<span style=\"font-size:13px;min-width:100px\">"+lbl+"</span>"+
+      "<input type=\"number\" value=\""+val+"\" data-key=\""+key+"\" class=\"cfg-field\" style=\"flex:1;padding:6px 10px;border:1px solid var(--border);border-radius:6px;font-size:13px;outline:none\" "+
+      "onchange=\"pendingConfigChanges=true\">"+
+      (key==="temperature"?"<span style=\"font-size:11px;color:var(--text-muted)\">0-1</span>":"")+
+      "</div>";
+  }else if(Array.isArray(val)){
+    input="<div style=\"margin-bottom:8px\"><span style=\"font-size:13px;font-weight:500;display:block;margin-bottom:4px\">"+lbl+"</span>";
+    for(const item of val){
+      input+='<label style="display:flex;align-items:center;gap:6px;font-size:13px;padding:2px 0">'+
+        '<input type="checkbox" checked disabled style="opacity:0.5"> '+escapeHtml(item)+'</label>';
+    }
+    input+='<div style="font-size:11px;color:var(--text-muted);margin-top:4px">编辑 config.yaml 修改</div></div>';
+  }else{
+    input="<div style=\"display:flex;align-items:center;gap:8px\">"+
+      "<span style=\"font-size:13px;min-width:100px\">"+lbl+"</span>"+
+      "<input type=\"text\" value=\""+escapeHtml(String(val))+"\" data-key=\""+key+"\" class=\"cfg-field\" style=\"flex:1;padding:6px 10px;border:1px solid var(--border);border-radius:6px;font-size:13px;outline:none\" "+
+      "onchange=\"pendingConfigChanges=true\">"+
+      "</div>";
+  }
+  return input;
+}
+
+var pendingConfigChanges=false;
+</script>
 <script>
 if(typeof marked!=="undefined"){
 marked.use({extensions:[{
@@ -137,6 +271,141 @@ marked.use({extensions:[{
   renderer(t){try{return katex.renderToString(t.formula,{displayMode:true,throwOnError:false})}catch(e){return '$$'+t.formula+'$$'}}
 }]});
 }
+
+function renderConfigForm(cfg){
+  const form=document.getElementById("config-form");
+  if(!form)return;
+  let html="";
+  const sections={
+    "LLM":["llm","aux","vision"],
+    "Behavior":["max_llm_calls","show_reasoning","show_tool_calls"],
+    "Memory":["max_memory_length","max_user_preferences_length"],
+    "Tools":["tools"],
+    "MCP Servers":["mcp_servers"],
+    "Logging":["logging"],
+  };
+  for(const [title,keys] of Object.entries(sections)){
+    html+='<div style="background:var(--surface);border-radius:12px;padding:16px;border:1px solid var(--border)">';
+    html+='<h3 style="font-size:14px;font-weight:600;margin-bottom:12px;color:var(--text-muted)">'+title+'</h3>';
+    for(const k of keys){
+      const v=cfg[k];
+      if(v===undefined)continue;
+      if(typeof v==="object"&&!Array.isArray(v)){
+        for(const [sk,sv] of Object.entries(v)){
+          html+=renderField(k+"."+sk,sv,sk);
+        }
+      }else{
+        html+=renderField(k,v,k);
+      }
+    }
+    html+='</div>';
+  }
+  form.innerHTML=html;
+}
+
+function renderField(key,val,label){
+  const lbl=label.replace(/_/g," ");
+  const name="cfg_"+key.replace(/[^a-zA-Z0-9]/g,"_");
+  let input="";
+  const t=typeof val;
+  if(val===true||val===false){
+    input="<label style=\"display:flex;align-items:center;gap:8px;cursor:pointer\">"+
+      "<input type=\"checkbox\" "+(val?"checked":"")+" data-key=\""+key+"\" class=\"cfg-field\" "+
+      "onchange=\"pendingConfigChanges=true\">"+
+      "<span>"+lbl+"</span></label>";
+  }else if(t==="number"){
+    input="<div style=\"display:flex;align-items:center;gap:8px\">"+
+      "<span style=\"font-size:13px;min-width:100px\">"+lbl+"</span>"+
+      "<input type=\"number\" value=\""+val+"\" data-key=\""+key+"\" class=\"cfg-field\" style=\"flex:1;padding:6px 10px;border:1px solid var(--border);border-radius:6px;font-size:13px;outline:none\" "+
+      "onchange=\"pendingConfigChanges=true\">"+
+      (key==="temperature"?"<span style=\"font-size:11px;color:var(--text-muted)\">0-1</span>":"")+
+      "</div>";
+  }else if(Array.isArray(val)){
+    input="<div style=\"margin-bottom:8px\"><span style=\"font-size:13px;font-weight:500;display:block;margin-bottom:4px\">"+lbl+"</span>";
+    for(const item of val){
+      input+='<label style="display:flex;align-items:center;gap:6px;font-size:13px;padding:2px 0">'+
+        '<input type="checkbox" checked disabled style="opacity:0.5"> '+escapeHtml(item)+'</label>';
+    }
+    input+='<div style="font-size:11px;color:var(--text-muted);margin-top:4px">编辑 config.yaml 修改</div></div>';
+  }else{
+    input="<div style=\"display:flex;align-items:center;gap:8px\">"+
+      "<span style=\"font-size:13px;min-width:100px\">"+lbl+"</span>"+
+      "<input type=\"text\" value=\""+escapeHtml(String(val))+"\" data-key=\""+key+"\" class=\"cfg-field\" style=\"flex:1;padding:6px 10px;border:1px solid var(--border);border-radius:6px;font-size:13px;outline:none\" "+
+      "onchange=\"pendingConfigChanges=true\">"+
+      "</div>";
+  }
+  return input;
+}
+
+var pendingConfigChanges=false;
+</script>
+<script src="https://cdn.jsdelivr.net/npm/js-yaml@4.1.0/dist/js-yaml.min.js">
+function renderConfigForm(cfg){
+  const form=document.getElementById("config-form");
+  if(!form)return;
+  let html="";
+  const sections={
+    "LLM":["llm","aux","vision"],
+    "Behavior":["max_llm_calls","show_reasoning","show_tool_calls"],
+    "Memory":["max_memory_length","max_user_preferences_length"],
+    "Tools":["tools"],
+    "MCP Servers":["mcp_servers"],
+    "Logging":["logging"],
+  };
+  for(const [title,keys] of Object.entries(sections)){
+    html+='<div style="background:var(--surface);border-radius:12px;padding:16px;border:1px solid var(--border)">';
+    html+='<h3 style="font-size:14px;font-weight:600;margin-bottom:12px;color:var(--text-muted)">'+title+'</h3>';
+    for(const k of keys){
+      const v=cfg[k];
+      if(v===undefined)continue;
+      if(typeof v==="object"&&!Array.isArray(v)){
+        for(const [sk,sv] of Object.entries(v)){
+          html+=renderField(k+"."+sk,sv,sk);
+        }
+      }else{
+        html+=renderField(k,v,k);
+      }
+    }
+    html+='</div>';
+  }
+  form.innerHTML=html;
+}
+
+function renderField(key,val,label){
+  const lbl=label.replace(/_/g," ");
+  const name="cfg_"+key.replace(/[^a-zA-Z0-9]/g,"_");
+  let input="";
+  const t=typeof val;
+  if(val===true||val===false){
+    input="<label style=\"display:flex;align-items:center;gap:8px;cursor:pointer\">"+
+      "<input type=\"checkbox\" "+(val?"checked":"")+" data-key=\""+key+"\" class=\"cfg-field\" "+
+      "onchange=\"pendingConfigChanges=true\">"+
+      "<span>"+lbl+"</span></label>";
+  }else if(t==="number"){
+    input="<div style=\"display:flex;align-items:center;gap:8px\">"+
+      "<span style=\"font-size:13px;min-width:100px\">"+lbl+"</span>"+
+      "<input type=\"number\" value=\""+val+"\" data-key=\""+key+"\" class=\"cfg-field\" style=\"flex:1;padding:6px 10px;border:1px solid var(--border);border-radius:6px;font-size:13px;outline:none\" "+
+      "onchange=\"pendingConfigChanges=true\">"+
+      (key==="temperature"?"<span style=\"font-size:11px;color:var(--text-muted)\">0-1</span>":"")+
+      "</div>";
+  }else if(Array.isArray(val)){
+    input="<div style=\"margin-bottom:8px\"><span style=\"font-size:13px;font-weight:500;display:block;margin-bottom:4px\">"+lbl+"</span>";
+    for(const item of val){
+      input+='<label style="display:flex;align-items:center;gap:6px;font-size:13px;padding:2px 0">'+
+        '<input type="checkbox" checked disabled style="opacity:0.5"> '+escapeHtml(item)+'</label>';
+    }
+    input+='<div style="font-size:11px;color:var(--text-muted);margin-top:4px">编辑 config.yaml 修改</div></div>';
+  }else{
+    input="<div style=\"display:flex;align-items:center;gap:8px\">"+
+      "<span style=\"font-size:13px;min-width:100px\">"+lbl+"</span>"+
+      "<input type=\"text\" value=\""+escapeHtml(String(val))+"\" data-key=\""+key+"\" class=\"cfg-field\" style=\"flex:1;padding:6px 10px;border:1px solid var(--border);border-radius:6px;font-size:13px;outline:none\" "+
+      "onchange=\"pendingConfigChanges=true\">"+
+      "</div>";
+  }
+  return input;
+}
+
+var pendingConfigChanges=false;
 </script>
 </head>
 <body>
@@ -163,8 +432,8 @@ marked.use({extensions:[{
 
 <div id="settings-panel">
   <h2>配置</h2>
-  <textarea id="settings-editor"></textarea>
-  <button id="btn-save-config" disabled>保存</button>
+  <div id="config-form" style="flex:1;overflow-y:auto;display:flex;flex-direction:column;gap:16px"></div>
+  <button id="btn-save-config" style="display:none">保存</button>
 </div>
 
 <footer>
@@ -300,7 +569,7 @@ btnSettings.addEventListener("click",()=>{
   if(isSettingsOpen){
     chat.style.display="none";
     settingsPanel.classList.add("active");
-    if(ws)ws.send(JSON.stringify({type:"get_config"}));
+    if(ws)ws.send(JSON.stringify({type:"get_config_json"}));
   }else{
     settingsPanel.classList.remove("active");
     chat.style.display="flex";
@@ -342,8 +611,8 @@ function connect(){
         currentMsgContainer=null;break;
       case "sessions":renderSessions(ev.data);break;
       case "session_msgs":loadSessionMessages(ev.session_id,ev.title,ev.data);break;
-      case "config":settingsEditor.value=ev.data||"";btnSaveConfig.disabled=false;break;
-      case "config_saved":btnSaveConfig.textContent="已保存";setTimeout(()=>{btnSaveConfig.textContent="保存"},2000);break;
+      case "config_json":renderConfigForm(ev.data||{});break;
+      case "config_saved":document.getElementById("btn-save-config").textContent="已保存";setTimeout(()=>{const b=document.getElementById("btn-save-config");if(b)b.textContent="保存"},2000);break;
     }
   };
   ws.onclose=()=>{statusDot.className="status";sendBtn.disabled=true;setTimeout(connect,2000)};
@@ -466,6 +735,73 @@ function injectReasoning(msgEl,text){
   t.onclick=()=>{const o=body.classList.toggle("open");t.textContent=o?"思考过程 ▾":"思考过程 ▸"};
   const b=msgEl.querySelector(".bubble");b.parentNode.insertBefore(t,b);b.parentNode.insertBefore(body,b);
 }
+
+function renderConfigForm(cfg){
+  const form=document.getElementById("config-form");
+  if(!form)return;
+  let html="";
+  const sections={
+    "LLM":["llm","aux","vision"],
+    "Behavior":["max_llm_calls","show_reasoning","show_tool_calls"],
+    "Memory":["max_memory_length","max_user_preferences_length"],
+    "Tools":["tools"],
+    "MCP Servers":["mcp_servers"],
+    "Logging":["logging"],
+  };
+  for(const [title,keys] of Object.entries(sections)){
+    html+='<div style="background:var(--surface);border-radius:12px;padding:16px;border:1px solid var(--border)">';
+    html+='<h3 style="font-size:14px;font-weight:600;margin-bottom:12px;color:var(--text-muted)">'+title+'</h3>';
+    for(const k of keys){
+      const v=cfg[k];
+      if(v===undefined)continue;
+      if(typeof v==="object"&&!Array.isArray(v)){
+        for(const [sk,sv] of Object.entries(v)){
+          html+=renderField(k+"."+sk,sv,sk);
+        }
+      }else{
+        html+=renderField(k,v,k);
+      }
+    }
+    html+='</div>';
+  }
+  form.innerHTML=html;
+}
+
+function renderField(key,val,label){
+  const lbl=label.replace(/_/g," ");
+  const name="cfg_"+key.replace(/[^a-zA-Z0-9]/g,"_");
+  let input="";
+  const t=typeof val;
+  if(val===true||val===false){
+    input="<label style=\"display:flex;align-items:center;gap:8px;cursor:pointer\">"+
+      "<input type=\"checkbox\" "+(val?"checked":"")+" data-key=\""+key+"\" class=\"cfg-field\" "+
+      "onchange=\"pendingConfigChanges=true\">"+
+      "<span>"+lbl+"</span></label>";
+  }else if(t==="number"){
+    input="<div style=\"display:flex;align-items:center;gap:8px\">"+
+      "<span style=\"font-size:13px;min-width:100px\">"+lbl+"</span>"+
+      "<input type=\"number\" value=\""+val+"\" data-key=\""+key+"\" class=\"cfg-field\" style=\"flex:1;padding:6px 10px;border:1px solid var(--border);border-radius:6px;font-size:13px;outline:none\" "+
+      "onchange=\"pendingConfigChanges=true\">"+
+      (key==="temperature"?"<span style=\"font-size:11px;color:var(--text-muted)\">0-1</span>":"")+
+      "</div>";
+  }else if(Array.isArray(val)){
+    input="<div style=\"margin-bottom:8px\"><span style=\"font-size:13px;font-weight:500;display:block;margin-bottom:4px\">"+lbl+"</span>";
+    for(const item of val){
+      input+='<label style="display:flex;align-items:center;gap:6px;font-size:13px;padding:2px 0">'+
+        '<input type="checkbox" checked disabled style="opacity:0.5"> '+escapeHtml(item)+'</label>';
+    }
+    input+='<div style="font-size:11px;color:var(--text-muted);margin-top:4px">编辑 config.yaml 修改</div></div>';
+  }else{
+    input="<div style=\"display:flex;align-items:center;gap:8px\">"+
+      "<span style=\"font-size:13px;min-width:100px\">"+lbl+"</span>"+
+      "<input type=\"text\" value=\""+escapeHtml(String(val))+"\" data-key=\""+key+"\" class=\"cfg-field\" style=\"flex:1;padding:6px 10px;border:1px solid var(--border);border-radius:6px;font-size:13px;outline:none\" "+
+      "onchange=\"pendingConfigChanges=true\">"+
+      "</div>";
+  }
+  return input;
+}
+
+var pendingConfigChanges=false;
 </script>
 </body>
 </html>

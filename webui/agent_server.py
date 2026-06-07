@@ -100,6 +100,12 @@ async def ws_handler(ws):
                 with open(cfg_path, "r", encoding="utf-8") as f:
                     text = f.read()
                 await ws.send(json.dumps({"type": "config", "data": text}, ensure_ascii=False))
+            elif t == "get_config_json":
+                import yaml
+                cfg_path = _CONFIG_PATH
+                with open(cfg_path, "r", encoding="utf-8") as f:
+                    cfg = yaml.safe_load(f)
+                await ws.send(json.dumps({"type": "config_json", "data": cfg}, ensure_ascii=False, default=str))
             elif t == "save_config":
                 cfg_path = _CONFIG_PATH
                 with open(cfg_path, "w", encoding="utf-8") as f:
