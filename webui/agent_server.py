@@ -122,7 +122,7 @@ _WS_PORT = 8081
 def _start_http():
     import cgi, io, urllib.parse
     web_dir = os.path.dirname(os.path.abspath(__file__))
-    upload_dir = os.path.join(os.path.dirname(_AGENT_DIR), ".temp", "uploads")
+    upload_dir = os.path.join(web_dir, "uploads")
     os.makedirs(upload_dir, exist_ok=True)
     os.chdir(web_dir)
 

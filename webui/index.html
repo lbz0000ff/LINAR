@@ -356,17 +356,32 @@ function renderSessions(sessions){
   });
 }
 
+function splitAttachments(text){
+  const parts=text.split(/\[附件\]\s*/);
+  if(parts.length<=1)return {text:text,files:[]};
+  const files=[];
+  const remaining=[];
+  for(let i=1;i<parts.length;i++){
+    const path=parts[i].trim();
+    if(path)files.push(path);
+  }
+  return {text:parts[0].trim(),files};
+}
+
 function loadSessionMessages(sessionId,title,msgs){
   currentSessionId=sessionId;
   chat.innerHTML="";
   mainTitle.textContent=title||`Session #${sessionId}`;
   for(const m of msgs){
     const role=m.role;
-    if(role==="user")addMsg("user",m.content||"");
-    else if(role==="agent")addMsg("agent",m.content||"");
-    else if(role==="tool"&&m.name){
+    if(role==="user"){
+      const {text,files}=splitAttachments(m.content||"");
+      addMsg("user",text||"(图片)",files);
+    }else if(role==="agent"){
+      addMsg("agent",m.content||"");
+    }else if(role==="tool"&&m.name){
       const result=m.content||"";
-      try{const p=JSON.parse(result);addMsg("tool_result","→ "+(p.result||"").slice(0,300))}catch(e){addMsg("tool_result","→ "+result.slice(0,300))}
+      try{const p=JSON.parse(result);addMsg("tool_result","→ "+(p.result||"").slice(0,120))}catch(e){addMsg("tool_result","→ "+result.slice(0,120))}
     }
   }
   renderSessions_highlight(sessionId);
