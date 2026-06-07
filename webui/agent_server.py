@@ -21,7 +21,7 @@ from tool_registry import get_tools
 from agent import Agent
 import database as db
 
-_AGENT_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "agent")
+
 _CONFIG_PATH = os.path.join(_AGENT_DIR, "config.yaml")
 
 log = get_logger(__name__)
