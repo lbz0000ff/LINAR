@@ -420,7 +420,7 @@ function renderSessions(sessions){
     el.addEventListener("click",()=>{
       const id=parseInt(el.dataset.id);
       if(id===currentSessionId)return;
-      if(ws)ws.send(JSON.stringify({type:"switch_session",id}));setTimeout(()=>{if(ws)ws.send(JSON.stringify({type:"get_session",id}))},100);
+      currentSessionId=id;if(ws)ws.send(JSON.stringify({type:"switch_session",id}));if(ws)ws.send(JSON.stringify({type:"get_session",id}));
     });
   });
 }
