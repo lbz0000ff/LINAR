@@ -114,10 +114,68 @@ _WS_PORT = 8081
 
 
 def _start_http():
+    import cgi, io, urllib.parse
     web_dir = os.path.dirname(os.path.abspath(__file__))
+    upload_dir = os.path.join(os.path.dirname(_AGENT_DIR), ".temp", "uploads")
+    os.makedirs(upload_dir, exist_ok=True)
     os.chdir(web_dir)
 
     class Handler(SimpleHTTPRequestHandler):
+        def do_GET(self):
+            # Serve uploaded files from .temp/uploads/
+            if self.path.startswith("/uploads/"):
+                fname = os.path.basename(self.path)
+                fpath = os.path.join(upload_dir, fname)
+                if os.path.isfile(fpath):
+                    self.send_response(200)
+                    mt = self.guess_type(fpath)
+                    self.send_header("Content-Type", mt or "application/octet-stream")
+                    self.send_header("Content-Length", os.path.getsize(fpath))
+                    self.end_headers()
+                    with open(fpath, "rb") as f:
+                        self.wfile.write(f.read())
+                    return
+                self.send_response(404)
+                self.end_headers()
+                return
+            super().do_GET()
+
+        def do_POST(self):
+            if self.path == "/upload":
+                length = int(self.headers.get("Content-Length", 0))
+                body = self.rfile.read(length)
+                # Expect multipart or raw file data
+                content_type = self.headers.get("Content-Type", "")
+                if "multipart" in content_type:
+                    import cgi
+                    fs = cgi.FieldStorage(fp=io.BytesIO(body), headers=self.headers, environ={"REQUEST_METHOD": "POST"})
+                    fitem = fs.getfirst("file")
+                    if fitem and fitem.filename:
+                        import mimetypes
+                        safe_name = os.path.basename(fitem.filename)
+                        dest = os.path.join(upload_dir, safe_name)
+                        with open(dest, "wb") as f:
+                            f.write(fitem.file.read())
+                        self.send_response(200)
+                        self.send_header("Content-Type", "application/json")
+                        self.end_headers()
+                        self.wfile.write(json.dumps({"path": dest}).encode())
+                        return
+                else:
+                    # Raw file upload—filename in X-Filename header
+                    fname = self.headers.get("X-Filename", "upload.bin")
+                    safe_name = os.path.basename(fname)
+                    dest = os.path.join(upload_dir, safe_name)
+                    with open(dest, "wb") as f:
+                        f.write(body)
+                    self.send_response(200)
+                    self.send_header("Content-Type", "application/json")
+                    self.end_headers()
+                    self.wfile.write(json.dumps({"path": dest}).encode())
+                    return
+            self.send_response(405)
+            self.end_headers()
+
         def log_message(self, fmt, *args):
             log.debug(fmt, *args)
 

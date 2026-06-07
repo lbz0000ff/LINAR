@@ -88,6 +88,15 @@ header h1{font-size:15px;font-weight:500}
 .msg.agent .bubble ul,.msg.agent .bubble ol{padding-left:20px;margin:4px 0}
 .msg.agent .bubble blockquote{border-left:3px solid var(--border);padding-left:12px;color:var(--text-muted);margin:8px 0}
 
+/* Attachments */
+#attachments{display:flex;flex-wrap:wrap;gap:6px;padding:0 0 8px}
+.attach-chip{display:flex;align-items:center;gap:6px;background:var(--accent-soft);border-radius:6px;padding:4px 10px;font-size:12px;max-width:200px}
+.attach-chip .name{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.attach-chip .size{color:var(--text-muted);flex-shrink:0}
+.attach-chip .del{cursor:pointer;color:var(--text-muted);flex-shrink:0;font-size:14px;line-height:1}
+.attach-chip .del:hover{color:#e74c3c}
+.attach-chip img{width:24px;height:24px;object-fit:cover;border-radius:4px}
+
 /* Footer / Input */
 footer{padding:12px 20px;border-top:1px solid var(--border);background:rgba(255,255,255,0.6);backdrop-filter:blur(12px);flex-shrink:0}
 .input-row{display:flex;gap:8px;align-items:flex-end}
@@ -159,9 +168,12 @@ marked.use({extensions:[{
 </div>
 
 <footer>
-  <div class="input-row">
+  <div id="attachments"></div>
+<div class="input-row">
     <textarea id="input" placeholder="输入消息…" rows="1"></textarea>
-    <button id="send" disabled>发送</button>
+    <button id="upload-btn" title="上传文件">📎</button>
+<button id="send" disabled>发送</button>
+<input type="file" id="file-input" multiple hidden>
   </div>
 </footer>
 </div><!-- /.main -->
@@ -194,12 +206,81 @@ input.addEventListener("input",()=>{
   sendBtn.disabled=!input.value.trim();
 });
 
+// Files
+let pendingFiles=[];
+
+document.getElementById("upload-btn").addEventListener("click",()=>document.getElementById("file-input").click());
+document.getElementById("file-input").addEventListener("change",async(e)=>{
+  for(const f of e.target.files)await addFile(f);
+  e.target.value="";
+});
+input.addEventListener("paste",async(e)=>{
+  const items=e.clipboardData.items;
+  for(const item of items){
+    if(item.kind==="file"){
+      e.preventDefault();
+      await addFile(item.getAsFile());
+    }
+  }
+});
+
+async function addFile(file){
+  const maxSize=20*1024*1024;
+  if(file.size>maxSize){alert("文件超过 20MB 限制");return}
+  const id=Date.now()+"_"+Math.random().toString(36).slice(2,6);
+  pendingFiles.push({id,file,name:file.name,size:file.size});
+  renderAttachments();
+}
+
+function renderAttachments(){
+  const cont=document.getElementById("attachments");
+  if(!pendingFiles.length){cont.innerHTML="";return}
+  let html="";
+  for(const f of pendingFiles){
+    const sz=(f.size/1024).toFixed(f.size>102400?0:1);
+    const unit=f.size>102400?"KB":"KB";
+    const isImg=f.name.match(/\.(jpg|jpeg|png|gif|webp|svg)$/i);
+    html+='<div class="attach-chip" data-id="'+f.id+'">'+
+      (isImg?'<img src="'+URL.createObjectURL(f.file)+'">':'')+
+      '<span class="name">'+f.name+'</span>'+
+      '<span class="size">'+sz+unit+'</span>'+
+      '<span class="del" onclick="removeFile(''+f.id+'')">×</span></div>';
+  }
+  cont.innerHTML=html;
+}
+
+function removeFile(id){
+  pendingFiles=pendingFiles.filter(f=>f.id!==id);
+  renderAttachments();
+}
+
+async function uploadFiles(){
+  const results=[];
+  for(const f of pendingFiles){
+    const form=new FormData();
+    form.append("file",f.file,f.name);
+    try{
+      const res=await fetch("/upload",{method:"POST",body:form});
+      const data=await res.json();
+      results.push(data.path);
+    }catch(e){console.error("Upload failed:",f.name,e)}
+  }
+  pendingFiles=[];
+  renderAttachments();
+  return results;
+}
+
 // Send
-function send(){
+async function send(){
   const t=input.value.trim();
-  if(!t||!ws)return;
-  ws.send(JSON.stringify({type:"message",data:t}));
-  addMsg("user",t);input.value="";input.style.height="auto";
+  if(!t&&!pendingFiles.length||!ws)return;
+  let filePaths=[];
+  if(pendingFiles.length)filePaths=await uploadFiles();
+  const msg={type:"message",data:t};
+  if(filePaths.length)msg.files=filePaths;
+  ws.send(JSON.stringify(msg));
+  let display=t||"(文件)";
+  addMsg("user",display);input.value="";input.style.height="auto";
   sendBtn.disabled=true;currentMsgContainer=null;pendingReasoning=[];
   statusDot.className="status processing";chat.scrollTop=chat.scrollHeight;
 }
