@@ -173,6 +173,7 @@
   #chat::-webkit-scrollbar-thumb{background:var(--border);border-radius:2px}
 </style>
 <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.css">
 <script src="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.js"></script>
 <script>
@@ -375,7 +376,7 @@ function connect(){
         if(currentMsgContainer&&window.marked){
           const b=currentMsgContainer.querySelector(".bubble");
           if(b&&b._fullText&&b._fullText.trim()){
-            try{b.innerHTML=marked.parse(b._fullText)}catch(e){b.textContent=b._fullText}
+            try{b.innerHTML=marked.parse(b._fullText);renderMermaid(b)}catch(e){b.textContent=b._fullText}
           }else if(b){
             const hr=currentMsgContainer.querySelector(".reasoning-body");
             if(!hr){currentMsgContainer.remove()}else{b.style.display="none"}
@@ -439,7 +440,7 @@ function loadSessionMessages(sessionId,title,msgs){
     }else if(role==="agent"){
       const hc=m.content&&m.content.trim();
       if(hc||m.reasoning){
-        addMsg("agent",m.content||"");
+        addMsg("agent",m.content||"");renderMermaid();
         const ae=chat.lastElementChild;
         if(m.reasoning&&ae)injectReasoning(ae,m.reasoning);
         if(!hc&&ae){const bb=ae.querySelector(".bubble");if(bb)bb.style.display="none"}
@@ -497,7 +498,7 @@ function appendToken(text){
   const b=currentMsgContainer.querySelector(".bubble");
   if(b){
     if(!b._fullText)b._fullText="";b._fullText+=text;
-    if(window.marked){try{b.innerHTML=marked.parse(b._fullText)}catch(e){b.textContent=b._fullText}}else{b.textContent=b._fullText}
+    if(window.marked){try{b.innerHTML=marked.parse(b._fullText);renderMermaid(b)}catch(e){b.textContent=b._fullText}}else{b.textContent=b._fullText}
     chat.scrollTop=chat.scrollHeight;
   }
 }
@@ -553,6 +554,23 @@ function renderField(key,val,label){
   return '';
 }
 var pendingConfigChanges=false;
+
+// Initialize mermaid
+mermaid.initialize({startOnLoad:false,theme:'base',themeVariables:{background:'#F5F3F0',primaryColor:'#A61C28',primaryTextColor:'#1C1C1E',lineColor:'#A61C28',secondaryColor:'#F0EDE8',tertiaryColor:'#FAFAFA'}});
+
+// After markdown render, find mermaid code blocks and render them
+function renderMermaid(container){
+  if(!container)container=document;
+  container.querySelectorAll("pre code.language-mermaid").forEach(function(el){
+    var txt=el.textContent;
+    var pre=el.parentNode;
+    var div=document.createElement("div");
+    div.className="mermaid";
+    div.textContent=txt;
+    pre.parentNode.replaceChild(div,pre);
+  });
+  if(document.querySelectorAll(".mermaid").length)mermaid.run({nodes:document.querySelectorAll(".mermaid")});
+}
 function updateCollapseBtn(){
   const btn=document.getElementById("btn-collapse-sidebar");
   const sb=document.getElementById("sidebar");
