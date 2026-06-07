@@ -323,12 +323,16 @@ function connect(){
       case "complete":case "done":
         if(pendingReasoning.length&&currentMsgContainer){injectReasoning(currentMsgContainer,pendingReasoning.join(""));pendingReasoning=[]}
         if(currentMsgContainer&&window.marked){const b=currentMsgContainer.querySelector(".bubble");if(b&&b._fullText){try{b.innerHTML=marked.parse(b._fullText)}catch(e){b.textContent=b._fullText}}}
-        // Remove empty agent bubbles
+        // Hide empty agent bubbles, remove if no reasoning either
         if(currentMsgContainer){
           const b=currentMsgContainer.querySelector(".bubble");
+          const hasReasoning=currentMsgContainer.querySelector(".reasoning-body");
           if(b&&(!b._fullText||!b._fullText.trim())){
-            const hasReasoning=currentMsgContainer.querySelector(".reasoning-body,.reasoning-toggle");
-            if(!hasReasoning)currentMsgContainer.remove();
+            if(!hasReasoning){
+              currentMsgContainer.remove();
+            }else{
+              b.style.display="none";
+            }
           }
         }
         currentMsgContainer=null;break;
