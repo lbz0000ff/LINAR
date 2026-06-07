@@ -396,7 +396,7 @@ connect();
 
 // Sessions
 function renderSessions(sessions){
-  let html='<div class="sidebar-section-title">会话记录</div>';
+  let html='<div style="padding:4px 8px 8px"><button id="btn-new-chat" style="width:100%;padding:8px;background:var(--accent);color:white;border:none;border-radius:8px;font-size:13px;cursor:pointer;font-family:inherit">✚ 新的对话</button></div><div class="sidebar-section-title">会话记录</div>';
   for(const s of sessions){
     const title=s.title||`Session #${s.id}`;
     const date=(s.created_at||"").slice(0,10);
