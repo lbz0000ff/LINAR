@@ -19,6 +19,10 @@ from orchestrator import Orchestrator
 from skill import load_skills_from_markdown
 from tool_registry import get_tools
 from agent import Agent
+import database as db
+
+_AGENT_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "agent")
+_CONFIG_PATH = os.path.join(_AGENT_DIR, "config.yaml")
 
 log = get_logger(__name__)
 
@@ -72,9 +76,29 @@ async def ws_handler(ws):
     try:
         async for raw in ws:
             data = json.loads(raw)
-            if data.get("type") == "message":
+            t = data.get("type")
+            if t == "message":
                 text = data.get("data", "")
                 _input_queue.put(text)
+            elif t == "list_sessions":
+                sessions = db.get_recent_sessions(50)
+                await ws.send(json.dumps({"type": "sessions", "data": sessions}, ensure_ascii=False, default=str))
+            elif t == "get_session":
+                sid = int(data.get("id", 0))
+                msgs = db.get_session_messages(sid)
+                sess = db.get_session_by_id(sid)
+                title = sess.get("title", f"Session #{sid}") if sess else ""
+                await ws.send(json.dumps({"type": "session_msgs", "session_id": sid, "title": title, "data": msgs}, ensure_ascii=False, default=str))
+            elif t == "get_config":
+                cfg_path = _CONFIG_PATH
+                with open(cfg_path, "r", encoding="utf-8") as f:
+                    text = f.read()
+                await ws.send(json.dumps({"type": "config", "data": text}, ensure_ascii=False))
+            elif t == "save_config":
+                cfg_path = _CONFIG_PATH
+                with open(cfg_path, "w", encoding="utf-8") as f:
+                    f.write(data.get("data", ""))
+                await ws.send(json.dumps({"type": "config_saved"}, ensure_ascii=False))
     except websockets.exceptions.ConnectionClosed:
         pass
     finally:
@@ -103,11 +127,15 @@ def _start_http():
 
 
 async def _ws_main():
-    async with websockets.serve(ws_handler, _HTTP_HOST, _WS_PORT):
-        log.info("WS server: ws://%s:%d", _HTTP_HOST, _WS_PORT)
-        global _ws_loop
-        _ws_loop = asyncio.get_running_loop()
-        await asyncio.Future()  # run forever
+    try:
+        async with websockets.serve(ws_handler, _HTTP_HOST, _WS_PORT):
+            log.info("WS server: ws://%s:%d", _HTTP_HOST, _WS_PORT)
+            global _ws_loop
+            _ws_loop = asyncio.get_running_loop()
+            await asyncio.Future()
+    except Exception as e:
+        log.error("WS server failed: %s", e)
+        raise
 
 
 def main():

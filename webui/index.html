@@ -5,287 +5,158 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>EchoLily</title>
 <style>
-  :root {
-    --bg: #f4f3ef;
-    --surface: #ffffff;
-    --text: #1a1a1a;
-    --text-muted: #8b8b8b;
-    --accent: #2b5f8a;
-    --accent-soft: rgba(43, 95, 138, 0.08);
-    --user-bubble: #2b5f8a;
-    --user-text: #ffffff;
-    --border: rgba(0,0,0,0.06);
-    --shadow: rgba(0,0,0,0.04);
-    --radius: 16px;
-    --font: "Inter", -apple-system, BlinkMacSystemFont, sans-serif;
+:root {
+  --bg: #f4f3ef;
+  --surface: #ffffff;
+  --sidebar-bg: #ffffff;
+  --text: #1a1a1a;
+  --text-muted: #8b8b8b;
+  --accent: #2b5f8a;
+  --accent-soft: rgba(43,95,138,0.08);
+  --user-bubble: #2b5f8a;
+  --user-text: #ffffff;
+  --border: rgba(0,0,0,0.06);
+  --shadow: rgba(0,0,0,0.04);
+  --radius: 16px;
+  --sidebar-w: 260px;
+  --font: "Inter",-apple-system,BlinkMacSystemFont,sans-serif;
+  --tool-call: #8b6914;
+  --tool-result: #6b6b6b;
+  --code-bg: #f0eee9;
+  --reasoning-bg: #f0eee9;
+}
+*{margin:0;padding:0;box-sizing:border-box}
+body{font-family:var(--font);background:var(--bg);color:var(--text);height:100vh;overflow:hidden;line-height:1.5}
 
-    --tool-call: #8b6914;
-    --tool-result: #6b6b6b;
-    --code-bg: #f0eee9;
-    --reasoning-bg: #f0eee9;
-  }
+/* Layout */
+.layout{display:flex;height:100vh}
 
-  * { margin: 0; padding: 0; box-sizing: border-box; }
+/* Sidebar */
+.sidebar{
+  width:var(--sidebar-w);background:var(--sidebar-bg);
+  border-right:1px solid var(--border);
+  display:flex;flex-direction:column;flex-shrink:0;
+}
+.sidebar-top{flex:1;overflow-y:auto;padding:12px}
+.sidebar-bottom{padding:8px 12px;border-top:1px solid var(--border)}
+.sidebar-section-title{font-size:11px;font-weight:600;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.5px;padding:8px 8px 4px}
+.session-item{
+  padding:8px;border-radius:8px;cursor:pointer;font-size:13px;
+  transition:background 0.15s;margin-bottom:2px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap
+}
+.session-item:hover{background:var(--accent-soft)}
+.session-item.active{background:var(--accent-soft);font-weight:500}
+.session-item .s-title{color:var(--text)}
+.session-item .s-meta{font-size:11px;color:var(--text-muted);margin-top:2px}
 
-  body {
-    font-family: var(--font);
-    background: var(--bg);
-    color: var(--text);
-    height: 100vh;
-    display: flex;
-    flex-direction: column;
-    overflow: hidden;
-    line-height: 1.5;
-  }
+/* Main area */
+.main{flex:1;display:flex;flex-direction:column;min-width:0}
 
-  /* ── Header ── */
-  header {
-    padding: 16px 24px;
-    border-bottom: 1px solid var(--border);
-    background: rgba(255,255,255,0.6);
-    backdrop-filter: blur(12px);
-    -webkit-backdrop-filter: blur(12px);
-    display: flex;
-    align-items: center;
-    gap: 12px;
-    flex-shrink: 0;
-  }
+/* Header */
+header{
+  padding:12px 20px;border-bottom:1px solid var(--border);
+  background:rgba(255,255,255,0.6);backdrop-filter:blur(12px);
+  display:flex;align-items:center;gap:10px;flex-shrink:0
+}
+header h1{font-size:15px;font-weight:500}
+.status{width:8px;height:8px;border-radius:50%;background:#ccc;transition:background 0.3s}
+.status.connected{background:#4caf50}
+.status.processing{background:#ff9800}
 
-  header h1 {
-    font-size: 15px;
-    font-weight: 500;
-    letter-spacing: 0.3px;
-    color: var(--text);
-  }
+/* Chat */
+#chat{flex:1;overflow-y:auto;padding:16px 20px;display:flex;flex-direction:column;gap:10px}
+.msg{max-width:75%;animation:fadeIn 0.2s ease}
+@keyframes fadeIn{from{opacity:0;transform:translateY(4px)}to{opacity:1;transform:translateY(0)}}
+.msg.user{align-self:flex-end}
+.msg.agent,.msg.system{align-self:flex-start}
+.msg.tool_call,.msg.tool_result{align-self:flex-start;max-width:85%}
+.msg .bubble{padding:10px 16px;border-radius:var(--radius);font-size:14px;line-height:1.6;word-wrap:break-word}
+.msg.user .bubble{background:var(--user-bubble);color:var(--user-text);border-bottom-right-radius:4px}
+.msg.agent .bubble{background:var(--surface);border:1px solid var(--border);box-shadow:0 1px 3px var(--shadow);border-bottom-left-radius:4px}
+.msg.system .bubble{background:var(--accent-soft);border-radius:8px;font-size:13px;text-align:center;max-width:100%}
+.msg.tool_call .bubble{background:transparent;color:var(--tool-call);font-size:12px;font-family:'SFMono-Regular',Consolas,monospace;padding:4px 12px;border-left:2px solid var(--tool-call);border-radius:0 4px 4px 0}
+.msg.tool_result .bubble{background:transparent;color:var(--tool-result);font-size:12px;font-family:'SFMono-Regular',Consolas,monospace;padding:4px 12px;border-left:2px solid var(--tool-result);border-radius:0 4px 4px 0}
 
-  .status {
-    width: 8px; height: 8px;
-    border-radius: 50%;
-    background: #ccc;
-    transition: background 0.3s;
-  }
-  .status.connected { background: #4caf50; }
-  .status.processing { background: #ff9800; }
+.reasoning-toggle{font-size:12px;color:var(--text-muted);cursor:pointer;user-select:none;padding:2px 0}
+.reasoning-toggle:hover{color:var(--text)}
+.reasoning-body{display:none;background:var(--reasoning-bg);border-radius:8px;padding:8px 12px;margin:4px 0 8px;font-size:13px;color:var(--text-muted);font-style:italic}
+.reasoning-body.open{display:block}
+.msg.agent .bubble p{margin:4px 0}
+.msg.agent .bubble pre{background:var(--code-bg);border-radius:8px;padding:12px;overflow-x:auto;font-size:13px;margin:8px 0}
+.msg.agent .bubble code{background:var(--code-bg);padding:2px 6px;border-radius:4px;font-size:13px}
+.msg.agent .bubble pre code{background:none;padding:0}
+.msg.agent .bubble ul,.msg.agent .bubble ol{padding-left:20px;margin:4px 0}
+.msg.agent .bubble blockquote{border-left:3px solid var(--border);padding-left:12px;color:var(--text-muted);margin:8px 0}
 
-  /* ── Chat ── */
-  #chat {
-    flex: 1;
-    overflow-y: auto;
-    padding: 20px 24px;
-    display: flex;
-    flex-direction: column;
-    gap: 12px;
-  }
+/* Footer / Input */
+footer{padding:12px 20px;border-top:1px solid var(--border);background:rgba(255,255,255,0.6);backdrop-filter:blur(12px);flex-shrink:0}
+.input-row{display:flex;gap:8px;align-items:flex-end}
+#input{flex:1;padding:10px 16px;border:1px solid var(--border);border-radius:12px;font-size:14px;font-family:var(--font);background:var(--surface);color:var(--text);outline:none;resize:none;min-height:44px;max-height:150px;line-height:1.5;transition:border-color 0.2s}
+#input:focus{border-color:var(--accent)}
+#send{padding:10px 20px;background:var(--accent);color:white;border:none;border-radius:12px;font-size:14px;cursor:pointer;transition:opacity 0.2s;white-space:nowrap}
+#send:hover{opacity:0.85}
+#send:disabled{opacity:0.4;cursor:not-allowed}
 
-  .msg { max-width: 75%; animation: fadeIn 0.2s ease; }
-  @keyframes fadeIn { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: translateY(0); } }
+/* Settings */
+#settings-panel{display:none;flex:1;flex-direction:column;padding:20px;overflow-y:auto}
+#settings-panel.active{display:flex}
+#settings-panel h2{font-size:16px;font-weight:500;margin-bottom:12px}
+#settings-editor{flex:1;font-family:'SFMono-Regular',Consolas,monospace;font-size:13px;padding:12px;border:1px solid var(--border);border-radius:8px;resize:none;outline:none;background:var(--surface);color:var(--text);line-height:1.5;min-height:300px}
+#settings-editor:focus{border-color:var(--accent)}
+#btn-save-config{padding:8px 20px;background:var(--accent);color:white;border:none;border-radius:8px;font-size:13px;cursor:pointer;margin-top:12px;align-self:flex-end}
+#btn-save-config:hover{opacity:0.85}
+#btn-save-config:disabled{opacity:0.4}
+#btn-settings{width:100%;padding:10px;background:none;border:1px solid var(--border);border-radius:8px;cursor:pointer;font-size:13px;color:var(--text);font-family:var(--font);transition:background 0.15s;text-align:center}
+#btn-settings:hover{background:var(--accent-soft)}
 
-  .msg.user { align-self: flex-end; }
-  .msg.agent, .msg.system { align-self: flex-start; }
-  .msg.tool_call, .msg.tool_result { align-self: flex-start; max-width: 85%; }
-
-  .msg .bubble {
-    padding: 10px 16px;
-    border-radius: var(--radius);
-    font-size: 14px;
-    line-height: 1.6;
-    word-wrap: break-word;
-  }
-
-  .msg.user .bubble {
-    background: var(--user-bubble);
-    color: var(--user-text);
-    border-bottom-right-radius: 4px;
-  }
-
-  .msg.agent .bubble {
-    background: var(--surface);
-    border: 1px solid var(--border);
-    box-shadow: 0 1px 3px var(--shadow);
-    border-bottom-left-radius: 4px;
-  }
-
-  .msg.system .bubble {
-    background: var(--accent-soft);
-    color: var(--text);
-    border-radius: 8px;
-    font-size: 13px;
-    text-align: center;
-    max-width: 100%;
-  }
-
-  .msg.tool_call .bubble {
-    background: transparent;
-    color: var(--tool-call);
-    font-size: 12px;
-    font-family: 'SFMono-Regular', Consolas, monospace;
-    padding: 4px 12px;
-    border-left: 2px solid var(--tool-call);
-    border-radius: 0 4px 4px 0;
-  }
-
-  .msg.tool_result .bubble {
-    background: transparent;
-    color: var(--tool-result);
-    font-size: 12px;
-    font-family: 'SFMono-Regular', Consolas, monospace;
-    padding: 4px 12px;
-    border-left: 2px solid var(--tool-result);
-    border-radius: 0 4px 4px 0;
-  }
-
-  .msg .timestamp {
-    font-size: 10px;
-    color: var(--text-muted);
-    margin-top: 4px;
-    padding: 0 4px;
-  }
-
-  /* Reasoning */
-  .reasoning-toggle {
-    font-size: 12px;
-    color: var(--text-muted);
-    cursor: pointer;
-    user-select: none;
-    padding: 2px 0;
-  }
-  .reasoning-toggle:hover { color: var(--text); }
-  .reasoning-body {
-    display: none;
-    background: var(--reasoning-bg);
-    border-radius: 8px;
-    padding: 8px 12px;
-    margin: 4px 0 8px 0;
-    font-size: 13px;
-    color: var(--text-muted);
-    font-style: italic;
-    line-height: 1.5;
-  }
-  .reasoning-body.open { display: block; }
-
-  /* Markdown in agent messages */
-  .msg.agent .bubble p { margin: 4px 0; }
-  .msg.agent .bubble pre {
-    background: var(--code-bg);
-    border-radius: 8px;
-    padding: 12px;
-    overflow-x: auto;
-    font-size: 13px;
-    margin: 8px 0;
-  }
-  .msg.agent .bubble code {
-    background: var(--code-bg);
-    padding: 2px 6px;
-    border-radius: 4px;
-    font-size: 13px;
-  }
-  .msg.agent .bubble pre code { background: none; padding: 0; }
-  .msg.agent .bubble ul, .msg.agent .bubble ol { padding-left: 20px; margin: 4px 0; }
-  .msg.agent .bubble blockquote {
-    border-left: 3px solid var(--border);
-    padding-left: 12px;
-    color: var(--text-muted);
-    margin: 8px 0;
-  }
-
-  /* ── Input ── */
-  footer {
-    padding: 16px 24px;
-    border-top: 1px solid var(--border);
-    background: rgba(255,255,255,0.6);
-    backdrop-filter: blur(12px);
-    -webkit-backdrop-filter: blur(12px);
-    flex-shrink: 0;
-  }
-
-  .input-row {
-    display: flex;
-    gap: 8px;
-    align-items: flex-end;
-  }
-
-  #input {
-    flex: 1;
-    padding: 10px 16px;
-    border: 1px solid var(--border);
-    border-radius: 12px;
-    font-size: 14px;
-    font-family: var(--font);
-    background: var(--surface);
-    color: var(--text);
-    outline: none;
-    resize: none;
-    min-height: 44px;
-    max-height: 150px;
-    line-height: 1.5;
-    transition: border-color 0.2s;
-  }
-  #input:focus { border-color: var(--accent); }
-
-  #send {
-    padding: 10px 20px;
-    background: var(--accent);
-    color: white;
-    border: none;
-    border-radius: 12px;
-    font-size: 14px;
-    font-family: var(--font);
-    cursor: pointer;
-    transition: opacity 0.2s;
-    white-space: nowrap;
-  }
-  #send:hover { opacity: 0.85; }
-  #send:disabled { opacity: 0.4; cursor: not-allowed; }
-
-  /* ── Scrollbar ── */
-  #chat::-webkit-scrollbar { width: 6px; }
-  #chat::-webkit-scrollbar-track { background: transparent; }
-  #chat::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+#chat::-webkit-scrollbar,#settings-panel::-webkit-scrollbar,.sidebar-top::-webkit-scrollbar{width:4px}
+#chat::-webkit-scrollbar-track{background:transparent}
+#chat::-webkit-scrollbar-thumb{background:var(--border);border-radius:2px}
 </style>
-<!-- Load Markdown + Math libs -->
 <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.css">
 <script src="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.js"></script>
 <script>
-if (typeof marked !== "undefined") {
-marked.use({
-  extensions: [{
-    name: 'inlineMath',
-    level: 'inline',
-    start(src) { return src.indexOf('$'); },
-    tokenizer(src) {
-      const m = src.match(/^\$([^$]+?)\$/);
-      if (m) return {type:'inlineMath', raw:m[0], formula:m[1]};
-    },
-    renderer(tok) {
-      try { return katex.renderToString(tok.formula, {throwOnError: false}); }
-      catch(e) { return '$' + tok.formula + '$'; }
-    }
-  }, {
-    name: 'blockMath',
-    level: 'block',
-    start(src) { return src.indexOf('$$'); },
-    tokenizer(src) {
-      const m = src.match(/^\$\$([\s\S]+?)\$\$/);
-      if (m) return {type:'blockMath', raw:m[0], formula:m[1]};
-    },
-    renderer(tok) {
-      try { return katex.renderToString(tok.formula, {displayMode:true, throwOnError: false}); }
-      catch(e) { return '$$' + tok.formula + '$$'; }
-    }
-  }]
-});
+if(typeof marked!=="undefined"){
+marked.use({extensions:[{
+  name:'inlineMath',level:'inline',start(s){return s.indexOf('$');},
+  tokenizer(s){const m=s.match(/^\$([^$]+?)\$/);if(m)return {type:'inlineMath',raw:m[0],formula:m[1]};},
+  renderer(t){try{return katex.renderToString(t.formula,{throwOnError:false})}catch(e){return '$'+t.formula+'$'}}
+},{
+  name:'blockMath',level:'block',start(s){return s.indexOf('$$');},
+  tokenizer(s){const m=s.match(/^\$\$([\s\S]+?)\$\$/);if(m)return {type:'blockMath',raw:m[0],formula:m[1]};},
+  renderer(t){try{return katex.renderToString(t.formula,{displayMode:true,throwOnError:false})}catch(e){return '$$'+t.formula+'$$'}}
+}]});
 }
 </script>
 </head>
 <body>
+<div class="layout">
 
+<!-- Sidebar -->
+<aside class="sidebar">
+  <div class="sidebar-top" id="session-list">
+    <div class="sidebar-section-title">会话记录</div>
+  </div>
+  <div class="sidebar-bottom">
+    <button id="btn-settings">⚙ 设置</button>
+  </div>
+</aside>
+
+<!-- Main -->
+<div class="main">
 <header>
   <span class="status" id="status"></span>
-  <h1>EchoLily</h1>
+  <h1 id="main-title">EchoLily</h1>
 </header>
 
 <div id="chat"></div>
+
+<div id="settings-panel">
+  <h2>配置</h2>
+  <textarea id="settings-editor"></textarea>
+  <button id="btn-save-config" disabled>保存</button>
+</div>
 
 <footer>
   <div class="input-row">
@@ -293,196 +164,159 @@ marked.use({
     <button id="send" disabled>发送</button>
   </div>
 </footer>
+</div><!-- /.main -->
+
+</div><!-- /.layout -->
 
 <script>
-const WS_URL = "ws://127.0.0.1:8081";
-console.log("Connecting to WS:", WS_URL);
-const chat = document.getElementById("chat");
-const input = document.getElementById("input");
-const sendBtn = document.getElementById("send");
-const statusDot = document.getElementById("status");
+const WS_URL="ws://127.0.0.1:8081";
+const chat=document.getElementById("chat");
+const input=document.getElementById("input");
+const sendBtn=document.getElementById("send");
+const statusDot=document.getElementById("status");
+const sessionList=document.getElementById("session-list");
+const settingsPanel=document.getElementById("settings-panel");
+const settingsEditor=document.getElementById("settings-editor");
+const btnSaveConfig=document.getElementById("btn-save-config");
+const btnSettings=document.getElementById("btn-settings");
+const mainTitle=document.getElementById("main-title");
 
-let ws = null;
-let currentMsgContainer = null;  // for streaming tokens
-let currentReasoning = null;     // reasoning text for current response
-let pendingReasoning = [];       // accumulated reasoning tokens
+let ws=null;
+let currentMsgContainer=null;
+let pendingReasoning=[];
+let currentSessionId=null;
+let isSettingsOpen=false;
 
-// ── Auto-resize textarea ──
-input.addEventListener("input", () => {
-  input.style.height = "auto";
-  input.style.height = Math.min(input.scrollHeight, 150) + "px";
-  sendBtn.disabled = !input.value.trim();
+// Resize textarea
+input.addEventListener("input",()=>{
+  input.style.height="auto";
+  input.style.height=Math.min(input.scrollHeight,150)+"px";
+  sendBtn.disabled=!input.value.trim();
 });
 
-// ── Send ──
-function send() {
-  const text = input.value.trim();
-  if (!text || !ws) return;
-  ws.send(JSON.stringify({ type: "message", data: text }));
-  addMessage("user", text);
-  input.value = "";
-  input.style.height = "auto";
-  sendBtn.disabled = true;
-  currentMsgContainer = null;
-  pendingReasoning = [];
-  statusDot.className = "status processing";
-  // Auto scroll
-  chat.scrollTop = chat.scrollHeight;
+// Send
+function send(){
+  const t=input.value.trim();
+  if(!t||!ws)return;
+  ws.send(JSON.stringify({type:"message",data:t}));
+  addMsg("user",t);input.value="";input.style.height="auto";
+  sendBtn.disabled=true;currentMsgContainer=null;pendingReasoning=[];
+  statusDot.className="status processing";chat.scrollTop=chat.scrollHeight;
 }
+input.addEventListener("keydown",e=>{if(e.key==="Enter"&&!e.shiftKey){e.preventDefault();send()}});
+sendBtn.addEventListener("click",send);
 
-input.addEventListener("keydown", (e) => {
-  if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send(); }
+// Settings toggle
+btnSettings.addEventListener("click",()=>{
+  isSettingsOpen=!isSettingsOpen;
+  if(isSettingsOpen){
+    chat.style.display="none";
+    settingsPanel.classList.add("active");
+    if(ws)ws.send(JSON.stringify({type:"get_config"}));
+  }else{
+    settingsPanel.classList.remove("active");
+    chat.style.display="flex";
+  }
 });
-sendBtn.addEventListener("click", send);
 
-// ── Connect WebSocket ──
-function connect() {
-  ws = new WebSocket(WS_URL);
-
-  ws.onopen = () => {
-    statusDot.className = "status connected";
-    sendBtn.disabled = false;
+// WebSocket
+function connect(){
+  ws=new WebSocket(WS_URL);
+  ws.onopen=()=>{statusDot.className="status connected";sendBtn.disabled=false;if(ws)ws.send(JSON.stringify({type:"list_sessions"}))};
+  ws.onmessage=e=>{
+    const ev=JSON.parse(e.data);
+    switch(ev.type){
+      case "ready":statusDot.className="status connected";break;
+      case "token":appendToken(ev.data||"");break;
+      case "reasoning_token":pendingReasoning.push(ev.data||"");break;
+      case "tool_call":addMsg("tool_call","⚙ "+(ev.name||"?"));chat.scrollTop=chat.scrollHeight;break;
+      case "tool_result":let r=(ev.result||"").toString().slice(0,300);addMsg("tool_result","→ "+r);chat.scrollTop=chat.scrollHeight;break;
+      case "error":addMsg("system","✖ "+(ev.data||""));chat.scrollTop=chat.scrollHeight;break;
+      case "complete":case "done":
+        if(pendingReasoning.length&&currentMsgContainer){injectReasoning(currentMsgContainer,pendingReasoning.join(""));pendingReasoning=[]}
+        if(currentMsgContainer&&window.marked){const b=currentMsgContainer.querySelector(".bubble");if(b&&b._fullText){try{b.innerHTML=marked.parse(b._fullText)}catch(e){b.textContent=b._fullText}}}
+        currentMsgContainer=null;break;
+      case "sessions":renderSessions(ev.data);break;
+      case "session_msgs":loadSessionMessages(ev.session_id,ev.title,ev.data);break;
+      case "config":settingsEditor.value=ev.data||"";btnSaveConfig.disabled=false;break;
+      case "config_saved":btnSaveConfig.textContent="已保存";setTimeout(()=>{btnSaveConfig.textContent="保存"},2000);break;
+    }
   };
-
-  ws.onmessage = (e) => {
-    const ev = JSON.parse(e.data);
-    handleEvent(ev);
-  };
-
-  ws.onclose = (e) => {
-    console.warn("WS closed", e.code, e.reason);
-    statusDot.className = "status";
-    statusDot.title = "连接断开 (code: " + (e.code || "?") + ")";
-    sendBtn.disabled = true;
-    setTimeout(connect, 2000);
-  };
-
-  ws.onerror = (e) => {
-    console.error("WS error", e);
-    statusDot.title = "WebSocket 连接失败";
-    ws.close();
-  };
+  ws.onclose=()=>{statusDot.className="status";sendBtn.disabled=true;setTimeout(connect,2000)};
+  ws.onerror=()=>ws.close();
 }
-
 connect();
 
-// ── Events ──
-function handleEvent(ev) {
-  switch (ev.type) {
-    case "ready":
-      statusDot.className = "status connected";
-      break;
-
-    case "token":
-      appendToken(ev.data || "");
-      break;
-
-    case "reasoning_token":
-      pendingReasoning.push(ev.data || "");
-      break;
-
-    case "tool_call":
-      addMessage("tool_call", "⚙ " + (ev.name || "?"));
-      chat.scrollTop = chat.scrollHeight;
-      break;
-
-    case "tool_result":
-      let r = (ev.result || "").toString().slice(0, 300);
-      addMessage("tool_result", "→ " + r);
-      chat.scrollTop = chat.scrollHeight;
-      break;
-
-    case "error":
-      addMessage("system", "✖ " + (ev.data || ""));
-      chat.scrollTop = chat.scrollHeight;
-      break;
-
-    case "complete":
-    case "done":
-      // Inject reasoning into the just-completed message
-      if (pendingReasoning.length && currentMsgContainer) {
-        injectReasoning(currentMsgContainer, pendingReasoning.join(""));
-        pendingReasoning = [];
-      }
-      // Re-render agent message with proper markdown
-      if (currentMsgContainer && window.marked) {
-        const bubble = currentMsgContainer.querySelector(".bubble");
-        if (bubble && bubble._fullText) {
-          try { bubble.innerHTML = marked.parse(bubble._fullText); } catch(e) { bubble.textContent = bubble._fullText; }
-        }
-      }
-      currentMsgContainer = null;
-      break;
+// Sessions
+function renderSessions(sessions){
+  let html='<div class="sidebar-section-title">会话记录</div>';
+  for(const s of sessions){
+    const title=s.title||`Session #${s.id}`;
+    const date=(s.created_at||"").slice(0,10);
+    html+=`<div class="session-item${s.id===currentSessionId?' active':''}" data-id="${s.id}">
+      <div class="s-title">${escapeHtml(title)}</div>
+      <div class="s-meta">#${s.id} ${date}</div>
+    </div>`;
   }
+  sessionList.innerHTML=html;
+  sessionList.querySelectorAll(".session-item").forEach(el=>{
+    el.addEventListener("click",()=>{
+      const id=parseInt(el.dataset.id);
+      if(id===currentSessionId)return;
+      if(ws)ws.send(JSON.stringify({type:"get_session",id}));
+    });
+  });
 }
 
-// ── Messages ──
-function addMessage(type, text) {
-  const el = document.createElement("div");
-  el.className = "msg " + type;
-
-  const bubble = document.createElement("div");
-  bubble.className = "bubble";
-  if (type === "agent" && window.marked) {
-    bubble.innerHTML = marked.parse(text);
-  } else {
-    bubble.textContent = text;
-  }
-  el.appendChild(bubble);
-
-  chat.appendChild(el);
-  chat.scrollTop = chat.scrollHeight;
-
-  // Track current agent message for streaming
-  if (type === "agent") {
-    currentMsgContainer = el;
-  }
-}
-
-function appendToken(text) {
-  if (!currentMsgContainer) {
-    addMessage("agent", "");
-  }
-  const bubble = currentMsgContainer.querySelector(".bubble");
-  if (bubble) {
-    if (!bubble._fullText) bubble._fullText = "";
-    bubble._fullText += text;
-    if (window.marked) {
-      try { bubble.innerHTML = marked.parse(bubble._fullText); }
-      catch(e) { bubble.textContent = bubble._fullText; }
-    } else {
-      bubble.textContent = bubble._fullText;
+function loadSessionMessages(sessionId,title,msgs){
+  currentSessionId=sessionId;
+  chat.innerHTML="";
+  mainTitle.textContent=title||`Session #${sessionId}`;
+  for(const m of msgs){
+    const role=m.role;
+    if(role==="user")addMsg("user",m.content||"");
+    else if(role==="agent")addMsg("agent",m.content||"");
+    else if(role==="tool"&&m.name){
+      const result=m.content||"";
+      try{const p=JSON.parse(result);addMsg("tool_result","→ "+(p.result||"").slice(0,300))}catch(e){addMsg("tool_result","→ "+result.slice(0,300))}
     }
-    chat.scrollTop = chat.scrollHeight;
+  }
+  renderSessions_highlight(sessionId);
+}
+
+function renderSessions_highlight(id){
+  sessionList.querySelectorAll(".session-item").forEach(el=>{
+    el.classList.toggle("active",parseInt(el.dataset.id)===id);
+  });
+}
+
+function escapeHtml(t){const d=document.createElement("div");d.textContent=t;return d.innerHTML}
+
+// Messages
+function addMsg(type,text){
+  const el=document.createElement("div");el.className="msg "+type;
+  const b=document.createElement("div");b.className="bubble";
+  if(type==="agent"&&window.marked){b.innerHTML=marked.parse(text)}else{b.textContent=text}
+  el.appendChild(b);chat.appendChild(el);chat.scrollTop=chat.scrollHeight;
+  if(type==="agent"||!currentMsgContainer)currentMsgContainer=el;
+}
+
+function appendToken(text){
+  if(!currentMsgContainer){addMsg("agent","")}
+  const b=currentMsgContainer.querySelector(".bubble");
+  if(b){
+    if(!b._fullText)b._fullText="";b._fullText+=text;
+    if(window.marked){try{b.innerHTML=marked.parse(b._fullText)}catch(e){b.textContent=b._fullText}}else{b.textContent=b._fullText}
+    chat.scrollTop=chat.scrollHeight;
   }
 }
 
-function injectReasoning(msgEl, text) {
-  const toggle = document.createElement("div");
-  toggle.className = "reasoning-toggle";
-  toggle.textContent = "思考过程 ▸";
-
-  const body = document.createElement("div");
-  body.className = "reasoning-body";
-  body.textContent = text;
-
-  toggle.onclick = () => {
-    const open = body.classList.toggle("open");
-    toggle.textContent = open ? "思考过程 ▾" : "思考过程 ▸";
-  };
-
-  const bubble = msgEl.querySelector(".bubble");
-  bubble.parentNode.insertBefore(toggle, bubble);
-  bubble.parentNode.insertBefore(body, bubble);
+function injectReasoning(msgEl,text){
+  const t=document.createElement("div");t.className="reasoning-toggle";t.textContent="思考过程 ▸";
+  const body=document.createElement("div");body.className="reasoning-body";body.textContent=text;
+  t.onclick=()=>{const o=body.classList.toggle("open");t.textContent=o?"思考过程 ▾":"思考过程 ▸"};
+  const b=msgEl.querySelector(".bubble");b.parentNode.insertBefore(t,b);b.parentNode.insertBefore(body,b);
 }
-
-// ── Keyboard shortcut ──
-document.addEventListener("keydown", (e) => {
-  if (e.key === "/" && document.activeElement !== input) {
-    e.preventDefault();
-    input.focus();
-  }
-});
 </script>
 </body>
 </html>
