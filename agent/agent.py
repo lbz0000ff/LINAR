@@ -1042,6 +1042,7 @@ class Agent:
         )
         self.emit({"type": "complete"})
         self.emit({"type": "ready"})
+        
     def run(self):
         log.info("Agent run loop started (stdin mode)")
         # Force UTF-8 on stdin (Windows pipes often use the wrong code page)
@@ -1056,6 +1057,8 @@ class Agent:
             self.add_user_message(user_input)
             self.emit({"type": "user_echo", "data": user_input})
             self.process_with_llm()
+            
+            
 if __name__ == "__main__":
     from tool_registry import get_tools
     # Load config and filter tools by enabled_sets
