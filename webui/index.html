@@ -262,10 +262,12 @@ function removeFile(id){
 async function uploadFiles(){
   const results=[];
   for(const f of pendingFiles){
-    const form=new FormData();
-    form.append("file",f.file,f.name);
     try{
-      const res=await fetch("/upload",{method:"POST",body:form});
+      const res=await fetch("/upload",{
+        method:"POST",
+        headers:{"X-Filename":f.name,"Content-Type":"application/octet-stream"},
+        body:f.file
+      });
       const data=await res.json();
       results.push(data.path);
     }catch(e){console.error("Upload failed:",f.name,e)}

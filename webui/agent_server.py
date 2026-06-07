@@ -150,35 +150,24 @@ def _start_http():
             if self.path == "/upload":
                 length = int(self.headers.get("Content-Length", 0))
                 body = self.rfile.read(length)
-                # Expect multipart or raw file data
-                content_type = self.headers.get("Content-Type", "")
-                if "multipart" in content_type:
-                    import cgi
-                    fs = cgi.FieldStorage(fp=io.BytesIO(body), headers=self.headers, environ={"REQUEST_METHOD": "POST"})
-                    fitem = fs.getfirst("file")
-                    if fitem and fitem.filename:
-                        import mimetypes
-                        safe_name = os.path.basename(fitem.filename)
-                        dest = os.path.join(upload_dir, safe_name)
-                        with open(dest, "wb") as f:
-                            f.write(fitem.file.read())
-                        self.send_response(200)
-                        self.send_header("Content-Type", "application/json")
-                        self.end_headers()
-                        self.wfile.write(json.dumps({"path": dest}).encode())
-                        return
-                else:
-                    # Raw file upload—filename in X-Filename header
-                    fname = self.headers.get("X-Filename", "upload.bin")
-                    safe_name = os.path.basename(fname)
-                    dest = os.path.join(upload_dir, safe_name)
-                    with open(dest, "wb") as f:
-                        f.write(body)
-                    self.send_response(200)
-                    self.send_header("Content-Type", "application/json")
-                    self.end_headers()
-                    self.wfile.write(json.dumps({"path": dest}).encode())
-                    return
+                # Get filename from header or Content-Disposition
+                fname = self.headers.get("X-Filename", "upload.bin")
+                cd = self.headers.get("Content-Disposition", "")
+                if 'filename="' in cd:
+                    fname = cd.split('filename="')[1].split('"')[0]
+                safe_name = os.path.basename(fname) or "upload.bin"
+                dest = os.path.join(upload_dir, safe_name)
+                counter = 1
+                while os.path.exists(dest):
+                    p, e = os.path.splitext(safe_name)
+                    dest = os.path.join(upload_dir, f"{p}_{counter}{e}")
+                    counter += 1
+                with open(dest, "wb") as fh:
+                    fh.write(body)
+                self.send_response(200)
+                self.end_headers()
+                self.wfile.write(json.dumps({"path": dest}).encode("utf-8"))
+                return
             self.send_response(405)
             self.end_headers()
 
