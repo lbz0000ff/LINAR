@@ -91,7 +91,6 @@ async def ws_handler(ws):
             elif t == "stop":
                 log.info("Stop requested by user")
             elif t == "new_session":
-                import database as db
                 sid = db.create_session()
                 await ws.send(json.dumps({"type": "new_session_created", "session_id": sid}, ensure_ascii=False))
             elif t == "switch_session":
