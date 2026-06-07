@@ -194,11 +194,9 @@ marked.use({extensions:[{
 <div class="layout">
 
 <!-- Sidebar -->
-<aside class="sidebar" id="sidebar">
-  <div style="display:flex;justify-content:flex-end;padding:8px 8px 0">
-    <button id="btn-collapse-sidebar" style="background:none;border:none;cursor:pointer;font-size:14px;color:var(--text-muted);padding:4px" title="收起侧边栏">◀</button>
-  </div>
-  <div class="sidebar-top" id="session-list">
+<button id="btn-collapse-sidebar" style="position:absolute;top:12px;left:248px;z-index:100;background:var(--glass-bg);backdrop-filter:blur(8px);border:1px solid var(--border);border-radius:6px;cursor:pointer;font-size:12px;color:var(--text-muted);padding:4px 6px;transition:left 0.3s" title="收起侧边栏">◀</button>
+  <aside class="sidebar" id="sidebar">
+    <div class="sidebar-top" id="session-list">
     <div class="sidebar-section-title">会话记录</div>
   </div>
   <div class="sidebar-bottom">
@@ -224,8 +222,8 @@ marked.use({extensions:[{
 <footer>
   <div id="attachments"></div>
 <div class="input-row">
-    <textarea id="input" placeholder="输入消息…" rows="1"></textarea>
-    <button id="upload-btn" title="上传文件">📎</button>
+    <button id="upload-btn" placeholder="输入消息…" rows="1"></textarea>
+    <textarea id="input" title="上传文件">📎</button>
 <button id="send" disabled>发送</button>
 <input type="file" id="file-input" multiple hidden>
   </div>
@@ -564,14 +562,23 @@ function renderField(key,val,label){
   return '';
 }
 var pendingConfigChanges=false;
+function updateCollapseBtn(){
+  const btn=document.getElementById("btn-collapse-sidebar");
+  const sb=document.getElementById("sidebar");
+  if(!btn||!sb)return;
+  const visible=sb.style.width!=="0px"&&sb.style.width!=="0";
+  btn.style.left=visible?"248px":"4px";
+  btn.textContent=visible?"◀":"▶";
+  btn.title=visible?"收起侧边栏":"展开侧边栏";
+}
 document.getElementById("btn-collapse-sidebar").addEventListener("click",function(){
   const sb=document.getElementById("sidebar");
   const btn=this;
   if(sb.style.width==="0px"||sb.style.width==="0"){
-    sb.style.width="";sb.style.padding="";btn.textContent="◀";btn.title="收起侧边栏";
+    sb.style.width="";sb.style.padding="";updateCollapseBtn();
   }else{
     sb.style.width="0px";sb.style.overflow="hidden";sb.style.padding="0";
-    btn.textContent="▶";btn.title="展开侧边栏";
+    updateCollapseBtn();
   }
 });
 </script>
