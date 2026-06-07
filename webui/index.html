@@ -14,8 +14,8 @@
     --accent: #A61C28;
     --accent-hover: #8B1520;
     --accent-soft: rgba(166,28,40,0.08);
-    --user-bubble: #A61C28;
-    --user-text: #FFFFFF;
+    --user-bubble: #E8E6E0;
+    --user-text: #1C1C1E;
     --border: rgba(0,0,0,0.06);
     --shadow: rgba(0,0,0,0.04);
     --radius: 16px;
@@ -39,7 +39,7 @@
   .sidebar{
     width:var(--sidebar-w);background:var(--sidebar-bg);
     backdrop-filter:blur(16px);-webkit-backdrop-filter:blur(16px);
-    border-right:1px solid var(--glass-border);
+    border-right:1px solid var(--border);
     display:flex;flex-direction:column;flex-shrink:0;
   }
   .sidebar-top{flex:1;overflow-y:auto;padding:12px}
@@ -86,7 +86,7 @@
   }
   .msg.user .bubble{
     background:var(--user-bubble);color:var(--user-text);
-    border-bottom-right-radius:4px;box-shadow:0 2px 8px rgba(166,28,40,0.15)
+    border-bottom-right-radius:4px;box-shadow:0 1px 4px rgba(0,0,0,0.06)
   }
   .msg.agent .bubble{
     background:rgba(255,255,255,0.7);backdrop-filter:blur(8px);
@@ -194,7 +194,10 @@ marked.use({extensions:[{
 <div class="layout">
 
 <!-- Sidebar -->
-<aside class="sidebar">
+<aside class="sidebar" id="sidebar">
+  <div style="display:flex;justify-content:flex-end;padding:8px 8px 0">
+    <button id="btn-collapse-sidebar" style="background:none;border:none;cursor:pointer;font-size:14px;color:var(--text-muted);padding:4px" title="收起侧边栏">◀</button>
+  </div>
   <div class="sidebar-top" id="session-list">
     <div class="sidebar-section-title">会话记录</div>
   </div>
@@ -561,6 +564,16 @@ function renderField(key,val,label){
   return '';
 }
 var pendingConfigChanges=false;
+document.getElementById("btn-collapse-sidebar").addEventListener("click",function(){
+  const sb=document.getElementById("sidebar");
+  const btn=this;
+  if(sb.style.width==="0px"||sb.style.width==="0"){
+    sb.style.width="";sb.style.padding="";btn.textContent="◀";btn.title="收起侧边栏";
+  }else{
+    sb.style.width="0px";sb.style.overflow="hidden";sb.style.padding="0";
+    btn.textContent="▶";btn.title="展开侧边栏";
+  }
+});
 </script>
 </body>
 </html>
