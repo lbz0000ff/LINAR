@@ -405,7 +405,7 @@ function addMsg(type,text,files){
     el.appendChild(imgWrap);
   }
   chat.appendChild(el);chat.scrollTop=chat.scrollHeight;
-  if(type==="agent"||!currentMsgContainer)currentMsgContainer=el;
+  if(type==="agent")currentMsgContainer=el;
 }
 
 function appendToken(text){
