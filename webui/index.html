@@ -124,6 +124,7 @@ footer{padding:12px 20px;border-top:1px solid var(--border);background:rgba(255,
 </style>
 <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js">
 function renderConfigForm(cfg){
+  if(!cfg||!cfg.llm){document.getElementById("config-form").innerHTML="<div style=\"padding:20px;text-align:center;color:var(--text-muted)\">加载配置中…<br><span style=\"font-size:11px\">(config: "+JSON.stringify(Object.keys(cfg||{}))+"</span></div>";return}
   const form=document.getElementById("config-form");
   if(!form)return;
   let html="";
@@ -193,6 +194,7 @@ var pendingConfigChanges=false;
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.css">
 <script src="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.js">
 function renderConfigForm(cfg){
+  if(!cfg||!cfg.llm){document.getElementById("config-form").innerHTML="<div style=\"padding:20px;text-align:center;color:var(--text-muted)\">加载配置中…<br><span style=\"font-size:11px\">(config: "+JSON.stringify(Object.keys(cfg||{}))+"</span></div>";return}
   const form=document.getElementById("config-form");
   if(!form)return;
   let html="";
@@ -273,6 +275,7 @@ marked.use({extensions:[{
 }
 
 function renderConfigForm(cfg){
+  if(!cfg||!cfg.llm){document.getElementById("config-form").innerHTML="<div style=\"padding:20px;text-align:center;color:var(--text-muted)\">加载配置中…<br><span style=\"font-size:11px\">(config: "+JSON.stringify(Object.keys(cfg||{}))+"</span></div>";return}
   const form=document.getElementById("config-form");
   if(!form)return;
   let html="";
@@ -341,6 +344,7 @@ var pendingConfigChanges=false;
 </script>
 <script src="https://cdn.jsdelivr.net/npm/js-yaml@4.1.0/dist/js-yaml.min.js">
 function renderConfigForm(cfg){
+  if(!cfg||!cfg.llm){document.getElementById("config-form").innerHTML="<div style=\"padding:20px;text-align:center;color:var(--text-muted)\">加载配置中…<br><span style=\"font-size:11px\">(config: "+JSON.stringify(Object.keys(cfg||{}))+"</span></div>";return}
   const form=document.getElementById("config-form");
   if(!form)return;
   let html="";
@@ -611,7 +615,7 @@ function connect(){
         currentMsgContainer=null;break;
       case "sessions":renderSessions(ev.data);break;
       case "session_msgs":loadSessionMessages(ev.session_id,ev.title,ev.data);break;
-      case "config_json":renderConfigForm(ev.data||{});break;
+      case "config_json":console.log("config_json",ev.data);renderConfigForm(ev.data||{});break;
       case "config_saved":document.getElementById("btn-save-config").textContent="已保存";setTimeout(()=>{const b=document.getElementById("btn-save-config");if(b)b.textContent="保存"},2000);break;
     }
   };
@@ -737,6 +741,7 @@ function injectReasoning(msgEl,text){
 }
 
 function renderConfigForm(cfg){
+  if(!cfg||!cfg.llm){document.getElementById("config-form").innerHTML="<div style=\"padding:20px;text-align:center;color:var(--text-muted)\">加载配置中…<br><span style=\"font-size:11px\">(config: "+JSON.stringify(Object.keys(cfg||{}))+"</span></div>";return}
   const form=document.getElementById("config-form");
   if(!form)return;
   let html="";
@@ -806,6 +811,7 @@ var pendingConfigChanges=false;
 
 // Settings panel
 function renderConfigForm(cfg){
+  if(!cfg||!cfg.llm){document.getElementById("config-form").innerHTML="<div style=\"padding:20px;text-align:center;color:var(--text-muted)\">加载配置中…<br><span style=\"font-size:11px\">(config: "+JSON.stringify(Object.keys(cfg||{}))+"</span></div>";return}
   const form=document.getElementById("config-form");
   if(!form)return;
   let html="";
