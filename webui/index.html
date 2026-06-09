@@ -2213,7 +2213,7 @@ const CONVERSATIONS = [
     }
     function extractAttachments(content){
       var files=[];var re=/\[附件\]\s*(\S+)/g;var m;
-      while((m=re.exec(content))!==null){files.push({name:m[1].split('/').pop().split('\').pop(),type:'file'});}
+      while((m=re.exec(content))!==null){files.push({name:m[1].split(/[\/]/).pop(),type:"file"});}
       return files.length?files:undefined;
     }
 
