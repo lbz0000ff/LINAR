@@ -829,6 +829,8 @@ function renderConversations(filter) {
         }
         sendMessageInternal(conv);
       });
+      return;
+    }
 
     /* —— 内部发送流程（支持工具气泡 + 重新生成调用） —— */
     function sendMessageInternal(conv) {
