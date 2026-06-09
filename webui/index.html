@@ -2164,12 +2164,92 @@ const CONVERSATIONS = [
           case "config_saved":var sb=document.getElementById("btn-save-config");if(sb)sb.textContent="已保存";break;
           case "new_session_created":location.reload();break;
           case "session_switched":currentSessionId=ev.session_id;break;
+          // Agent response events
+          case "token":appendAgentToken(ev.data||"");break;
+          case "reasoning_token":appendAgentReasoning(ev.data||"");break;
+          case "tool_call":showToolCall(ev.name||"");break;
+          case "tool_result":showToolResult((ev.result||"").toString().slice(0,200));break;
+          case "error":showSystemMsg("⚠️ "+(ev.data||""));break;
+          case "complete":case "done":finishAgentResponse();break;
+          case "ready":setConnectionStatus("connected");break;
         }
       };
       ws.onclose=function(){setConnectionStatus('offline');setTimeout(connectWS,2000);};
       ws.onerror=function(){ws.close();};
     }
 
+
+    // ── Agent response handlers ──
+    var agentResponseConvId=null;
+    function appendAgentToken(text){
+      if(!agentResponseConvId)agentResponseConvId=currentConvId;
+      if(agentResponseConvId!==currentConvId)return;
+      var conv=CONVERSATIONS.find(function(c){return c.id===currentConvId});
+      if(!conv)return;
+      var msgs=conv.messages;
+      var last=msgs.length?msgs[msgs.length-1]:null;
+      if(last&&last.role==='ai'&&last._streaming){
+        last.text+=text;
+      }else{
+        msgs.push({role:'ai',text:text,timestamp:Date.now(),_streaming:true});
+      }
+      renderMessages(conv.messages);
+      scrollToBottom();
+    }
+    function appendAgentReasoning(text){
+      if(!agentResponseConvId)agentResponseConvId=currentConvId;
+      if(agentResponseConvId!==currentConvId)return;
+      var conv=CONVERSATIONS.find(function(c){return c.id===currentConvId});
+      if(!conv)return;
+      var msgs=conv.messages;
+      var last=msgs.length?msgs[msgs.length-1]:null;
+      if(last&&last.role==='ai'&&last._streaming){
+        last.thinking=(last.thinking||'')+text;
+      }else if(last&&last.role==='ai'){
+        last.thinking=(last.thinking||'')+text;
+      }
+      renderMessages(conv.messages);
+      scrollToBottom();
+    }
+    function showToolCall(name){
+      var conv=CONVERSATIONS.find(function(c){return c.id===currentConvId});
+      if(!conv)return;
+      conv.messages.push({role:'tool-bubble',toolName:name,completed:false,timestamp:Date.now()});
+      renderMessages(conv.messages);
+      scrollToBottom();
+    }
+    function showToolResult(text){
+      var conv=CONVERSATIONS.find(function(c){return c.id===currentConvId});
+      if(!conv)return;
+      var msgs=conv.messages;
+      for(var i=msgs.length-1;i>=0;i--){
+        if(msgs[i].role==='tool-bubble'&&!msgs[i].completed){
+          msgs[i].result={text:text};
+          msgs[i].completed=true;
+          break;
+        }
+      }
+      renderMessages(conv.messages);
+      scrollToBottom();
+    }
+    function showSystemMsg(text){
+      var conv=CONVERSATIONS.find(function(c){return c.id===currentConvId});
+      if(!conv)return;
+      conv.messages.push({role:'system',text:text,timestamp:Date.now()});
+      renderMessages(conv.messages);
+      scrollToBottom();
+    }
+    function finishAgentResponse(){
+      var conv=CONVERSATIONS.find(function(c){return c.id===currentConvId});
+      if(conv){
+        var msgs=conv.messages;
+        var last=msgs.length?msgs[msgs.length-1]:null;
+        if(last&&last._streaming){delete last._streaming;}
+        renderMessages(conv.messages);
+      }
+      setConnectionStatus('connected');
+      agentResponseConvId=null;
+    }
     function loadSessions(sessions){
       // Convert backend sessions to design's Conversation format
       CONVERSATIONS.length=0;
