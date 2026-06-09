@@ -2158,7 +2158,7 @@ const CONVERSATIONS = [
       ws.onmessage=function(e){
         var ev=JSON.parse(e.data);
         switch(ev.type){
-          case "sessions":loadSessions(ev.data);break;
+          case "sessions":console.log("sessions received",ev.data&&ev.data.length);loadSessions(ev.data);break;
           case "session_msgs":loadSessionMessages(ev.session_id,ev.title,ev.data);break;
           case "config_json":renderConfigForm(ev.data||{});break;
           case "config_saved":var sb=document.getElementById("btn-save-config");if(sb)sb.textContent="已保存";break;
@@ -2181,7 +2181,7 @@ const CONVERSATIONS = [
       });
       renderConversations();
       // Select first session if none selected
-      if(!currentConvId&&CONVERSATIONS.length){selectConversation(CONVERSATIONS[0].id);}
+      currentConvId=null;if(CONVERSATIONS.length){selectConversation(CONVERSATIONS[0].id);}
     }
 
     function loadSessionMessages(sessionId,title,msgs){
@@ -2925,6 +2925,7 @@ function renderConversations(filter) {
     }
 
     function init() {
+      connectWS();
       initMessageMetadata();
       const messageArea = document.getElementById('messageArea');
 
