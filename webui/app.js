@@ -640,7 +640,7 @@ function renderConversations(filter) {
         if(m.role==='ai'&&window.marked){
           try{textWithImages=marked.parse(m.text||'');}catch(e){textWithImages=escHtml(m.text||'')}
         }else{
-          textWithImages = renderInlineImages(escHtml(m.text||"''".replace(/\n/g, '<br>'));
+          textWithImages = renderInlineImages(escHtml(m.text||"''".replace(/\n/g, '<br>')));
         }
 
         const timeLabel = formatMsgTime(m, m.role);
