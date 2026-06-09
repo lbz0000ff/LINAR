@@ -188,7 +188,27 @@ const CONVERSATIONS = [
           case "session_msgs":loadSessionMessages(ev.session_id,ev.title,ev.data);break;
           case "config_json":renderConfigForm(ev.data||{});break;
           case "config_saved":var sb=document.getElementById("btn-save-config");if(sb)sb.textContent="已保存";break;
-          case "new_session_created":location.reload();break;
+          case "new_session_created":
+            if(ws&&ws._pendingNewConv){
+              var oldId=ws._pendingNewConv;
+              var newId='s'+ev.session_id;
+              // Move messages from old conversation to new one
+              var oldConv=CONVERSATIONS.find(function(c){return c.id===oldId});
+              if(oldConv){
+                oldConv.id=newId;
+                oldConv.title='新对话';
+                // Now send the pending message to the server
+                if(ws._pendingText&&ws){
+                  ws.send(JSON.stringify({type:"switch_session",id:ev.session_id}));
+                  ws.send(JSON.stringify({type:"get_session",id:ev.session_id}));
+                  ws.send(JSON.stringify({type:"message",data:ws._pendingText}));
+                }
+              }
+              ws._pendingNewConv=null;
+              ws._pendingText=null;
+              renderConversations();
+            }
+            break;
           case "session_switched":currentSessionId=ev.session_id;break;
           // Agent response events
           case "token":appendAgentToken(ev.data||"");break;
@@ -210,18 +230,30 @@ const CONVERSATIONS = [
     function appendAgentToken(text){
       if(!agentResponseConvId)agentResponseConvId=currentConvId;
       if(agentResponseConvId!==currentConvId)return;
-      // Update DOM directly to avoid flicker from full re-render
       var area=document.getElementById('messageArea');
       if(!area)return;
       var lastMsgEl=area.lastElementChild;
       if(lastMsgEl&&lastMsgEl.classList.contains('msg-ai')&&lastMsgEl.dataset.streaming==='1'){
         var bubble=lastMsgEl.querySelector('.msg-content');
-        if(bubble){bubble.textContent+=text;}
+        if(bubble){
+          if(!bubble._fullText)bubble._fullText='';
+          bubble._fullText+=text;
+          if(window.marked){
+            try{bubble.innerHTML=marked.parse(bubble._fullText)}catch(e){bubble.textContent=bubble._fullText}
+          }else{
+            bubble.textContent=bubble._fullText;
+          }
+        }
       }else{
-        // Create new AI message element
         var div=document.createElement('div');div.className='msg-ai';div.dataset.streaming='1';
-        div.innerHTML='<div class="msg-bubble ai"><div class="msg-content">'+escapeHtml(text)+'</div></div>';
+        div.innerHTML='<div class="msg-bubble ai"><div class="msg-content"></div></div>';
         area.appendChild(div);
+        // Trigger append again to render this first chunk
+        var b=area.lastElementChild.querySelector('.msg-content');
+        if(b){
+          b._fullText=text;
+          if(window.marked){try{b.innerHTML=marked.parse(text)}catch(e){b.textContent=text}}else{b.textContent=text}
+        }
       }
       // Also update the data model for persistence
       var conv=CONVERSATIONS.find(function(c){return c.id===currentConvId});
@@ -1199,23 +1231,12 @@ function escapeHtml(t){var d=document.createElement("div");d.textContent=t;retur
       // ----- 新建对话 -----
       document.getElementById('newChatBtn').addEventListener('click', function() {
         if (isProcessing) return;
-        const count = CONVERSATIONS.length + 1;
-        const colors = ['rose', 'teal', 'amber', 'plum', 'cyan', 'coral'];
-        const avatars = ['💬', '✨', '🎯', '🎨', '📝', '🔮'];
-        const newConv = {
-          id: 'c' + (Date.now()),
-          title: '新对话 ' + count,
-          preview: '开始一段新的对话…',
-          time: '刚刚',
-          unread: 0,
-          avatar: avatars[count % avatars.length],
-          color: colors[count % colors.length],
-          pinned: false,
-          messages: [],
-        };
-        CONVERSATIONS.unshift(newConv);
+        // Create unsaved local conversation (id starts with 'new_')
+        var id = 'new_' + Date.now();
+        var conv = { id: id, title: '新对话', preview: '', time: '刚刚', unread: 0, avatar: '💬', color: 'rose', pinned: false, messages: [] };
+        CONVERSATIONS.unshift(conv);
         renderConversations();
-        selectConversation(newConv.id);
+        selectConversation(id);
         document.getElementById('welcomeScreen').style.display = 'none';
         document.getElementById('messageArea').innerHTML = '';
         document.getElementById('chatInput').focus();
