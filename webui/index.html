@@ -2791,8 +2791,20 @@ function renderConversations(filter) {
       // 更新列表
       renderConversations(document.getElementById('searchInput').value);
 
-      // —— 开始处理流程 ——
-      sendMessageInternal(conv);
+      // —— 上传文件并开始处理 ——
+      var self=this;
+      uploadPendingFiles().then(function(filePaths){
+        if(filePaths&&filePaths.length){
+          // Append file paths to last user message's text
+          var lastMsg=conv.messages[conv.messages.length-1];
+          if(lastMsg&&lastMsg.role==='user'){
+            lastMsg.text+='
+[附件] '+filePaths.join(', ');
+          }
+        }
+        sendMessageInternal(conv);
+      });
+      return;
     }
 
     /* —— 内部发送流程（支持工具气泡 + 重新生成调用） —— */
@@ -2888,6 +2900,47 @@ function renderConversations(filter) {
        附件管理
        ============================================================ */
     let currentAttachments = [];
+
+    // File upload
+    document.getElementById('attachBtn').addEventListener('click',function(){document.getElementById('fileInput').click();});
+    document.getElementById('fileInput').addEventListener('change',function(e){
+      Array.from(e.target.files).forEach(function(file){
+        var maxSize=20*1024*1024;
+        if(file.size>maxSize){alert('文件超过 20MB');return}
+        var sz=(file.size/1024).toFixed(1)+'KB';
+        var isImg=file.type.startsWith('image/');
+        if(isImg){
+          var reader=new FileReader();
+          reader.onload=function(ev){currentAttachments.push({name:file.name,size:sz,isImage:true,dataUrl:ev.target.result,file:file});renderAttachments();};
+          reader.readAsDataURL(file);
+        }else{
+          currentAttachments.push({name:file.name,size:sz,isImage:false,file:file});renderAttachments();
+        }
+      });
+      e.target.value='';
+    });
+
+    // Upload files to server and return paths
+    function uploadPendingFiles(){
+      var promises=[];
+      currentAttachments.forEach(function(att){
+        if(att.file){
+          var fd=new FormData();
+          fd.append('file',att.file,att.name);
+          promises.push(fetch('/upload',{method:'POST',body:fd,headers:{'X-Filename':att.name}}).then(function(r){return r.json()}).then(function(d){return d.path}).catch(function(){return null}));
+        }else if(att.dataUrl&&att.isImage){
+          // For base64 images, convert to blob and upload
+          var byteString=atob(att.dataUrl.split(',')[1]);
+          var ab=new ArrayBuffer(byteString.length);
+          var ia=new Uint8Array(ab);
+          for(var i=0;i<byteString.length;i++){ia[i]=byteString.charCodeAt(i);}
+          var blob=new Blob([ab],{type:'image/png'});
+          var fd=new FormData();fd.append('file',blob,att.name);
+          promises.push(fetch('/upload',{method:'POST',body:fd,headers:{'X-Filename':att.name}}).then(function(r){return r.json()}).then(function(d){return d.path}).catch(function(){return null}));
+        }
+      });
+      return Promise.all(promises).then(function(paths){return paths.filter(function(p){return p});});
+    }
 
     function renderAttachments() {
       const row = document.getElementById('attachmentsRow');
