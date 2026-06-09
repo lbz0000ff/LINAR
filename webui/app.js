@@ -104,6 +104,7 @@ function initMessageMetadata() {
       });
     }
 
+nfunction init() {
 function checkLayout() {
         const menuBtn = document.getElementById('menuBtn');
         const collapseBtn = document.getElementById('sidebarCollapseBtn');
