@@ -825,11 +825,10 @@ function renderConversations(filter) {
           var lastMsg=conv.messages[conv.messages.length-1];
           if(lastMsg&&lastMsg.role==='user'){
             lastMsg.text+="\n[附件] "+filePaths.join(", ");
+          }
         }
         sendMessageInternal(conv);
       });
-      return;
-    }
 
     /* —— 内部发送流程（支持工具气泡 + 重新生成调用） —— */
     function sendMessageInternal(conv) {
