@@ -341,7 +341,6 @@ const CONVERSATIONS = [
       // Ensure currentConvId matches
       if(currentConvId!=='s'+sessionId){currentConvId='s'+sessionId;renderConversations();}
       renderMessages(conv.messages);
-      updateConvDisplay();
       // Update header
       var h=document.querySelector('.conv-title');if(h)h.textContent=conv.title;
     }
