@@ -2684,9 +2684,8 @@ function renderConversations(filter) {
 
     /* —— 内部发送流程（支持工具气泡 + 重新生成调用） —— */
     function sendMessageInternal(conv) {
-      // Send via WebSocket
-      if(ws){ws.send(JSON.stringify({type:"send_message",conversationId:conv.id,text:conv.pendingText||""}));}
-      // The WS event handlers will manage the flow
+      if(ws&&conv&&conv.messages.length){var lastMsg=conv.messages[conv.messages.length-1];if(lastMsg.role==="user"){ws.send(JSON.stringify({type:"message",data:lastMsg.text}));}}
+      setConnectionStatus("processing");
       return;
     }
     function cancelProcessing() {
