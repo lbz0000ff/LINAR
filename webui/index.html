@@ -2293,6 +2293,12 @@ function renderConversations(filter) {
       currentConvId = id;
       const conv = CONVERSATIONS.find(c => c.id === id);
       if (!conv) return;
+      // Load messages from server if not loaded
+      if(conv.messages.length===0&&id.startsWith('s')&&ws){
+        var sid=parseInt(id.slice(1));
+        ws.send(JSON.stringify({type:"switch_session",id:sid}));
+        ws.send(JSON.stringify({type:"get_session",id:sid}));
+      }
 
       // 标记已读
       conv.unread = 0;
