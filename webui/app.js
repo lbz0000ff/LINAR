@@ -12,8 +12,8 @@ function toggleSidebar() {
     }
 
 function handleCopyMessage(idx) {
-      const conv = CONVERSATIONS.find(function (c) { return c.id === currentConvId; });
-      if (!conv || !conv.messages[idx]) return;
+      var msgs=document.querySelectorAll('#messageArea .message .msg-content');
+      if(!msgs[idx])return;
       const text = conv.messages[idx].text;
       if (navigator.clipboard && navigator.clipboard.writeText) {
         navigator.clipboard.writeText(text).catch(function () {});
@@ -131,7 +131,6 @@ function checkLayout() {
       } catch (_) {}
 
       renderConversations();
-      selectConversation('c1');
       setConnectionStatus('online');
 
       // ----- 搜索 -----
@@ -194,19 +193,8 @@ function checkLayout() {
 
       // ----- 新建对话 -----
       document.getElementById('newChatBtn').addEventListener('click', function() {
-        if (isProcessing) return;
-        // Create unsaved local conversation (id starts with 'new_')
-        var id = 'new_' + Date.now();
-        var conv = { id: id, title: '新对话', preview: '', time: '刚刚', unread: 0, avatar: '💬', color: 'rose', pinned: false, messages: [] };
-        CONVERSATIONS.unshift(conv);
-        renderConversations();
-        selectConversation(id);
-        document.getElementById('welcomeScreen').style.display = 'none';
-        document.getElementById('messageArea').innerHTML = '';
-        document.getElementById('chatInput').focus();
+        createNewConversation();
       });
-
-      // ----- 欢迎页快捷按钮 -----
       document.querySelectorAll('.welcome-suggestions button').forEach(btn => {
         btn.addEventListener('click', function() {
           if (isProcessing) return;

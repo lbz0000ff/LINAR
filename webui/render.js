@@ -52,7 +52,7 @@ function renderConversations(filter) {
       }
 
       list.innerHTML = filtered.map(c => `
-        <div class="conv-item ${c.id === currentConvId ? 'active' : ''}" data-id="${c.id}">
+        <div class="conv-item ${c.id === currentSessionId ? 'active' : ''}" data-id="${c.id}">
           <div class="conv-avatar ${c.color}">${c.avatar}</div>
           <div class="conv-content">
             <div class="conv-top">
@@ -70,7 +70,7 @@ function renderConversations(filter) {
       // 绑定点击事件
       list.querySelectorAll('.conv-item').forEach(el => {
         el.addEventListener('click', () => {
-          selectConversation(el.dataset.id);
+          switchToSession(parseInt(el.dataset.id.slice(1)));
           // 移动端关闭侧栏
           closeSidebarMobile();
         });
@@ -79,7 +79,7 @@ function renderConversations(filter) {
 
 function selectConversation(id) {
       if (isProcessing) return;
-      currentConvId = id;
+      currentSessionId = id;
       const conv = CONVERSATIONS.find(c => c.id === id);
       if (!conv) return;
       // Load messages from server if not loaded
