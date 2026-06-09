@@ -636,7 +636,14 @@ function renderConversations(filter) {
           + '<img src="' + escHtml(m.image) + '" alt="附件图片" loading="lazy" onclick="window.open(this.src,\'_blank\')">'
           + '</div>' : '';
 
-        const textWithImages = renderInlineImages(escHtml(m.text).replace(/\n/g, '<br>'));
+        var textWithImages;
+        if(m.role==='ai'&&window.marked){
+          try{textWithImages=marked.parse(m.text||'');}catch(e){textWithImages=escHtml(m.text||'').replace(/
+/g,'<br>')}
+        }else{
+          textWithImages = renderInlineImages(escHtml(m.text||'').replace(/
+/g, '<br>'));
+        }
 
         const timeLabel = formatMsgTime(m, m.role);
         const actionsHtml = getActionHTML(m.role, idx);
