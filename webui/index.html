@@ -2980,6 +2980,7 @@ function renderConversations(filter) {
       return d.innerHTML;
     }
 
+function escapeHtml(t){var d=document.createElement("div");d.textContent=t;return d.innerHTML}
     function scrollToBottom() {
       requestAnimationFrame(() => {
         const area = document.getElementById('messageArea');
