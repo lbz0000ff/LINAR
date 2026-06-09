@@ -824,9 +824,7 @@ function renderConversations(filter) {
           // Append file paths to last user message's text
           var lastMsg=conv.messages[conv.messages.length-1];
           if(lastMsg&&lastMsg.role==='user'){
-            lastMsg.text+="
-[附件] "+filePaths.join(", ");
-          }
+            lastMsg.text+="\n[附件] "+filePaths.join(", ");
         }
         sendMessageInternal(conv);
       });
