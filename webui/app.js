@@ -638,11 +638,9 @@ function renderConversations(filter) {
 
         var textWithImages;
         if(m.role==='ai'&&window.marked){
-          try{textWithImages=marked.parse(m.text||'');}catch(e){textWithImages=escHtml(m.text||'').replace(/
-/g,'<br>')}
+          try{textWithImages=marked.parse(m.text||'');}catch(e){textWithImages=escHtml(m.text||'')}
         }else{
-          textWithImages = renderInlineImages(escHtml(m.text||'').replace(/
-/g, '<br>'));
+          textWithImages = renderInlineImages(escHtml(m.text||"\").replace(/\n/g, "<br>\"));
         }
 
         const timeLabel = formatMsgTime(m, m.role);
