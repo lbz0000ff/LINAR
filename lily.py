@@ -10,7 +10,6 @@ Usage:
 import sys
 import os
 import subprocess
-import platform
 
 _project_root = os.path.dirname(os.path.abspath(__file__))
 if _project_root not in sys.path:
@@ -57,43 +56,9 @@ def _ensure_deps() -> None:
         print(f"[lily] {label} not found, continuing anyway...")
 
 
-def _find_git_bash() -> str | None:
-    """Locate Git Bash on Windows."""
-    for base in (
-        os.environ.get("ProgramFiles", "C:\\Program Files"),
-        os.environ.get("ProgramFiles(x86)", "C:\\Program Files (x86)"),
-    ):
-        git = os.path.join(base, "Git", "bin", "bash.exe")
-        if os.path.isfile(git):
-            return git
-    for path in os.environ.get("PATH", "").split(os.pathsep):
-        candidate = os.path.join(os.path.dirname(path) if path else "", "bash.exe")
-        if os.path.isfile(candidate):
-            return candidate
-        git_exe = os.path.join(path, "git.exe")
-        if os.path.isfile(git_exe):
-            bash = os.path.join(os.path.dirname(path), "bin", "bash.exe")
-            if os.path.isfile(bash):
-                return bash
-    return None
-
-
-def _is_running_in_bash() -> bool:
-    return bool(os.environ.get("BASH")) or "bash" in (os.environ.get("SHELL", "") or "").lower()
-
-
 def _launch_tui() -> None:
     """Launch TUI with proper working directory."""
     os.chdir(_project_root)
-    if platform.system() != "Windows" or _is_running_in_bash():
-        subprocess.run([sys.executable, "-m", "agent.cli.terminal"])
-        return
-    # Windows outside Bash → try Git Bash for better terminal UX
-    bash = _find_git_bash()
-    if bash:
-        print("Launching via Git Bash…")
-        subprocess.run([bash, "--login", "-i", "-c", f'cd "{_project_root}" && python -m agent.cli.terminal'])
-        return
     subprocess.run([sys.executable, "-m", "agent.cli.terminal"])
 
 
