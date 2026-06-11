@@ -1,4 +1,5 @@
 from logger import get_logger
+import asyncio
 import concurrent.futures
 import os
 import json
@@ -107,8 +108,56 @@ def _load_mcp_config() -> dict:
     return merged
 
 
+def _ensure_playwright_browsers():
+    """Auto-install Playwright Chromium if not present — runs once per process."""
+    import shutil, subprocess
+
+    # Check: is there already a Playwright browsers folder?
+    home = os.path.expanduser("~")
+    candidates = [
+        os.path.join(home, "AppData", "Local", "ms-playwright"),
+        os.environ.get("PLAYWRIGHT_BROWSERS_PATH", ""),
+    ]
+    for d in candidates:
+        if d and os.path.isdir(d) and os.listdir(d):
+            return False  # already installed
+
+    log.info("Playwright Chromium not found — auto-installing (this may take a minute)...")
+    try:
+        result = subprocess.run(
+            ["npx", "playwright", "install", "chromium"],
+            capture_output=True, text=True, timeout=300,
+        )
+        if result.returncode == 0:
+            log.info("Playwright Chromium installed successfully")
+            return True
+        else:
+            log.warning("Playwright install failed (stderr): %s", result.stderr[:500])
+            return False
+    except (FileNotFoundError, OSError) as e:
+        log.warning("Cannot auto-install Playwright: %s", e)
+        return False
+
+
+def _start_one_mcp(name: str, scfg: dict) -> tuple[str, object, list[dict]] | None:
+    """Start a single MCP server with its own timeout — runs in a worker thread."""
+    import asyncio
+    timeout = scfg.get("start_timeout", _MCP_START_TIMEOUT)
+    server = MCPServer(name, scfg["command"], scfg.get("args", []), env=scfg.get("env"))
+    try:
+        asyncio.run(asyncio.wait_for(server.start(), timeout=timeout))
+        return name, server, server.list_tools()
+    except asyncio.TimeoutError:
+        log.warning("MCP server '%s' timed out (%ds) — stopping", name, timeout)
+        server.stop()
+        return None
+    except Exception as exc:
+        log.error("MCP server '%s' failed: %s", name, exc)
+        return None
+
+
 def _init_mcp_servers() -> dict:
-    """Start all MCP servers from config and return their tools (once)."""
+    """Start all MCP servers in parallel and return their tools (once)."""
     global _mcp_initialized, _mcp_tools_cache
     if _mcp_initialized:
         return _mcp_tools_cache
@@ -116,37 +165,45 @@ def _init_mcp_servers() -> dict:
 
     servers_cfg = _load_mcp_config()
     tools = {}
-    for name, scfg in servers_cfg.items():
-        if not scfg.get("enabled", True):
-            continue
-        try:
-            server = MCPServer(name, scfg["command"], scfg.get("args", []), env=scfg.get("env"))
-            # Start with a timeout so a slow/down server doesn't block startup
-            _pool = concurrent.futures.ThreadPoolExecutor(max_workers=1)
-            fut = _pool.submit(server.start)
+
+    enabled = {name: scfg for name, scfg in servers_cfg.items() if scfg.get("enabled", True)}
+    if not enabled:
+        _mcp_tools_cache = tools
+        return tools
+
+    # Parallel start — each server runs in its own thread with independent timeout
+    results: list[tuple[str, object, list[dict]]] = []
+
+    # Auto-bootstrap Playwright Chromium before first launch
+    if "playwright" in enabled:
+        _ensure_playwright_browsers()
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=len(enabled)) as pool:
+        fut_map = {pool.submit(_start_one_mcp, name, scfg): name
+                   for name, scfg in enabled.items()}
+        for fut in concurrent.futures.as_completed(fut_map):
+            name = fut_map[fut]
             try:
-                fut.result(timeout=scfg.get("start_timeout", _MCP_START_TIMEOUT))
-            except concurrent.futures.TimeoutError:
-                log.warning("MCP server '%s' timed out (%ds) — killing process", name, scfg.get("start_timeout", _MCP_START_TIMEOUT))
-                server._killed_on_timeout = True
-                server.stop()
-                _pool.shutdown(wait=False)
-                continue
-            finally:
-                _pool.shutdown(wait=False)
-            for t in server.list_tools():
-                full_name = f"mcp_{name}_{t['name']}"
-                tools[full_name] = MCPTool(
-                    server=server,
-                    name=full_name,
-                    original_name=t['name'],
-                    description=t["description"],
-                    input_schema=t["inputSchema"],
-                )
-            _mcp_servers.append(server)
-            log.info("MCP server '%s': registered %d tools", name, len(server.list_tools()))
-        except Exception as exc:
-            log.error("MCP server '%s' failed: %s", name, exc)
+                result = fut.result()
+                if result is not None:
+                    results.append(result)
+            except Exception as exc:
+                log.error("MCP server '%s' unhandled error: %s", name, exc)
+
+    # Collect tools from servers that started successfully
+    for name, server, tools_list in results:
+        for t in tools_list:
+            full_name = f"mcp_{name}_{t['name']}"
+            tools[full_name] = MCPTool(
+                server=server,
+                name=full_name,
+                original_name=t['name'],
+                description=t["description"],
+                input_schema=t["inputSchema"],
+            )
+        _mcp_servers.append(server)
+        log.info("MCP server '%s': registered %d tools", name, len(tools_list))
+
     _mcp_tools_cache = tools
     return tools
 
@@ -161,7 +218,10 @@ def reload_mcp_servers() -> dict:
 
     # Shut down existing — kill immediately, no graceful 5s wait
     for srv in _mcp_servers:
-        srv.kill()
+        try:
+            srv.force_kill()
+        except Exception:
+            pass
     _mcp_servers.clear()
     _mcp_tools_cache = {}
     _mcp_initialized = False
@@ -173,7 +233,10 @@ def reload_mcp_servers() -> dict:
 def shutdown_mcp_servers():
     """Stop all running MCP servers immediately."""
     for srv in _mcp_servers:
-        srv.kill()
+        try:
+            srv.force_kill()
+        except Exception:
+            pass
     _mcp_servers.clear()
 
 

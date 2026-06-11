@@ -23,6 +23,9 @@ agent/prompt/MEMORY.md
 agent/tool/mcp_tools/server/comfyui-mcp/
 demo/
 
+webui/uploads/*
+webui/design-demo
+
 # Exclude all .md in root (not subdirs) except README.md
 /*.md
 docs/
@@ -37,3 +40,18 @@ skills/*
 # Upload artifacts
 webui/uploads/
 webui/reasoning_debug*.txt
+
+# Project-local browsers (Playwright Chromium)
+.browsers/
+
+# Playwright MCP runtime data
+.playwright-mcp/
+
+# Python virtual environment
+.venv/
+
+# Dev notes
+agent/BACKEND_CHANGES.md
+
+# Old WebSocket-based web UI (being replaced by FastAPI)
+webui/

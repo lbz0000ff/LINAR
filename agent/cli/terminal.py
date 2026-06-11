@@ -16,6 +16,14 @@ import atexit
 import asyncio
 import threading
 from collections import deque
+
+# ── UTF-8 everywhere (Windows defaults to gbk) ──────────────────
+if sys.platform == "win32":
+    for _s in (sys.stdin, sys.stdout, sys.stderr):
+        try:
+            _s.reconfigure(encoding="utf-8", errors="replace")
+        except (OSError, AttributeError):
+            pass
 from prompt_toolkit.application import Application
 from prompt_toolkit.buffer import Buffer
 from prompt_toolkit.completion import Completer, Completion
@@ -46,6 +54,7 @@ if 'agent' in sys.modules and getattr(sys.modules['agent'], '__file__', None) is
 import agent
 from config import load_config
 from logger import get_logger, setup_logging
+import database
 from orchestrator import Orchestrator, Stage, stage_label
 from commands import get_handler, all_commands, register
 from commands.cmd_help import HelpCommand
@@ -214,7 +223,14 @@ class LilyTerminal:
         self._reasoning_text = ""
         self._had_tool_calls = False
         self._start_time = 0.0
-        self._usage: dict | None = None
+        self._last_usage: dict | None = None  # last single LLM call
+        self._prev_prompt_tokens: int | None = None  # for delta computing
+        self._last_prompt_delta: int | None = None   # last call's delta
+        # ── cumulative session usage (reserved for billing stats UI) ──
+        self._total_usage: dict[str, int] = {
+            "prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0,
+            "prompt_cache_hit_tokens": 0, "prompt_cache_miss_tokens": 0,
+        }
         self._header_printed = False
         self._in_reasoning = False
         self._bold_active = False
@@ -428,6 +444,13 @@ class LilyTerminal:
                 # Abort inline prompt
                 self._input_result.append("")
                 self._input_event.set()
+            elif self._confirm_visible:
+                # Cancel confirmation popup (same as Escape)
+                self._confirm_result = None
+                self._confirm_visible = False
+                if self._confirm_event:
+                    self._confirm_event.set()
+                self.app.invalidate()
             elif self._processing:
                 self.agent.interrupt()
             else:
@@ -512,7 +535,10 @@ class LilyTerminal:
             ),
         )
         # Layout
-        body = HSplit([self._output_window, input_border, input_window])
+        # Fixed stats bar (cumulative token usage + progress)
+        self._stats_control = FormattedTextControl(self._get_stats_bar_fragments)
+        stats_bar = Window(content=self._stats_control, height=Dimension.exact(1), style="")
+        body = HSplit([self._output_window, stats_bar, input_border, input_window])
         layout = Layout(
             FloatContainer(
                 content=body,
@@ -653,7 +679,7 @@ class LilyTerminal:
             self._had_tool_calls = False
             self._start_time = time.time()
             self._pending_promise_notification = ""
-            self._usage = None
+            # 不清 _last_usage：让进度条保留上一轮值，避免多轮循环间跳 0
             self._header_printed = False
             self._in_reasoning = False
             self._bold_active = False
@@ -751,7 +777,23 @@ class LilyTerminal:
                 self._output_deque.append(("", f" — {desc}"))
         # ── usage ────────────────────────────────────────
         elif etype == "usage":
-            self._usage = event.get("data")
+            data = event.get("data", {})
+            self._last_usage = data
+            # Compute prompt_tokens delta vs previous call
+            curr_pt = data.get("prompt_tokens", 0)
+            if self._prev_prompt_tokens is not None and curr_pt >= self._prev_prompt_tokens:
+                self._last_prompt_delta = curr_pt - self._prev_prompt_tokens
+            else:
+                self._last_prompt_delta = None  # first call or reset
+            if curr_pt:
+                self._prev_prompt_tokens = curr_pt
+            # Accumulate billing total
+            for k in ("prompt_tokens", "completion_tokens", "total_tokens",
+                      "prompt_cache_hit_tokens", "prompt_cache_miss_tokens"):
+                self._total_usage[k] += data.get(k, 0)
+            self._dirty_stats = True
+            if self.app:
+                self.app.invalidate()
         # ── tool_call ────────────────────────────────────
         elif etype == "tool_call":
             self._had_tool_calls = True
@@ -812,23 +854,51 @@ class LilyTerminal:
             self._output_deque.append((style, trailing))
         self._pending = saved
     # ── stats display ─────────────────────────────────────
+    _CONTEXT_WINDOW = 1_000_000  # DeepSeek V4 Flash context window
+
     def _print_stats_fragments(self) -> None:
+        u = self._last_usage or {}
+        pt = u.get("prompt_tokens", 0)
+        ct = u.get("completion_tokens", 0)
+        hit = u.get("prompt_cache_hit_tokens", 0)
+        miss = u.get("prompt_cache_miss_tokens", 0)
+        delta = self._last_prompt_delta  # None on first call
         elapsed = time.time() - self._start_time
         elapsed_str = _format_time(elapsed)
-        used = (self._usage or {}).get("total_tokens", 0)
-        used_str = _format_tokens(used)
-        max_str = _format_tokens(self._max_tokens)
-        pct = min(used / self._max_tokens * 100, 100)
-        if pct > 70:
+        dim = self._ptk("stats_dim") or "fg:grey62"
+        green = self._ptk("stats_good") or "fg:green bold"
+        self._output_deque.append((dim, f"\n  ⏱ {elapsed_str}  │  "))
+        # Show delta (first call = baseline prompt, subsequent = growth)
+        if delta is not None:
+            self._output_deque.append((green, f"input: +{_format_tokens(delta)}  output: {_format_tokens(ct)}"))
+        else:
+            self._output_deque.append((green, f"input: {_format_tokens(pt)}  output: {_format_tokens(ct)}"))
+        if hit or miss:
+            pct = hit / (hit + miss) * 100 if (hit + miss) > 0 else 0
+            hit_str = _format_tokens(hit)
+            miss_str = _format_tokens(miss)
+            self._output_deque.append((dim, f"  (cache hit: {hit_str} / miss: {miss_str}, {pct:.0f}%)"))
+
+    def _get_stats_bar_fragments(self) -> list[tuple[str, str]]:
+        """Return fragments for the fixed stats bar above the input area.
+        Shows: current context usage / model context window (progress bar).
+        """
+        ctx = self._last_usage.get("prompt_tokens", 0) if self._last_usage else 0
+        pct = min(ctx / self._CONTEXT_WINDOW * 100, 100)
+        if pct > 90:
             color = self._ptk("stats_bad") or "fg:red"
-        elif pct > 50:
+        elif pct > 70:
             color = self._ptk("stats_warn") or "fg:yellow bold"
         else:
             color = self._ptk("stats_good") or "fg:green bold"
-        bar = _progress_bar(used, self._max_tokens)
         dim = self._ptk("stats_dim") or "fg:grey62"
-        self._output_deque.append((dim, f"\n  ⏱ {elapsed_str}  │  "))
-        self._output_deque.append((color, f"Tokens: {used_str} / {max_str}  {bar}"))
+        used_str = _format_tokens(ctx)
+        max_str = _format_tokens(self._CONTEXT_WINDOW)
+        bar = _progress_bar(ctx, self._CONTEXT_WINDOW)
+        return [
+            (dim, " Context: "),
+            (color, f"{used_str} / {max_str}  {bar}"),
+        ]
     # ── chat history display ──────────────────────────────
     def _print_history(self) -> None:
         """Print conversation history to the capture console."""
@@ -944,6 +1014,13 @@ class LilyTerminal:
                 if self.agent.switch_session(sid):
                     ns = self.s("new_session")
                     self.console.print(f"\n  [{ns}]Switched to session #{sid}[/{ns}]")
+                    # Restore previous prompt_tokens so delta + context bar work
+                    last_pt = database.get_last_prompt_tokens(sid)
+                    if last_pt is not None:
+                        self._prev_prompt_tokens = last_pt
+                        self._last_usage = {"prompt_tokens": last_pt}
+                    else:
+                        self._prev_prompt_tokens = None
                 else:
                     e = self.s("error")
                     self.console.print(f"\n  [{e}]Session #{sid} not found[/{e}]")
@@ -1035,12 +1112,12 @@ class LilyTerminal:
                         args = text[len(cmd_name) + 1:].strip() if " " in text else ""
                         skill = get_skill(cmd_name)
                         if skill:
-                            self.orchestrator.run_skill(skill, args)
+                            asyncio.run(self.orchestrator.run_skill(skill, args))
                             continue
                     # Normal text — save as current/btw context, process through orchestrator
                     self._current_input = text
                     self._btw_context = text
-                    self.orchestrator.start(text)
+                    asyncio.run(self.orchestrator.start(text))
             except Exception as exc:
                 log.exception("Unhandled error during processing")
                 err = self._ptk("error") or "fg:red"
@@ -1119,7 +1196,10 @@ class LilyTerminal:
             return True
         old = self._input_buf.accept_handler
         self._input_buf.accept_handler = _handler
-        ev.wait(timeout=120)
+        while not ev.is_set():
+            if self.agent is not None and self.agent.stop_event.is_set():
+                break
+            ev.wait(timeout=0.2)
         self._input_buf.accept_handler = old
         self._input_event = None
         return self._input_result[0] if self._input_result else ""
@@ -1141,20 +1221,42 @@ class LilyTerminal:
         result.append(("fg:ansigray", "\n  ↑↓ Navigate  •  Enter Confirm  •  Esc Cancel"))
         return result
     def _show_confirm_dialog(self, title: str, prompt: str, options: list[tuple[str, str]]) -> str | None:
-        """Show a popup with arrow-key navigation, return selected value or None on cancel."""
-        ev = threading.Event()
-        self._confirm_visible = True
-        self._confirm_title = title
-        self._confirm_prompt = prompt
-        self._confirm_event = ev
-        self._confirm_result = None
-        self._confirm_radiobox.values = options
-        self._confirm_radiobox.current_value = options[0][0] if options else ""
-        self._confirm_cursor = 0
-        self.app.invalidate()
-        ev.wait(timeout=120)
-        self._confirm_visible = False
-        return self._confirm_result
+        """Show a popup with arrow-key navigation, return selected value or None on cancel.
+
+        Polls in a loop instead of a single long ``ev.wait()`` so the
+        dialog also aborts when ``agent.stop_event`` is set (e.g. the
+        tool was interrupted by /stop or a second user message).
+        Otherwise the popup thread stays orphaned, the dialog never
+        disappears, and the user sees a stuck UI.
+        """
+        while True:
+            ev = threading.Event()
+            self._confirm_visible = True
+            self._confirm_title = title
+            self._confirm_prompt = prompt
+            self._confirm_event = ev
+            self._confirm_result = None
+            self._confirm_radiobox.values = options
+            self._confirm_radiobox.current_value = options[0][0] if options else ""
+            self._confirm_cursor = 0
+            self.app.invalidate()
+
+            # Short-interval poll so we can detect agent.stop_event
+            # and unhang the popup thread when the tool is interrupted.
+            while not ev.is_set():
+                if self.agent is not None and self.agent.stop_event.is_set():
+                    self._confirm_result = None
+                    self._confirm_visible = False
+                    return None
+                ev.wait(timeout=0.2)
+
+            # ev was set by user interaction (Enter / Escape / Ctrl+C-on-popup)
+            if self._confirm_result is not None:
+                self._confirm_visible = False
+                return self._confirm_result
+            # Spurious wakeup (e.g. stray event from a previous interaction) —
+            # loop back and wait again with a fresh Event.
+            self._confirm_visible = False
     def _prompt_user(self, prompt: str, password: bool = False, choices: list | None = None) -> str:
         """Show a prompt with popup for choices, or fallback to text input."""
         if choices:
@@ -1213,7 +1315,18 @@ class LilyTerminal:
                 await asyncio.sleep(0.05)
         async def _main():
             asyncio.ensure_future(_flush_loop())
-            await self.app.run_async()
+            try:
+                await self.app.run_async()
+            finally:
+                # Shut down MCP servers while the event loop is still
+                # alive so asyncio subprocess transports get properly
+                # cleaned up (avoids "Event loop is closed" warnings
+                # on Windows during interpreter shutdown).
+                try:
+                    from tool_registry import shutdown_mcp_servers
+                    shutdown_mcp_servers()
+                except Exception:
+                    pass
         asyncio.run(_main())
         log.info("Lily shutdown")
         goodbye = self._ptk("goodbye") or "fg:red"
@@ -1226,10 +1339,13 @@ class LilyTerminal:
             shutdown_mcp_servers()
         except Exception:
             pass
-        # Clean up .temp directory
+        # Clean up per-instance .temp/{pid} directory
         try:
             import shutil
-            temp_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), ".temp")
+            temp_dir = os.path.join(
+                os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                ".temp", str(os.getpid()),
+            )
             if os.path.isdir(temp_dir):
                 shutil.rmtree(temp_dir, ignore_errors=True)
         except Exception:
@@ -1239,18 +1355,29 @@ def main() -> None:
     from tool_registry import get_tools
     from config import load_config
     _cfg = load_config()
+    _pid = os.getpid()
     log_cfg = _cfg.get("logging", {})
+    # Per-instance log file so multiple terminals don't interleave
+    _log_base = log_cfg.get("file") or os.path.join(
+        os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "..", "logs", "lily.log",
+    )
+    _log_root, _log_ext = os.path.splitext(_log_base)
+    log_file = f"{_log_root}-{_pid}{_log_ext}"
     setup_logging(
         level=log_cfg.get("level", "INFO"),
-        log_file=log_cfg.get("file"),
+        log_file=log_file,
         max_bytes=log_cfg.get("max_bytes", 10 * 1024 * 1024),
         backup_count=log_cfg.get("backup_count", 7),
         console=log_cfg.get("console", True),
     )
-    log.info("Lily v%s starting", _cfg.get("version", "?"))
+    log.info("Lily v%s starting (pid=%s)", _cfg.get("version", "?"), _pid)
     log.debug("Config: %s", _cfg)
-    # Register .temp cleanup on exit / crash
-    _temp_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), ".temp")
+    # Per-instance .temp directory so multiple terminals don't fight
+    _temp_root = os.path.join(
+        os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+        ".temp",
+    )
+    _temp_dir = os.path.join(_temp_root, str(_pid))
     def _clean_temp():
         import shutil
         if os.path.isdir(_temp_dir):

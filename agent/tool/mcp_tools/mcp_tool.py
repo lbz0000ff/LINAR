@@ -16,5 +16,5 @@ class MCPTool(Tool):
         self._server = server
         self._original_name = original_name
 
-    def execute(self, **kwargs):
-        return self._server.call_tool(self._original_name, kwargs)
+    async def execute(self, **kwargs):
+        return await self._server.call_tool(self._original_name, kwargs)

@@ -1,20 +1,20 @@
 """DAG executor — walk a DAGPlan wave by wave, executing ready nodes in parallel.
 
-A wave is a set of nodes whose dependencies are all satisfied and that
-can therefore execute concurrently (in a true multi-agent system).
-
 Usage::
 
     executor = DAGExecutor(dag, runner=my_runner)
     results = executor.execute_all()
     # results -> {"discover_files": "found 12 files", ...}
-    # executor.execution_log -> [{"wave": 0, "node_id": "...", "action": "start"}, ...]
+
+    # Async version:
+    results = await executor.execute_all_async(async_runner)
 """
 
 from __future__ import annotations
 
+import asyncio
 import threading
-from concurrent.futures import ThreadPoolExecutor, wait, as_completed
+from concurrent.futures import ThreadPoolExecutor, wait
 
 from plan import DAGNode, DAGNodeStatus, DAGPlan
 
@@ -80,12 +80,74 @@ class DAGExecutor:
             wave_results = self._execute_wave()
             results.update(wave_results)
 
-        # ── mark remaining PENDING nodes as FAILED so get_blocked works ──
         if self.interrupted:
             for node in self.dag.nodes.values():
                 if node.status == DAGNodeStatus.PENDING:
                     node.status = DAGNodeStatus.FAILED
                     node.result = "[INTERRUPTED]"
+        return results
+
+    async def execute_all_async(self, async_runner) -> dict[str, str]:
+        """Async version — runs each wave with ``asyncio.gather``."""
+        results: dict[str, str] = {}
+        while not self.dag.is_complete:
+            if self.interrupt_check and self.interrupt_check():
+                self.interrupted = True
+                break
+            if not self.dag.get_ready():
+                if not self.dag.get_blocked():
+                    break
+            wave_results = await self._execute_wave_async(async_runner)
+            results.update(wave_results)
+        if self.interrupted:
+            for node in self.dag.nodes.values():
+                if node.status == DAGNodeStatus.PENDING:
+                    node.status = DAGNodeStatus.FAILED
+                    node.result = "[INTERRUPTED]"
+        return results
+
+    async def _execute_wave_async(self, async_runner) -> dict[str, str]:
+        ready = self.dag.get_ready()
+        if not ready:
+            if self.dag.is_complete:
+                return {}
+            blocked = self.dag.get_blocked()
+            if blocked:
+                return self._mark_blocked(blocked)
+            failed = [n.id for n in self.dag.nodes.values()
+                      if n.status == DAGNodeStatus.FAILED]
+            raise RuntimeError(
+                f"DAG stuck: no ready/blocked, {len(failed)} failed"
+            )
+
+        wave = self._next_wave_num()
+        results: dict[str, str] = {}
+
+        async def _run(node: DAGNode) -> None:
+            node.status = DAGNodeStatus.IN_PROGRESS
+            self.execution_log.append({
+                "wave": wave, "node_id": node.id,
+                "action": "start", "description": node.description,
+            })
+            try:
+                result = await async_runner(node.id, node.description)
+                node.status = DAGNodeStatus.COMPLETED
+                node.result = str(result)
+                self.execution_log.append({
+                    "wave": wave, "node_id": node.id, "action": "complete",
+                })
+                results[node.id] = str(result)
+            except Exception as exc:
+                node.status = DAGNodeStatus.FAILED
+                node.result = str(exc)
+                self.execution_log.append({
+                    "wave": wave, "node_id": node.id,
+                    "action": "failed", "error": str(exc),
+                })
+                results[node.id] = str(exc)
+
+        tasks = [_run(node) for node in ready]
+        await asyncio.gather(*tasks)
         return results
 
     # ── internal ────────────────────────────────────────────

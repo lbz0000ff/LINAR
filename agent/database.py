@@ -91,6 +91,12 @@ def init_db():
     except sqlite3.OperationalError:
         pass  # already exists
 
+    # ── migration: add prompt_tokens column if missing ──
+    try:
+        conn.execute("ALTER TABLE messages ADD COLUMN prompt_tokens INTEGER DEFAULT NULL")
+    except sqlite3.OperationalError:
+        pass  # already exists
+
     log.info("Database initialized at %s", _DB_PATH)
 
 
@@ -142,11 +148,11 @@ def update_session_marker(session_id: int, marker: str):
 # Messages
 # ---------------------------------------------------------------------------
 
-def save_message(session_id: int, role: str, content: str, tool_name: str = "", conversation_round: int = 0, reasoning: str = "", tool_call_id: str = "", tool_calls: str = ""):
+def save_message(session_id: int, role: str, content: str, tool_name: str = "", conversation_round: int = 0, reasoning: str = "", tool_call_id: str = "", tool_calls: str = "", prompt_tokens: int | None = None):
     conn = _get_connection()
     conn.execute(
-        "INSERT INTO messages (session_id, role, content, tool_name, conversation_round, reasoning, tool_call_id, tool_calls) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-        (session_id, role, content, tool_name or None, conversation_round, reasoning or None, tool_call_id or None, tool_calls or None),
+        "INSERT INTO messages (session_id, role, content, tool_name, conversation_round, reasoning, tool_call_id, tool_calls, prompt_tokens) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        (session_id, role, content, tool_name or None, conversation_round, reasoning or None, tool_call_id or None, tool_calls or None, prompt_tokens),
     )
     conn.commit()
     log.debug("Saved %s message to session #%s (round=%s)", role, session_id, conversation_round)
@@ -160,10 +166,20 @@ def get_session_messages(session_id: int):
     """Return all messages for a session, oldest first."""
     conn = _get_connection()
     rows = conn.execute(
-        "SELECT id, role, content, tool_name, conversation_round, created_at, reasoning, tool_call_id, tool_calls FROM messages WHERE session_id = ? ORDER BY id",
+        "SELECT id, role, content, tool_name, conversation_round, created_at, reasoning, tool_call_id, tool_calls, prompt_tokens FROM messages WHERE session_id = ? ORDER BY id",
         (session_id,),
     ).fetchall()
     return [dict(r) for r in rows]
+
+
+def get_last_prompt_tokens(session_id: int) -> int | None:
+    """Return the last saved prompt_tokens for a session, or None."""
+    conn = _get_connection()
+    row = conn.execute(
+        "SELECT prompt_tokens FROM messages WHERE session_id = ? AND prompt_tokens IS NOT NULL ORDER BY id DESC LIMIT 1",
+        (session_id,),
+    ).fetchone()
+    return row["prompt_tokens"] if row else None
 
 
 def get_session_by_marker(marker: str):

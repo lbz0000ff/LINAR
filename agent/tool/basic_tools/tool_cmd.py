@@ -188,6 +188,7 @@ def _check_sudo_nopasswd() -> bool:
                 ["sudo", "-n", "true"],
                 capture_output=True,
                 timeout=10,
+                text=True,
             )
             _SUDO_NOPASSWD_CACHE = result.returncode == 0
         except (FileNotFoundError, OSError, subprocess.TimeoutExpired):

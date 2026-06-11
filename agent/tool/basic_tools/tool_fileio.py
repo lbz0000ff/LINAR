@@ -688,7 +688,7 @@ class Tool_SearchFiles(Tool):
     def _search_content(self, pattern, abs_dir, file_glob, max_results):
         for p in ["rg", "rg.exe"]:
             try:
-                subprocess.run([p, "--version"], capture_output=True, timeout=5)
+                subprocess.run([p, "--version"], capture_output=True, timeout=5, text=True)
                 return self._search_with_rg(p, pattern, abs_dir, file_glob, max_results)
             except (FileNotFoundError, OSError, subprocess.TimeoutExpired):
                 continue
@@ -718,14 +718,15 @@ class Tool_SearchFiles(Tool):
         cmd.extend([pattern, abs_dir])
 
         try:
-            result = subprocess.run(cmd, capture_output=True, timeout=30)
+            result = subprocess.run(cmd, capture_output=True, timeout=30,
+                                    text=True, encoding="utf-8", errors="replace")
         except subprocess.TimeoutExpired:
             return {"error": "Search timed out (30s). Try a narrower pattern or path."}
         except OSError as e:
             return {"error": f"Search failed: {e}"}
 
         matches = []
-        for line in self._decode_output(result).splitlines():
+        for line in result.stdout.splitlines():
             parts = line.split(":", 2)
             if len(parts) >= 3:
                 matches.append({"path": parts[0], "line": int(parts[1]), "content": parts[2]})

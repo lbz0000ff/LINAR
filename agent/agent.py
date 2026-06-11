@@ -1,10 +1,10 @@
-import sys
+import asyncio
 import json
 import os
-import time
 import re
 import subprocess
-import threading
+import sys
+
 from llm import LLM
 from config import load_config
 from logger import get_logger
@@ -14,28 +14,26 @@ from skill import get_skill
 
 log = get_logger(__name__)
 
+
 def _detect_shell() -> str:
-    """Detect the effective shell used for cmd_execute on this platform."""
-    import os, platform, shutil
+    import platform, shutil
     if platform.system() != "Windows":
         return "sh -c"
-    # 1) Git Bash — best Unix compatibility
     git_path = shutil.which("git")
     if git_path:
         git_dir = os.path.dirname(os.path.dirname(git_path))
         bash = os.path.join(git_dir, "bin", "bash.exe")
         if os.path.isfile(bash):
             return f"Git Bash ({bash} -c)"
-    # 2) PowerShell
     for exe in ("pwsh.exe", "powershell.exe"):
         if shutil.which(exe):
             return f"{exe} -Command"
-    # 3) cmd fallback
     return "cmd /c"
+
+
 class Agent:
     def __init__(self, tools: dict = None):
         cfg = load_config()
-        # ── read config ──
         self.cfg = cfg
         api_key = cfg["llm"]["api_key"]
         base_url = cfg["llm"].get("base_url", "https://api.deepseek.com/v1")
@@ -43,44 +41,34 @@ class Agent:
         system_prompt = self._build_prompt(cfg)
         self.llm = LLM(api_key, system_prompt, tools, base_url=base_url, model=model)
         self.tools = tools
-        self._skill_active = False  # set by Skill.on_load()
-        self._active_skill = None    # Skill instance reference, for hook lookup
+        self._skill_active = False
+        self._active_skill = None
         self.permissions = PermissionManager(cfg.get("permissions", {}))
         self.permissions.load_modes(cfg.get("permission_modes", {}))
-        self._confirm_callback = None  # set by terminal to prompt user
+        self._confirm_callback = None
         self.chat_history: list[dict] = []
-        # ── database (archive chat history) ──
         db.init_db()
         self.session_id = None
-        # ── conversation turn counter ──
         self._conversation_round = 0
-        # ── consecutive tool failure tracker ──
         self._tool_failures: dict[str, int] = {}
-        # ── reasoning-only turn retry guard ──
         self._reasoning_only_retries = 0
-        # ── repeated command tracker ──
         self._cmd_history: list[str] = []
-        # ── interrupt / btw ──
-        self._interrupt_requested = False
-        self.stop_event = threading.Event()
+        self.stop_event = asyncio.Event()
+        self._last_prompt_tokens = 0
         self._btw_queue: list[str] = []
-        # Propagate stop_event to tools that support it (e.g. web_search)
         if self.tools:
             for t in self.tools.values():
                 if hasattr(t, 'stop_event'):
                     t.stop_event = self.stop_event
-        # ── active task plan (set by orchestrator) ──
         self.current_plan = None
-        # ── promise mechanism (async result delivery) ──
-        self._promises: dict[str, dict] = {}       # promise_id → {status, result, ...}
-        self._promise_callbacks: dict[str, callable] = {}  # promise_id → resolve callback
-        self._resolved_since_last_build: set[str] = set()  # injected into _build_llm_messages
-        # ── wire up agent_ref on tools that need it ──
+        # promise mechanism (temporarily disabled)
+        self._promises: dict[str, dict] = {}
+        self._promise_callbacks: dict[str, callable] = {}
+        self._resolved_since_last_build: set[str] = set()
         if self.tools:
             for t in self.tools.values():
                 if hasattr(t, 'agent_ref'):
                     t.agent_ref = self
-        # ── config values ──
         self.max_llm_calls = cfg.get("max_llm_calls", 5)
         self.chat_cfg = cfg.get("chat_history", {})
         log.info("Agent initialized (model=%s, max_llm_calls=%s)", self.llm.model, self.max_llm_calls)
@@ -212,9 +200,11 @@ class Agent:
                 if msg.get("tool_calls") and not content:
                     content = None
                 entry: dict = {"role": "assistant", "content": content}
-                if msg.get("reasoning"):
-                    # DeepSeek thinking mode requires reasoning_content to be
-                    # passed back in assistant messages on subsequent requests.
+                # DeepSeek reasoning_content: only carry forward when tools were
+                # called (multi-step tool tasks need the reasoning chain);
+                # omit for chat-only rounds — stale reasoning adds noise and
+                # inflates apparent temperature via self-imitation.
+                if msg.get("reasoning") and msg.get("tool_calls"):
                     entry["reasoning_content"] = msg["reasoning"]
                 if msg.get("tool_calls"):
                     entry["tool_calls"] = msg["tool_calls"]
@@ -417,13 +407,7 @@ class Agent:
             f"---\n"
             f"Use read_file(\"{rel_path}\") to read the full content."
         )
-    def _check_permission(self, tool_name: str, arguments: dict | str) -> str | None:
-        """Check permission for a tool call.
-        *arguments* is the tool arguments dict (or a JSON string — some
-        providers send it serialised).  Returns ``None`` if allowed, or
-        an error ``str`` if denied / rejected.
-        """
-        # Normalise: JSON string → dict
+    async def _check_permission(self, tool_name: str, arguments: dict | str) -> str | None:
         if isinstance(arguments, str):
             try:
                 arguments = json.loads(arguments)
@@ -435,8 +419,15 @@ class Agent:
                 f"[PERMISSION_DENIED] Tool '{tool_name}' is restricted by "
                 f"permission settings. Do NOT retry — it will fail again."
             )
+        # ask_user is an interactive tool that already asks the user;
+        # requiring a separate permission prompt would double the popups.
+        if tool_name == "ask_user":
+            return None
         if level == "ask" and self._confirm_callback:
-            result = self._confirm_callback(tool_name, arguments)
+            if asyncio.iscoroutinefunction(self._confirm_callback):
+                result = await self._confirm_callback(tool_name, arguments)
+            else:
+                result = self._confirm_callback(tool_name, arguments)
             if result is True:
                 return None
             if result == "always":
@@ -448,21 +439,13 @@ class Agent:
                     f"[REJECTED_BY_USER] Tool '{tool_name}' was blocked — "
                     f"the user chose to never allow it. Do NOT retry."
                 )
-            # False / None / anything else → rejected
             return (
                 f"[REJECTED_BY_USER] Tool '{tool_name}' was not approved by the "
                 f"user. Try a different approach or ask the user."
             )
-        # allow, or ask without a callback → just execute
         return None
     # ── lifecycle hooks ──────────────────────────────────────────
-    def _run_hook(self, event: str, context: dict) -> str | None:
-        """Execute a lifecycle hook script for the active skill.
-        *event* is one of "PreToolUse", "PostToolUse", etc.
-        *context* is a dict of env vars to pass to the script.
-        Returns the script's stdout (for PreToolUse, non-empty output
-        may block the tool), or None if no hook is configured.
-        """
+    async def _run_hook(self, event: str, context: dict) -> str | None:
         if not self._active_skill or not self._active_skill.hooks:
             return None
         script = self._active_skill.hooks.get(event)
@@ -474,7 +457,6 @@ class Agent:
         if not os.path.isfile(script):
             log.warning("Hook script not found: %s", script)
             return None
-        # Pick the right interpreter based on extension
         ext = os.path.splitext(script)[1].lower()
         try:
             if ext == ".ps1":
@@ -486,8 +468,9 @@ class Agent:
             else:
                 cmd = [script]
             env = {**context, "CLAUDE_SKILL_DIR": skill_dir, "CLAUDE_HOOK_EVENT": event}
-            result = subprocess.run(
-                cmd, capture_output=True, text=True, timeout=30,
+            result = await asyncio.to_thread(
+                subprocess.run, cmd,
+                capture_output=True, text=True, timeout=30,
                 env={**os.environ, **env},
             )
             if result.returncode != 0:
@@ -654,8 +637,6 @@ class Agent:
         log.info("Session reset")
     # ── interrupt ──────────────────────────────────────────
     def interrupt(self):
-        """Request the agent to stop after the current tool call."""
-        self._interrupt_requested = True
         self.stop_event.set()
     # ── btw ────────────────────────────────────────────────
     def btw(self, msg: str):
@@ -712,25 +693,19 @@ class Agent:
         """Query promise status. Returns {status, result, meta} or None if unknown."""
         return self._promises.get(promise_id)
     def emit(self, event: dict):
-        """Write a JSON event to stdout."""
         print(json.dumps(event, ensure_ascii=False), flush=True)
-    def process_with_llm(self):
-        """Run the LLM (streaming), handle tool calls, emit events.
-        Loops until the agent produces a final answer (no tool calls).
-        max_llm_calls=0 means unlimited; otherwise caps the number of LLM rounds.
-        """
-        # ── reset interrupt state from any previous interrupted call ──
-        self._interrupt_requested = False
-        self.stop_event.clear()
+
+    async def process_with_llm(self):
+        # Fresh Event bound to this event loop (Python 3.10's
+        # _LoopBoundMixin raises "bound to a different event loop"
+        # when the same Event is awaited across asyncio.run() calls).
+        self.stop_event = asyncio.Event()
         self._interrupted = False
-        # ── re-read prompt files so memory writes take effect immediately ──
         if not self._skill_active:
             self.llm.system_prompt = self._build_prompt(self.cfg)
         llm_call = 0
         while True:
-            # ── interrupt check before starting a new LLM round ──
-            if self._interrupt_requested or self.stop_event.is_set():
-                self._interrupt_requested = False
+            if self.stop_event.is_set():
                 self._interrupted = True
                 self.chat_history.append({
                     'role': 'meta',
@@ -747,18 +722,21 @@ class Agent:
             text_parts = []
             reasoning_parts = []
             tool_call_deltas = {}
-            for chunk in stream:
-                # ── check interrupt mid-stream ──
-                if self._interrupt_requested:
+            async for chunk in stream:
+                if self.stop_event.is_set():
                     break
-                # ── usage info ──
                 if hasattr(chunk, "usage") and chunk.usage:
+                    u = chunk.usage
+                    extra = getattr(u, "model_extra", None) or {}
+                    self._last_prompt_tokens = u.prompt_tokens or 0
                     self.emit({
                         "type": "usage",
                         "data": {
-                            "prompt_tokens": chunk.usage.prompt_tokens or 0,
-                            "completion_tokens": chunk.usage.completion_tokens or 0,
-                            "total_tokens": chunk.usage.total_tokens or 0,
+                            "prompt_tokens": u.prompt_tokens or 0,
+                            "completion_tokens": u.completion_tokens or 0,
+                            "total_tokens": u.total_tokens or 0,
+                            "prompt_cache_hit_tokens": extra.get("prompt_cache_hit_tokens", 0),
+                            "prompt_cache_miss_tokens": extra.get("prompt_cache_miss_tokens", 0),
                         },
                     })
                 if not chunk.choices:
@@ -767,20 +745,14 @@ class Agent:
                 if delta.content:
                     text_parts.append(delta.content)
                     self.emit({"type": "token", "data": delta.content})
-                # ── reasoning / thinking content ──
                 if hasattr(delta, "reasoning_content") and delta.reasoning_content:
                     reasoning_parts.append(delta.reasoning_content)
-                    self.emit({
-                        "type": "reasoning_token",
-                        "data": delta.reasoning_content,
-                    })
+                    self.emit({"type": "reasoning_token", "data": delta.reasoning_content})
                 if delta.tool_calls:
                     for tc in delta.tool_calls:
                         idx = tc.index
                         if idx not in tool_call_deltas:
-                            tool_call_deltas[idx] = {
-                                "id": "", "name": "", "arguments": ""
-                            }
+                            tool_call_deltas[idx] = {"id": "", "name": "", "arguments": ""}
                         if tc.id:
                             tool_call_deltas[idx]["id"] = tc.id
                         if tc.function:
@@ -788,8 +760,7 @@ class Agent:
                                 tool_call_deltas[idx]["name"] = tc.function.name
                             if tc.function.arguments:
                                 tool_call_deltas[idx]["arguments"] += tc.function.arguments
-            # ── If interrupted mid-stream, discard partial response ──
-            if self._interrupt_requested:
+            if self.stop_event.is_set():
                 self._interrupted = True
                 self.chat_history.append({
                     "role": "meta",
@@ -800,49 +771,35 @@ class Agent:
             self.emit({"type": "done"})
             text = "".join(text_parts)
             reasoning = "".join(reasoning_parts)
-            # Collect complete tool calls from deltas
             tool_calls = []
             for idx in sorted(tool_call_deltas.keys()):
                 tc = tool_call_deltas[idx]
                 if tc["name"]:
                     tool_calls.append(tc)
-                    self.emit({
-                        "type": "tool_call",
-                        "name": tc["name"],
-                        "arguments": tc["arguments"],
-                    })
-            # Save assistant entry (with tool_calls if any, for structured messages)
+                    self.emit({"type": "tool_call", "name": tc["name"], "arguments": tc["arguments"]})
             if text or reasoning or tool_calls:
-                entry: dict = {
+                entry = {
                     "role": "agent", "content": text, "round": self._conversation_round,
                 }
                 if reasoning:
                     entry["reasoning"] = reasoning
                 if tool_calls:
                     entry["tool_calls"] = [
-                        {
-                            "id": tc["id"],
-                            "type": "function",
-                            "function": {
-                                "name": tc["name"],
-                                "arguments": tc["arguments"],
-                            },
-                        }
+                        {"id": tc["id"], "type": "function",
+                         "function": {"name": tc["name"], "arguments": tc["arguments"]}}
                         for tc in tool_calls
                     ]
                 self.chat_history.append(entry)
-                db.save_message(self.session_id, "agent", text, conversation_round=self._conversation_round,
-                                reasoning=reasoning,
-                                tool_calls=json.dumps([{
-                                    "id": tc["id"], "type": "function",
-                                    "function": {"name": tc["name"], "arguments": tc["arguments"]},
-                                } for tc in tool_calls], ensure_ascii=False) if tool_calls else "")
-            # No tool calls → this turn is the final answer
+                await asyncio.to_thread(
+                    db.save_message, self.session_id, "agent", text,
+                    conversation_round=self._conversation_round, reasoning=reasoning,
+                    tool_calls=json.dumps([{
+                        "id": tc["id"], "type": "function",
+                        "function": {"name": tc["name"], "arguments": tc["arguments"]},
+                    } for tc in tool_calls], ensure_ascii=False) if tool_calls else "",
+                    prompt_tokens=self._last_prompt_tokens or 0,
+                )
             if not tool_calls:
-                # Safety net: if reasoning described tool calls but never
-                # invoked them (common with DeepSeek), nudge the model
-                # instead of stopping silently.  Limit to 1 retry to
-                # avoid infinite loops.
                 if reasoning and not text and self._reasoning_only_retries < 1:
                     self._reasoning_only_retries += 1
                     self.chat_history.append({
@@ -857,35 +814,23 @@ class Agent:
                     log.info("Reasoning-only turn — giving model another chance")
                     continue
                 break
-            # Execute each tool and add results to history
             self._interrupted = False
             for tc in tool_calls:
-                log.info(
-                    "[session=%s conversation_round=%s] Tool call: %s",
-                    self.session_id, self._conversation_round, tc["name"],
-                )
-                # ── interrupt check before each tool ──
-                if self.stop_event.is_set() or self._interrupt_requested:
-                    self._interrupt_requested = False
+                log.info("[session=%s round=%s] Tool: %s", self.session_id, self._conversation_round, tc["name"])
+                if self.stop_event.is_set():
                     self._interrupted = True
                     self.chat_history.append({
                         'role': 'meta',
-                        'content': (
-                            '[SYSTEM] User interrupted the task. '
-                            'Stop and report what was done so far.'
-                        ),
+                        'content': '[SYSTEM] User interrupted. Stop and report.',
                         'round': self._conversation_round,
                     })
                     break
-                # ── permission check ──
-                result_str = self._check_permission(tc["name"], tc["arguments"])
+                result_str = await self._check_permission(tc["name"], tc["arguments"])
                 _tool_failed = False
                 if result_str is None:
-                    # permitted — execute normally
                     raw_args = tc["arguments"]
                     args_dict = json.loads(raw_args) if isinstance(raw_args, str) else raw_args
-                    # ── PreToolUse hook ──
-                    hook_result = self._run_hook("PreToolUse", {
+                    hook_result = await self._run_hook("PreToolUse", {
                         "CLAUDE_TOOL_NAME": tc["name"],
                         "CLAUDE_TOOL_ARGUMENTS": tc["arguments"],
                     })
@@ -893,41 +838,51 @@ class Agent:
                         try:
                             hook_data = json.loads(hook_result)
                             if hook_data.get("block"):
-                                reason = hook_data.get("reason", "PreToolUse hook blocked this call")
-                                result_str = f"[BLOCKED_BY_HOOK] {reason}"
+                                result_str = f"[BLOCKED_BY_HOOK] {hook_data.get('reason', 'blocked')}"
                         except json.JSONDecodeError:
                             pass
                     if result_str is None:
-                        # ── auto-load skill if a _script tool is missing ──
                         tool_obj = self.tools.get(tc["name"])
                         if tool_obj is None:
                             _m = re.match(r"^(.+)_script$", tc["name"])
                             if _m:
                                 _skill = get_skill(_m.group(1))
                                 if _skill:
-                                    log.info("Auto-loading skill '%s' for tool '%s'",
-                                              _m.group(1), tc["name"])
+                                    log.info("Auto-loading skill '%s' for tool '%s'", _m.group(1), tc["name"])
                                     _skill.on_load(self)
                                     tool_obj = self.tools.get(tc["name"])
                         try:
                             if tool_obj is None:
                                 raise KeyError(tc["name"])
-                            # ── run tool with interrupt support ──
-                            import concurrent.futures
-                            _exec = concurrent.futures.ThreadPoolExecutor(max_workers=1)
-                            _fut = _exec.submit(tool_obj.execute, **args_dict)
-                            while not _fut.done():
-                                if self.stop_event.wait(timeout=0.5):
-                                    _exec.shutdown(wait=False)
-                                    raise InterruptedError("User interrupted")
-                            result = _fut.result()
-                            # MCP tools return JSON strings — parse if needed
+                            # Ensure stop_event is clear before each tool
+                            # execution.  The event is recreated at the top
+                            # of process_with_llm so this is defensive.
+                            self.stop_event.clear()
+                            # Some tools (e.g. MCPTool) expose an async
+                            # execute() — handle both sync and async.
+                            if asyncio.iscoroutinefunction(tool_obj.execute):
+                                execute_task = asyncio.create_task(
+                                    tool_obj.execute(**args_dict)
+                                )
+                            else:
+                                execute_task = asyncio.create_task(
+                                    asyncio.to_thread(tool_obj.execute, **args_dict)
+                                )
+                            interrupt_task = asyncio.create_task(self.stop_event.wait())
+                            done, pending = await asyncio.wait(
+                                [execute_task, interrupt_task],
+                                return_when=asyncio.FIRST_COMPLETED,
+                            )
+                            for task in pending:
+                                task.cancel()
+                            if interrupt_task in done:
+                                raise InterruptedError("User interrupted")
+                            result = execute_task.result()
                             if isinstance(result, str) and result.strip().startswith('{'):
                                 try:
                                     result = json.loads(result)
                                 except (json.JSONDecodeError, UnicodeDecodeError):
                                     pass
-                            # detect failures in structured tool results
                             if isinstance(result, dict):
                                 if result.get("error"):
                                     _tool_failed = True
@@ -945,14 +900,14 @@ class Agent:
                         except InterruptedError:
                             result_str = "[SYSTEM] Tool execution interrupted by user."
                             _tool_failed = True
+                        except asyncio.CancelledError:
+                            result_str = "[SYSTEM] Tool execution cancelled."
+                            _tool_failed = True
                         except Exception as e:
                             result_str = f"Error: {e}"
                             _tool_failed = True
-                # ── track consecutive failures per tool ──
                 is_failure = _tool_failed or (
-                    result_str and (
-                        result_str.startswith("Error") or result_str.startswith("[")
-                    )
+                    result_str and (result_str.startswith("Error") or result_str.startswith("["))
                 )
                 if is_failure:
                     self._tool_failures[tc["name"]] = self._tool_failures.get(tc["name"], 0) + 1
@@ -962,15 +917,13 @@ class Agent:
                             "content": (
                                 f"[SYSTEM] Tool '{tc['name']}' has failed "
                                 f"{self._tool_failures[tc['name']]} times in a row. "
-                                f"Do NOT retry the same approach. Switch strategy "
-                                f"or use ask_user to get guidance."
+                                f"Do NOT retry. Switch strategy or use ask_user."
                             ),
                             "round": self._conversation_round,
                         })
                         self._tool_failures[tc["name"]] = 0
                 else:
                     self._tool_failures[tc["name"]] = 0
-                # ── repeated command detection ──
                 if tc["name"] == "cmd_execute":
                     try:
                         args = json.loads(tc["arguments"]) if isinstance(tc["arguments"], str) else tc["arguments"]
@@ -981,65 +934,43 @@ class Agent:
                                 self.chat_history.append({
                                     "role": "meta",
                                     "content": (
-                                        f"[SYSTEM] The exact same command was executed "
-                                        f"{len(self._cmd_history)} times in a row:\n  {cmd}\n"
-                                        f"The output keeps getting truncated. Do NOT retry "
-                                        f"the same command. Use a different approach "
-                                        f"(e.g., redirect to a file, use a Python script)."
+                                        f"[SYSTEM] Same command {len(self._cmd_history)} times:\n  {cmd}\n"
+                                        f"Use a different approach."
                                     ),
                                     "round": self._conversation_round,
                                 })
                                 self._cmd_history.clear()
                     except (json.JSONDecodeError, KeyError, TypeError):
                         pass
-                # ---- interrupt checkpoint ----
-                if self._interrupt_requested or self.stop_event.is_set():
-                    self._interrupt_requested = False
+                if self.stop_event.is_set():
                     self._interrupted = True
                     self.chat_history.append({
                         'role': 'meta',
-                        'content': (
-                            '[SYSTEM] User interrupted the task. '
-                            'Stop and report what was done so far.'
-                        ),
+                        'content': '[SYSTEM] User interrupted. Stop and report.',
                         'round': self._conversation_round,
                     })
                     break
                 self.chat_history.append({
-                    "role": "tool",
-                    "tool_call_id": tc.get("id", ""),
-                    "name": tc["name"],
-                    "arguments": tc["arguments"],
-                    "result": result_str,
-                    "round": self._conversation_round,
+                    "role": "tool", "tool_call_id": tc.get("id", ""),
+                    "name": tc["name"], "arguments": tc["arguments"],
+                    "result": result_str, "round": self._conversation_round,
                 })
-                self.emit({
-                    "type": "tool_result",
-                    "name": tc["name"],
-                    "result": result_str,
-                })
-                # ── PostToolUse hook ──
-                self._run_hook("PostToolUse", {
-                    "CLAUDE_TOOL_NAME": tc["name"],
-                    "CLAUDE_TOOL_ARGUMENTS": tc["arguments"],
+                self.emit({"type": "tool_result", "name": tc["name"], "result": result_str})
+                await self._run_hook("PostToolUse", {
+                    "CLAUDE_TOOL_NAME": tc["name"], "CLAUDE_TOOL_ARGUMENTS": tc["arguments"],
                     "CLAUDE_TOOL_RESULT": result_str,
                     "CLAUDE_TOOL_ERROR": result_str if is_failure else "",
                 })
-                db.save_message(
-                    self.session_id, "tool",
+                await asyncio.to_thread(
+                    db.save_message, self.session_id, "tool",
                     json.dumps({"args": tc["arguments"], "result": result_str}, ensure_ascii=False),
                     tool_name=tc["name"], conversation_round=self._conversation_round,
                     tool_call_id=tc.get("id", ""),
                 )
-            # ── compact history if needed ──
             self._compact_history()
-            # ── if interrupted, stop the outer loop ──
             if self._interrupted:
                 break
-        log.info(
-            "[session=%s conversation_round=%s] LLM done (tool_calls=%d)",
-            self.session_id, self._conversation_round, len(tool_calls),
-        )
+        log.info("[session=%s round=%s] LLM done", self.session_id, self._conversation_round)
         self.emit({"type": "complete"})
         self.emit({"type": "ready"})
         

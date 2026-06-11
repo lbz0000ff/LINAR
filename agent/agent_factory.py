@@ -1,14 +1,10 @@
-"""Agent factory — create agent instances for DAG sub-tasks.
-
-In a multi-agent execution, each DAG node gets its own Agent instance
-with an isolated LLM, tool set, and chat history.
-"""
+"""Agent factory — create agent instances for DAG sub-tasks."""
 
 from __future__ import annotations
 
+import asyncio
 import json
 import os
-import threading
 from config import load_config
 from logger import get_logger
 from tool_registry import ToolRegistry
@@ -38,7 +34,7 @@ def _make_system_prompt_extra(task: str,
 
 def create_agent(agent_hint: str = "any",
                  predecessor_results: dict[str, str] = None,
-                 stop_event: threading.Event | None = None) -> Agent:
+                 stop_event: asyncio.Event | None = None) -> Agent:
     """Create an Agent instance for a DAG sub-task.
 
     Parameters
@@ -88,37 +84,12 @@ def create_agent(agent_hint: str = "any",
     return agent
 
 
-def run_task(agent: Agent, task: str, agent_hint: str = "any",
-             predecessor_results: dict[str, str] = None) -> str:
-    """Run a single task on the given agent and return the result text.
-
-    Parameters
-    ----------
-    agent : Agent
-        The agent to run the task on.
-    task : str
-        The task description / instruction.
-    agent_hint : str
-        Role hint for the system prompt.
-    predecessor_results : dict, optional
-        Results from predecessor nodes.
-
-    Returns
-    -------
-    str
-        The agent's final answer.
-    """
-    # ── inject task context into system prompt ──
+async def run_task(agent: Agent, task: str, agent_hint: str = "any",
+                   predecessor_results: dict[str, str] = None) -> str:
     extra = _make_system_prompt_extra(task, agent_hint, predecessor_results)
     agent.llm.system_prompt = agent.llm.system_prompt + "\n\n" + extra
-
-    # ── set up chat history ──
     agent.add_user_message(task)
-
-    # ── run ──
-    agent.process_with_llm()
-
-    # ── extract the final agent answer ──
+    await agent.process_with_llm()
     for msg in reversed(agent.chat_history):
         if msg.get("role") == "agent":
             return msg.get("content", "")
