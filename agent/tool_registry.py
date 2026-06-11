@@ -108,37 +108,6 @@ def _load_mcp_config() -> dict:
     return merged
 
 
-def _ensure_playwright_browsers():
-    """Auto-install Playwright Chromium if not present — runs once per process."""
-    import shutil, subprocess
-
-    # Check: is there already a Playwright browsers folder?
-    home = os.path.expanduser("~")
-    candidates = [
-        os.path.join(home, "AppData", "Local", "ms-playwright"),
-        os.environ.get("PLAYWRIGHT_BROWSERS_PATH", ""),
-    ]
-    for d in candidates:
-        if d and os.path.isdir(d) and os.listdir(d):
-            return False  # already installed
-
-    log.info("Playwright Chromium not found — auto-installing (this may take a minute)...")
-    try:
-        result = subprocess.run(
-            ["npx", "playwright", "install", "chromium"],
-            capture_output=True, text=True, timeout=300,
-        )
-        if result.returncode == 0:
-            log.info("Playwright Chromium installed successfully")
-            return True
-        else:
-            log.warning("Playwright install failed (stderr): %s", result.stderr[:500])
-            return False
-    except (FileNotFoundError, OSError) as e:
-        log.warning("Cannot auto-install Playwright: %s", e)
-        return False
-
-
 def _start_one_mcp(name: str, scfg: dict) -> tuple[str, object, list[dict]] | None:
     """Start a single MCP server with its own timeout — runs in a worker thread."""
     import asyncio
@@ -173,10 +142,6 @@ def _init_mcp_servers() -> dict:
 
     # Parallel start — each server runs in its own thread with independent timeout
     results: list[tuple[str, object, list[dict]]] = []
-
-    # Auto-bootstrap Playwright Chromium before first launch
-    if "playwright" in enabled:
-        _ensure_playwright_browsers()
 
     with concurrent.futures.ThreadPoolExecutor(max_workers=len(enabled)) as pool:
         fut_map = {pool.submit(_start_one_mcp, name, scfg): name
