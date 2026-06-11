@@ -53,8 +53,5 @@ webui/reasoning_debug*.txt
 # Dev notes
 agent/BACKEND_CHANGES.md
 
-# Old WebSocket-based web UI (being replaced by FastAPI)
-webui/
-
 # Design reference from old JS frontend
 webui-vue/reference/
