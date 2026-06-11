@@ -98,11 +98,11 @@ def _launch_tui() -> None:
 
 
 def _launch_web() -> None:
-    """Launch the WebSocket + HTTP server."""
+    """Launch the FastAPI HTTP + WebSocket server."""
     os.chdir(_project_root)
-    sys.path.insert(0, os.path.join(_project_root, "webui"))
-    import agent_server
-    agent_server.main()
+    sys.path.insert(0, os.path.join(_project_root, "agent"))
+    import uvicorn
+    uvicorn.run("api.app:app", host="127.0.0.1", port=8080, log_level="info")
 
 
 def main() -> None:
