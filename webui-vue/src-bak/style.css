@@ -82,11 +82,13 @@ body {
   line-height: 1.5;
   -webkit-font-smoothing: antialiased;
   overflow: hidden;
-  transition: background 400ms ease, color 400ms ease;
+  transition: background var(--transition-slow), color var(--transition-slow);
 }
-#app { height: 100%; display: flex; position: relative; z-index: 1; }
+#app { height: 100%; display: flex; }
 
-/* ── 背景装饰层 ── */
+/* ── 背景装饰层 ──
+   使用 z-index: 0 而非 -1，这样毛玻璃元素的 backdrop-filter
+   可以捕捉到这些装饰，产生可见的模糊效果。 */
 body::before, body::after {
   content: '';
   position: fixed;
@@ -103,6 +105,8 @@ body::after {
   top: -100px; left: -100px;
   background: radial-gradient(circle, oklch(72% 0.04 25 / 0.08), transparent 70%);
 }
+/* 确保应用层在装饰之上 */
+#app { position: relative; z-index: 1; }
 
 /* ── 工具函数 ── */
 .flex { display: flex; }

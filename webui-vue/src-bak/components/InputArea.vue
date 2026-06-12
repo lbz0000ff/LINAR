@@ -83,7 +83,7 @@ function insertCmd(cmd) {
         :placeholder="connected ? '输入消息...' : '未连接 — 等待 WebSocket...'"
         :disabled="!connected"
         @keydown.enter.prevent="!isProcessing && connected && onSend()"></textarea>
-      <button id="send-btn" :class="{ stop: isProcessing }" :disabled="!inputText.trim() && !isProcessing"
+      <button id="send-btn" :class="{ stop: isProcessing }" :disabled="(!inputText.trim() && !isProcessing) || !connected"
         @click="isProcessing ? emit('stop') : onSend()">
         {{ isProcessing ? '停止' : '发送' }}
       </button>
@@ -147,7 +147,7 @@ function insertCmd(cmd) {
   transition: border-color var(--transition-fast);
 }
 #input:focus { border-color: var(--crimson); box-shadow: 0 0 0 3px var(--crimson-alpha); }
-#input:disabled { opacity: 0.5; cursor: not-allowed; background: var(--bg-glass); }
+#input:disabled { opacity: 0.5; cursor: not-allowed; }
 #input::placeholder { color: var(--text-placeholder); }
 #send-btn {
   padding: 0; width: 38px; height: 38px;

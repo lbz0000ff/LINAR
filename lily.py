@@ -10,6 +10,7 @@ Usage:
 import sys
 import os
 import subprocess
+import signal
 
 _project_root = os.path.dirname(os.path.abspath(__file__))
 if _project_root not in sys.path:
@@ -63,11 +64,22 @@ def _launch_tui() -> None:
 
 
 def _launch_web() -> None:
-    """Launch the FastAPI HTTP + WebSocket server."""
-    os.chdir(_project_root)
-    sys.path.insert(0, os.path.join(_project_root, "agent"))
-    import uvicorn
-    uvicorn.run("api.app:app", host="127.0.0.1", port=8080, log_level="info")
+    """Launch the FastAPI server in a subprocess (keeps terminal clean)."""
+    agent_dir = os.path.join(_project_root, "agent")
+    proc = subprocess.Popen(
+        [sys.executable, "-m", "agent.main"],
+        cwd=agent_dir,
+    )
+    print(f"[lily] Web UI started at http://127.0.0.1:8080")
+    print("[lily] Press Ctrl+C to stop")
+    try:
+        proc.wait()
+    except KeyboardInterrupt:
+        proc.terminate()
+        try:
+            proc.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            proc.kill()
 
 
 def main() -> None:

@@ -1,5 +1,5 @@
 <script setup>
-import { ref, nextTick, watch, onMounted, onUnmounted } from 'vue'
+import { ref, nextTick, onMounted, onUnmounted } from 'vue'
 import { onMessage, offMessage, send, connected, status } from './composables/useWebSocket.js'
 import { marked } from 'marked'
 import mermaid from 'mermaid'
@@ -37,25 +37,19 @@ const lastFilePaths = ref([])
 const showSettings = ref(false)
 const permMode = ref('safe')
 const darkMode = ref(false)
-const msgContainer = ref(null)
-const showScrollBtn = ref(false)
+const scrolledUp = ref(false)
+const messagesEl = ref(null)
 
-function onMsgScroll() {
-  if (!msgContainer.value) return
-  const el = msgContainer.value
-  showScrollBtn.value = el.scrollHeight - el.scrollTop - el.clientHeight > 200
+// ── 滚动监听 ──
+function onMessagesScroll() {
+  if (!messagesEl.value) return
+  const el = messagesEl.value
+  scrolledUp.value = el.scrollHeight - el.scrollTop - el.clientHeight > 200
 }
 function scrollToBottom() {
-  if (!msgContainer.value) return
-  msgContainer.value.scrollTo({ top: msgContainer.value.scrollHeight, behavior: 'smooth' })
+  if (!messagesEl.value) return
+  messagesEl.value.scrollTo({ top: messagesEl.value.scrollHeight, behavior: 'smooth' })
 }
-// 新消息自动滚动（仅当用户未向上滚动时）
-watch(messages, () => {
-  nextTick(() => {
-    if (!msgContainer.value || showScrollBtn.value) return
-    msgContainer.value.scrollTop = msgContainer.value.scrollHeight
-  })
-}, { deep: false })
 
 // ── WS 消息分发 ──
 function handleMessage(event) {
@@ -161,11 +155,13 @@ function cacheRate(u) {
 function postRender() {
   nextTick(() => {
     try {
-      // highlight.js
+      // highlight.js + language tag
       document.querySelectorAll('.msg-content pre code').forEach(block => {
         hljs.highlightElement(block)
-        // Copy button
+        const lang = block.className.match(/language-(\w+)/)?.[1]
         const pre = block.parentElement
+        if (lang && !pre.dataset.lang) pre.dataset.lang = lang
+        // Copy button
         if (!pre.querySelector('.copy-btn')) {
           const btn = document.createElement('button')
           btn.className = 'copy-btn'
@@ -178,16 +174,6 @@ function postRender() {
           }
           pre.style.position = 'relative'
           pre.appendChild(btn)
-          // 语言标签
-          if (!pre.querySelector('.code-lang')) {
-            const m = block.className.match(/language-(\w+)/)
-            if (m?.[1]) {
-              const langLabel = document.createElement('span')
-              langLabel.className = 'code-lang'
-              langLabel.textContent = m[1]
-              pre.appendChild(langLabel)
-            }
-          }
         }
       })
     } catch (_) {}
@@ -368,23 +354,13 @@ function onStop() {
 function toggleDarkMode() {
   darkMode.value = !darkMode.value
   document.body.classList.toggle('dark', darkMode.value)
-  try { localStorage.setItem('echolily:darkMode', String(darkMode.value)) } catch (_) {}
+  document.body.style.background = ''
 }
 
 // ── 设置 ──
 function handleConfig(cfg) {}
 
-onMounted(() => {
-  // 恢复深色模式偏好
-  try {
-    const saved = localStorage.getItem('echolily:darkMode')
-    if (saved === 'true' || (!saved && window.matchMedia('(prefers-color-scheme: dark)').matches)) {
-      darkMode.value = true
-      document.body.classList.add('dark')
-    }
-  } catch (_) {}
-  onMessage(handleMessage)
-})
+onMounted(() => onMessage(handleMessage))
 onUnmounted(() => offMessage(handleMessage))
 </script>
 
@@ -392,39 +368,31 @@ onUnmounted(() => offMessage(handleMessage))
   <div id="app-layout" :class="{ dark: darkMode }">
     <Sidebar
       :sessions="sessions" :current-id="currentSessionId"
-      :status="status" :dark-mode="darkMode"
+      :connected="connected" :ws-status="status"
+      :dark-mode="darkMode"
       @switch="switchSession" @new="newSession"
       @delete="deleteSession" @rename="renameSession"
       @dark-toggle="toggleDarkMode"
-      @settings="showSettings = true"
     />
     <main id="chat-area">
       <header id="chat-header">
         <span id="chat-title">{{ chatTitle }}</span>
-        <span v-if="isProcessing" id="processing-hint">
-          <span class="pulse-dots">
-            <span class="pulse-dot"></span><span class="pulse-dot"></span><span class="pulse-dot"></span>
-          </span>
-          Agent 工作中
-        </span>
-      </header>
-      <div id="messages" ref="msgContainer" @scroll="onMsgScroll">
-        <!-- 空状态 -->
-        <div v-if="!currentSessionId && !isNewSession && messages.length === 0" class="empty-state">
-          <div class="empty-icon">
-            <svg width="64" height="64" viewBox="0 0 24 24" fill="none" stroke="var(--crimson)" stroke-width="1" stroke-linecap="round" stroke-linejoin="round" opacity="0.6">
-              <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>
-              <line x1="9" y1="9" x2="15" y2="9" stroke="var(--text-weak)"/>
-              <line x1="9" y1="13" x2="13" y2="13" stroke="var(--text-weak)"/>
-            </svg>
-          </div>
-          <h2 class="empty-title">EchoLily</h2>
-          <p class="empty-desc">选择一个会话开始对话，或创建一个新的</p>
-          <p class="empty-hint">双击会话标题可以重命名</p>
+        <div v-if="isProcessing" id="processing-indicator">
+          <span class="pulse-dot"></span>
+          <span class="pulse-dot"></span>
+          <span class="pulse-dot"></span>
+          <span class="processing-label">Agent 工作中</span>
         </div>
-        <!-- 消息列表 -->
-        <template v-else>
-        <div v-for="(msg, idx) in messages" :key="idx" :class="'msg msg-' + (msg.role === 'streaming' ? 'ai' : msg.role)">
+      </header>
+      <!-- 空状态 -->
+      <div v-if="!messages.length && !currentSessionId && !isNewSession" id="empty-state">
+        <div class="empty-icon">❄</div>
+        <h2>EchoLily</h2>
+        <p>选择一个会话开始对话，或创建新会话</p>
+      </div>
+      <div v-else id="messages" ref="messagesEl" @scroll="onMessagesScroll">
+        <div v-for="(msg, idx) in messages" :key="idx"
+          :class="['msg', msg.role === 'user' ? 'msg-user' : msg.role === 'ai' || msg.role === 'streaming' ? 'msg-ai' : msg.role === 'tool' ? 'msg-tool' : msg.role === 'plan' ? 'msg-plan-wrap' : msg.role === 'system' || msg.role === 'notification' ? 'msg-sys' : 'msg-ai']">
 
           <!-- 用户 -->
           <div v-if="msg.role === 'user'" class="msg-user-bubble">
@@ -438,15 +406,15 @@ onUnmounted(() => offMessage(handleMessage))
               <div v-show="!msg.collapsed" class="reasoning-text">{{ msg.reasoning }}</div>
             </div>
             <div v-if="msg.text" class="msg-content" v-html="msg.text"></div>
-            <!-- 历史消息中的文件附件 -->
             <div v-if="msg._filePaths?.length" v-html="renderFileAttachments(msg._filePaths)"></div>
           </div>
 
           <!-- 工具调用 -->
           <div v-else-if="msg.role === 'tool'" class="msg-tool-bubble" :data-tool-name="msg.tool_name">
             <div class="tool-header">
-              ⚙ {{ msg.tool_name }}
-              <span v-if="msg.status === 'running'" class="tool-status">⟳ 处理中...</span>
+              <span class="tool-icon">⚙</span>
+              <span class="tool-name">{{ msg.tool_name }}</span>
+              <span v-if="msg.status === 'running'" class="tool-status running">⟳ 处理中</span>
               <span v-else class="tool-status done">✓ 完成</span>
             </div>
             <div v-if="msg.args && Object.keys(msg.args).length" class="tool-params">
@@ -471,7 +439,7 @@ onUnmounted(() => offMessage(handleMessage))
 
           <!-- ask_user -->
           <div v-else-if="msg.role === 'ask_user'" class="msg-tool-bubble ask-card">
-            <div class="tool-header">❓ ask_user</div>
+            <div class="tool-header"><span class="tool-icon">❓</span> ask_user</div>
             <div class="ask-prompt">{{ msg.prompt }}</div>
             <div v-if="msg.choices?.length" class="ask-options">
               <button v-for="(c, ci) in msg.choices" :key="ci" class="ask-option"
@@ -496,30 +464,34 @@ onUnmounted(() => offMessage(handleMessage))
           <!-- 系统 -->
           <div v-else-if="msg.role === 'system' || msg.role === 'notification'" class="msg-system">{{ msg.text }}</div>
         </div>
+        <!-- 滚动到底部 -->
+        <button v-if="scrolledUp" id="scroll-bottom" @click="scrollToBottom" title="滚动到底部">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
+        </button>
         <!-- 上下文进度条 -->
         <div v-if="usage?.prompt_tokens" id="usage-bar">
-          <span class="usage-label">Context:</span>
-          <span class="usage-value">{{ formatTokens(usage.prompt_tokens) }} / 1.00M</span>
-          <div class="usage-track"><div class="usage-fill" :style="{ width: Math.min(100, (usage.prompt_tokens / 1000000) * 100) + '%' }"></div></div>
-          <span class="usage-pct">{{ Math.min(100, Math.round((usage.prompt_tokens / 1000000) * 100)) }}%</span>
-          <span v-if="usage.prompt_cache_hit_tokens || usage.prompt_cache_miss_tokens" class="usage-cache">
-            cache: {{ cacheRate(usage) }}%
-          </span>
+          <div class="usage-info">
+            <span class="usage-label">Context</span>
+            <span class="usage-value">{{ formatTokens(usage.prompt_tokens) }} / 1.00M</span>
+          </div>
+          <div class="usage-track">
+            <div class="usage-fill" :style="{ width: Math.min(100, (usage.prompt_tokens / 1000000) * 100) + '%' }"></div>
+          </div>
+          <div class="usage-meta">
+            <span class="usage-pct">{{ Math.min(100, Math.round((usage.prompt_tokens / 1000000) * 100)) }}%</span>
+            <span v-if="usage.prompt_cache_hit_tokens || usage.prompt_cache_miss_tokens" class="usage-cache">cache {{ cacheRate(usage) }}%</span>
+          </div>
         </div>
-        <!-- 滚动到底部 FAB -->
-        <button v-if="showScrollBtn" class="scroll-bottom-fab" @click="scrollToBottom" title="滚动到底部">
-          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><polyline points="6 9 12 15 18 9"/></svg>
-        </button>
-        </template>
       </div>
       <InputArea
-        :is-processing="isProcessing" :perm-mode="permMode" :connected="connected"
+        :is-processing="isProcessing" :perm-mode="permMode"
+        :connected="connected"
         @send="onSend" @stop="onStop"
         @mode-change="permMode = $event; send('switch_permission_mode', { mode: $event })"
         @settings="showSettings = true"
       />
     </main>
-    <SettingsPage v-if="showSettings" @close="showSettings = false" @dark-mode="toggleDarkMode" :dark-mode="darkMode" />
+    <SettingsPage v-if="showSettings" @close="showSettings = false" @dark-mode="toggleDarkMode" />
   </div>
 </template>
 
@@ -535,24 +507,69 @@ onUnmounted(() => offMessage(handleMessage))
   border: 1px solid var(--border-glass);
   box-shadow: var(--shadow-glass);
   overflow: hidden;
+  position: relative;
 }
 #chat-header {
   display: flex; align-items: center; padding: 14px 20px;
   border-bottom: 1px solid var(--border-light); gap: 8px;
   background: var(--bg-glass);
   backdrop-filter: blur(var(--blur-glass)) saturate(1.3);
+  -webkit-backdrop-filter: blur(var(--blur-glass)) saturate(1.3);
+  flex-shrink: 0;
 }
 #chat-title { font-weight: 600; font-size: 15px; flex: 1; color: var(--text-primary); }
-#processing-hint { font-size: 12px; color: var(--text-weak); }
+
+/* ── Agent 工作中指示器（脉冲三点） ── */
+#processing-indicator {
+  display: inline-flex; align-items: center; gap: 5px;
+  padding: 3px 10px;
+  background: var(--crimson-alpha);
+  border-radius: 999px;
+}
+.pulse-dot {
+  width: 6px; height: 6px; border-radius: 50%;
+  background: var(--crimson);
+  animation: pulseDot 1.2s ease-in-out infinite;
+}
+.pulse-dot:nth-child(2) { animation-delay: 0.2s; }
+.pulse-dot:nth-child(3) { animation-delay: 0.4s; }
+@keyframes pulseDot {
+  0%, 80%, 100% { opacity: 0.3; transform: scale(0.8); }
+  40% { opacity: 1; transform: scale(1.3); }
+}
+.processing-label { font-size: 12px; color: var(--crimson); font-weight: 500; margin-left: 2px; }
+
+/* ── 空状态 ── */
+#empty-state {
+  flex: 1; display: flex; flex-direction: column;
+  align-items: center; justify-content: center;
+  gap: 12px; text-align: center; padding: 40px;
+}
+#empty-state .empty-icon {
+  font-size: 48px; opacity: 0.5; margin-bottom: 4px;
+}
+#empty-state h2 {
+  font-family: var(--font-serif);
+  font-size: 28px; font-weight: 500;
+  color: var(--text-primary); letter-spacing: 2px;
+}
+#empty-state p {
+  font-size: 14px; color: var(--text-weak); max-width: 320px;
+}
 
 /* ── 消息容器 ── */
 #messages {
   flex: 1; overflow-y: auto; padding: 20px 24px;
   display: flex; flex-direction: column; gap: 16px; min-height: 0;
+  position: relative;
 }
 
-/* ── 消息通用 ── */
+/* ── 消息通用 + 对齐 ── */
 .msg { max-width: 82%; line-height: 1.6; animation: msgIn 300ms ease-out; }
+.msg-user { align-self: flex-end; }
+.msg-ai, .msg-tool { align-self: flex-start; max-width: 85%; }
+.msg-plan-wrap { align-self: center; max-width: 90%; }
+.msg-sys { align-self: center; }
 @keyframes msgIn {
   from { opacity: 0; transform: translateY(10px); }
   to { opacity: 1; transform: translateY(0); }
@@ -560,16 +577,16 @@ onUnmounted(() => offMessage(handleMessage))
 
 /* ── 用户气泡 ── */
 .msg-user-bubble {
-  align-self: flex-end;
   background: var(--crimson); color: var(--text-on-crimson);
   padding: 10px 16px;
   border-radius: 16px 16px 4px 16px;
   white-space: pre-wrap; word-break: break-word;
   box-shadow: 0 2px 8px var(--crimson-glow);
+  font-family: var(--font-ui);
+  font-size: 14px;
 }
 
 /* ── AI 气泡 ── */
-.msg-ai-bubble { align-self: flex-start; max-width: 85%; }
 .msg-ai-bubble .msg-content {
   background: var(--bg-ai-bubble);
   padding: 12px 16px;
@@ -578,6 +595,8 @@ onUnmounted(() => offMessage(handleMessage))
   font-family: var(--font-serif);
   font-size: 14.5px;
   line-height: 1.7;
+  backdrop-filter: blur(24px) saturate(1.2);
+  -webkit-backdrop-filter: blur(24px) saturate(1.2);
 }
 .msg-content { white-space: pre-wrap; word-break: break-word; }
 .msg-content p { margin: 6px 0; }
@@ -587,8 +606,17 @@ onUnmounted(() => offMessage(handleMessage))
   background: oklch(30% 0.005 250 / 0.06);
   border: 1px solid var(--border-light);
   border-radius: var(--radius-md);
-  padding: 12px 16px; overflow-x: auto; margin: 10px 0;
+  padding: 28px 16px 12px;
+  overflow-x: auto; margin: 10px 0;
   font-family: var(--font-mono); font-size: 13px;
+  position: relative;
+}
+.msg-content pre::before {
+  content: attr(data-lang);
+  position: absolute; top: 6px; left: 14px;
+  font-family: var(--font-ui); font-size: 10px;
+  color: var(--text-weak); text-transform: uppercase;
+  letter-spacing: 0.08em;
 }
 .msg-content code {
   font-family: var(--font-mono); font-size: 13px;
@@ -619,14 +647,22 @@ onUnmounted(() => offMessage(handleMessage))
 
 /* ── 工具调用气泡 ── */
 .msg-tool-bubble {
-  align-self: flex-start; max-width: 92%;
   background: var(--bg-tool-bubble);
   border: 1px solid var(--border-light);
   border-radius: var(--radius-md);
   padding: 10px 14px; font-size: 13px;
+  backdrop-filter: blur(16px) saturate(1.2);
+  -webkit-backdrop-filter: blur(16px) saturate(1.2);
 }
-.tool-header { font-weight: 500; margin-bottom: 4px; color: var(--text-primary); }
-.tool-status { font-size: 12px; color: var(--text-weak); margin-left: 6px; }
+.tool-header {
+  font-weight: 500; margin-bottom: 4px; color: var(--text-primary);
+  display: flex; align-items: center; gap: 6px;
+}
+.tool-icon { font-size: 14px; }
+.tool-name { font-family: var(--font-mono); font-size: 12px; }
+.tool-status { font-size: 12px; color: var(--text-weak); margin-left: auto; }
+.tool-status.running { animation: spin 1s linear infinite; display: inline-block; }
+@keyframes spin { to { transform: rotate(360deg); } }
 .tool-status.done { color: var(--crimson); }
 .tool-params {
   margin-top: 6px; padding-top: 6px;
@@ -727,13 +763,12 @@ onUnmounted(() => offMessage(handleMessage))
 
 /* ── 系统通知 ── */
 .msg-system {
-  align-self: center; font-size: 12px; color: var(--text-weak);
+  font-size: 12px; color: var(--text-weak);
   text-align: center; padding: 2px 16px;
 }
 
 /* ── 规划气泡 ── */
 .msg-plan {
-  align-self: center; max-width: 90%;
   background: var(--bg-plan-bubble);
   border: 1px solid oklch(55% 0.03 220 / 0.2);
   border-radius: var(--radius-md);
@@ -750,15 +785,45 @@ onUnmounted(() => offMessage(handleMessage))
   font-family: var(--font-mono);
 }
 
+/* ── 滚动到底部按钮 ── */
+#scroll-bottom {
+  position: sticky; bottom: 12px; align-self: center;
+  width: 36px; height: 36px; border-radius: 50%;
+  background: var(--bg-glass-raised);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  border: 1px solid var(--border-glass);
+  box-shadow: var(--shadow-raised);
+  cursor: pointer; display: flex; align-items: center; justify-content: center;
+  color: var(--text-secondary);
+  transition: all var(--transition-fast);
+  z-index: 5;
+}
+#scroll-bottom:hover {
+  color: var(--crimson);
+  background: var(--bg-glass-hover);
+  transform: translateY(-2px);
+}
+
 /* ── 用量条 ── */
 #usage-bar {
-  display: flex; align-items: center; gap: 10px;
-  padding: 6px 20px; font-size: 11px; color: var(--text-weak);
+  display: flex; flex-direction: column; gap: 4px;
+  padding: 8px 20px; font-size: 11px; color: var(--text-weak);
   border-top: 1px solid var(--border-light);
   background: var(--bg-glass);
+  backdrop-filter: blur(var(--blur-glass)) saturate(1.3);
+  -webkit-backdrop-filter: blur(var(--blur-glass)) saturate(1.3);
 }
-.usage-track { flex: 1; height: 3px; background: var(--border-light); border-radius: 2px; overflow: hidden; }
-.usage-fill { height: 100%; background: var(--crimson); border-radius: 2px; transition: width 0.3s ease; }
+.usage-info, .usage-meta { display: flex; align-items: center; gap: 8px; }
+.usage-meta { justify-content: flex-end; }
+.usage-track {
+  height: 4px; background: var(--border-light);
+  border-radius: 2px; overflow: hidden;
+}
+.usage-fill {
+  height: 100%; background: var(--crimson);
+  border-radius: 2px; transition: width 0.4s ease;
+}
 
 /* ── 文件附件 ── */
 .msg-image { margin-top: 6px; }
@@ -800,7 +865,7 @@ onUnmounted(() => offMessage(handleMessage))
 .msg-content a { color: var(--crimson); text-decoration: none; }
 .msg-content a:hover { text-decoration: underline; }
 
-/* ── 复制按钮 ── */
+/* ── 复制按钮 + 语言标签 ── */
 .copy-btn {
   position: absolute; top: 6px; right: 6px;
   background: var(--bg-glass); border: 1px solid var(--border-light);
@@ -810,81 +875,8 @@ onUnmounted(() => offMessage(handleMessage))
   color: var(--text-primary); z-index: 1;
 }
 .copy-btn:hover { opacity: 1; background: var(--bg-glass-hover); }
-.msg-content pre { position: relative; }
 
 /* ── KaTeX 公式 ── */
 .math-block { overflow-x: auto; padding: 8px 0; text-align: center; }
 .katex { font-size: 1.05em; }
-
-/* ── 空状态 ── */
-.empty-state {
-  flex: 1; display: flex; flex-direction: column;
-  align-items: center; justify-content: center;
-  text-align: center; user-select: none;
-  animation: msgIn 400ms ease-out;
-  padding: 40px;
-}
-.empty-icon { margin-bottom: 20px; opacity: 0.7; }
-.empty-title {
-  font-family: var(--font-serif);
-  font-size: 28px; font-weight: 500;
-  color: var(--text-primary);
-  margin-bottom: 10px; letter-spacing: 0.5px;
-}
-.empty-desc { font-size: 14px; color: var(--text-secondary); margin-bottom: 6px; }
-.empty-hint { font-size: 12px; color: var(--text-weak); }
-
-/* ── 脉冲三点 Agent 指示器 ── */
-#processing-hint {
-  display: flex; align-items: center; gap: 8px;
-  font-size: 12px; color: var(--text-weak);
-}
-.pulse-dots { display: flex; gap: 4px; align-items: center; }
-.pulse-dot {
-  width: 5px; height: 5px; border-radius: 50%;
-  background: var(--crimson);
-  opacity: 0.4;
-  animation: dotPulse 1.2s ease-in-out infinite;
-}
-.pulse-dot:nth-child(2) { animation-delay: 0.2s; }
-.pulse-dot:nth-child(3) { animation-delay: 0.4s; }
-@keyframes dotPulse {
-  0%, 60%, 100% { opacity: 0.3; transform: scale(0.8); }
-  30% { opacity: 1; transform: scale(1.3); }
-}
-
-/* ── 滚动到底部 FAB ── */
-.scroll-bottom-fab {
-  position: sticky; bottom: 8px;
-  align-self: center;
-  width: 36px; height: 36px;
-  border-radius: 50%;
-  border: 1px solid var(--border-glass);
-  background: var(--bg-glass-raised);
-  backdrop-filter: blur(var(--blur-glass)) saturate(1.4);
-  -webkit-backdrop-filter: blur(var(--blur-glass)) saturate(1.4);
-  color: var(--text-secondary);
-  cursor: pointer;
-  display: flex; align-items: center; justify-content: center;
-  box-shadow: var(--shadow-glass);
-  transition: all var(--transition-fast);
-  z-index: 5;
-  animation: msgIn 200ms ease-out;
-}
-.scroll-bottom-fab:hover {
-  background: var(--bg-glass-hover);
-  color: var(--crimson);
-  border-color: var(--crimson-alpha);
-  transform: translateY(-1px);
-  box-shadow: var(--shadow-raised);
-}
-
-/* ── 代码块语言标签 ── */
-.code-lang {
-  position: absolute; bottom: 4px; right: 40px;
-  font-size: 10px; color: var(--text-weak);
-  font-family: var(--font-ui);
-  text-transform: uppercase; letter-spacing: 0.08em;
-  pointer-events: none; opacity: 0.5;
-}
 </style>
