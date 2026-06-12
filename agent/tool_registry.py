@@ -333,9 +333,21 @@ def get_toolsets():
     return dict(_TOOLSETS)
 
 
-# ── backwards-compatible globals ─────────────────────────────
-tools = get_tools()
-toolsets = get_toolsets()
+# ── lazy globals (don't block module import with MCP startup) ──
+_tools_cache = None
+_toolsets_cache = None
+
+def __getattr__(name):
+    global _tools_cache, _toolsets_cache
+    if name == 'tools':
+        if _tools_cache is None:
+            _tools_cache = get_tools()
+        return _tools_cache
+    if name == 'toolsets':
+        if _toolsets_cache is None:
+            _toolsets_cache = get_toolsets()
+        return _toolsets_cache
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 if __name__ == "__main__":
-    print(tools["get_date"].tool_schema)
+    print(get_tools()["get_date"].tool_schema)
