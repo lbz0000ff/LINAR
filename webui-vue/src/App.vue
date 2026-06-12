@@ -3,6 +3,10 @@ import { ref, nextTick, onMounted, onUnmounted } from 'vue'
 import { onMessage, offMessage, send, connected } from './composables/useWebSocket.js'
 import { marked } from 'marked'
 import mermaid from 'mermaid'
+import hljs from 'highlight.js'
+import katex from 'katex'
+import 'highlight.js/styles/github.css'
+import 'katex/dist/katex.min.css'
 import Sidebar from './components/Sidebar.vue'
 import InputArea from './components/InputArea.vue'
 import SettingsPage from './components/SettingsPage.vue'
@@ -27,13 +31,11 @@ const darkMode = ref(false)
 // ── WS 消息分发 ──
 function handleMessage(event) {
   const t = event.type
-  const ts = t === 'token' ? event.data?.slice(0, 30) : ''
-  if (t !== 'token' && t !== 'reasoning_token') console.log('[ws]', t, ts || '')
   if (t === 'sessions' && event.data) loadSessions(event.data)
   else if (t === 'session_msgs' && event.data) {
     messages.value = convertDbMessages(event.data).map(m => ({ ...m, collapsed: true }))
     if (event.title) chatTitle.value = event.title
-    nextTick(() => { try { mermaid.run({ nodes: document.querySelectorAll('.mermaid') }) } catch (_) {} })
+    postRender()
   }
   else if (t === 'new_session_created') {
     if (isNewSession.value) { currentSessionId.value = event.session_id; isNewSession.value = false }
@@ -97,13 +99,54 @@ function addMessage(msg) { messages.value.push(msg) }
 // ── 渲染函数 ──
 function renderMd(text) {
   if (!text) return ''
-  try { return marked.parse(stripFileTags(text)) } catch (_) { return escapeHtml(text) }
+  // Pre-process: render block math $$...$$ before marked
+  let processed = stripFileTags(text)
+  processed = processed.replace(/\$\$([\s\S]*?)\$\$/g, (_, math) => {
+    try { return `<div class="math-block">${katex.renderToString(math.trim(), { displayMode: true, throwOnError: false })}</div>` }
+    catch (_) { return `$$${math}$$` }
+  })
+  // Inline math $...$ (avoid matching dollars in code blocks)
+  processed = processed.replace(/`[^`]*`/g, m => m.replace(/\$/g, '\x00')) // temporarily protect inline code
+  processed = processed.replace(/(?<!\$)\$(\S[\s\S]*?\S)\$(?!\$)/g, (_, math) => {
+    try { return katex.renderToString(math.trim(), { displayMode: false, throwOnError: false }) }
+    catch (_) { return `$${math}$` }
+  })
+  processed = processed.replace(/\x00/g, '$') // restore protected dollars
+  try { return marked.parse(processed, { async: false }) } catch (_) { return escapeHtml(text) }
 }
 function escapeHtml(s) {
   if (!s) return ''
   return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
 }
 function stripFileTags(text) { return (text || '').replace(/\[file:[^\]]*\]/g, '').trim() }
+
+// ── DOM 后处理：高亮、复制按钮、Mermaid ──
+function postRender() {
+  nextTick(() => {
+    try {
+      // highlight.js
+      document.querySelectorAll('.msg-content pre code').forEach(block => {
+        hljs.highlightElement(block)
+        // Copy button
+        const pre = block.parentElement
+        if (!pre.querySelector('.copy-btn')) {
+          const btn = document.createElement('button')
+          btn.className = 'copy-btn'
+          btn.textContent = '📋'
+          btn.title = '复制代码'
+          btn.onclick = () => {
+            navigator.clipboard.writeText(block.textContent)
+            btn.textContent = '✓'
+            setTimeout(() => btn.textContent = '📋', 2000)
+          }
+          pre.style.position = 'relative'
+          pre.appendChild(btn)
+        }
+      })
+    } catch (_) {}
+    try { mermaid.run({ nodes: document.querySelectorAll('.mermaid') }) } catch (_) {}
+  })
+}
 function extractFilePaths(text) {
   const r = []; const re = /\[file:([^\]]*)\]/g; let m
   while ((m = re.exec(text || '')) !== null) { const p = m[1].trim(); if (p) r.push(p) }
@@ -224,10 +267,7 @@ function handleComplete() {
     last.text = renderMd(fullText) + renderFileAttachments(filePaths)
     last.role = 'ai'
     messages.value = [...messages.value]
-    // 触发 mermaid 渲染
-    nextTick(() => {
-      try { mermaid.run({ nodes: document.querySelectorAll('.mermaid') }) } catch (_) {}
-    })
+    postRender()
   }
   lastFilePaths.value = []
 }
@@ -670,4 +710,20 @@ onUnmounted(() => offMessage(handleMessage))
 .msg-content h3 { font-size: 15px; }
 .msg-content a { color: var(--crimson); text-decoration: none; }
 .msg-content a:hover { text-decoration: underline; }
+
+/* ── 复制按钮 ── */
+.copy-btn {
+  position: absolute; top: 6px; right: 6px;
+  background: var(--bg-glass); border: 1px solid var(--border-light);
+  border-radius: var(--radius-sm); cursor: pointer;
+  padding: 2px 8px; font-size: 13px; line-height: 1.6;
+  opacity: 0.5; transition: opacity var(--transition-fast);
+  color: var(--text-primary); z-index: 1;
+}
+.copy-btn:hover { opacity: 1; background: var(--bg-glass-hover); }
+.msg-content pre { position: relative; }
+
+/* ── KaTeX 公式 ── */
+.math-block { overflow-x: auto; padding: 8px 0; text-align: center; }
+.katex { font-size: 1.05em; }
 </style>
