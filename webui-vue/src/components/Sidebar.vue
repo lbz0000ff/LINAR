@@ -4,13 +4,13 @@ import { ref, computed } from 'vue'
 const props = defineProps({
   sessions: Array,
   currentId: [Number, String],
-  status: { type: String, default: 'disconnected' },  // connected | disconnected | reconnecting
+  status: { type: String, default: 'disconnected' },
   darkMode: Boolean,
 })
 const emit = defineEmits(['switch', 'new', 'delete', 'rename', 'darkToggle', 'settings'])
 
 const filter = ref('')
-const collapsed = ref(false)  // 折叠状态
+const collapsed = ref(false)
 
 const filtered = computed(() => {
   const f = filter.value.toLowerCase().trim()
@@ -41,12 +41,12 @@ function toggleCollapse() { collapsed.value = !collapsed.value }
 
 <template>
   <aside id="sidebar" :class="{ collapsed }">
-    <!-- ── 顶部：品牌 + 连接灯 + 暗色切换 + 折叠 ── -->
+    <!-- ── 头部：品牌 + 连接灯 + 暗色切换 + 折叠 ── -->
     <div id="sidebar-header">
       <div id="sidebar-brand">
         <span id="sidebar-title" v-show="!collapsed">EchoLily</span>
-        <!-- 连接状态灯 -->
-        <span class="conn-dot" :class="statusClass" :title="statusLabel">
+        <!-- 连接状态呼吸灯 (仅展开模式) -->
+        <span v-show="!collapsed" class="conn-dot" :class="statusClass" :title="statusLabel">
           <span class="conn-pulse"></span>
         </span>
         <span v-show="!collapsed" class="conn-label">{{ statusLabel }}</span>
@@ -70,10 +70,13 @@ function toggleCollapse() { collapsed.value = !collapsed.value }
       </div>
     </div>
 
-    <!-- ── 机身：搜索 + 新建 + 会话列表 ── -->
+    <!-- ── 展开模式：搜索 + 新建 + 会话列表 ── -->
     <div id="sidebar-body" v-show="!collapsed">
       <input id="search-input" v-model="filter" placeholder="搜索会话..." />
-      <button id="new-btn" @click="emit('new')">+ 新建对话</button>
+      <button id="new-btn" @click="emit('new')">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+        新建对话
+      </button>
       <div id="session-list">
         <div v-for="s in filtered" :key="s.id"
           class="session-item" :class="{ active: s.id === currentId }"
@@ -95,15 +98,20 @@ function toggleCollapse() { collapsed.value = !collapsed.value }
       </div>
     </div>
 
-    <!-- 折叠模式：图标列表 -->
+    <!-- ── 折叠模式：连接灯 → 展开 → 暗色模式 → 新建 → (空) → 设置 ── -->
     <div id="sidebar-collapsed" v-show="collapsed">
-      <button class="collapsed-icon" @click="emit('new')" title="新建对话">
-        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+      <!-- 连接状态呼吸灯 -->
+      <span class="collapsed-conn" :class="statusClass" :title="statusLabel">
+        <span class="conn-dot" :class="statusClass"><span class="conn-pulse"></span></span>
+      </span>
+
+      <!-- 展开按钮 -->
+      <button class="collapsed-icon" @click="toggleCollapse" title="展开侧边栏">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"/></svg>
       </button>
-      <button class="collapsed-icon" @click="emit('settings')" title="设置">
-        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
-      </button>
-      <button id="dark-toggle-collapsed" class="collapsed-icon" @click="emit('darkToggle')" :title="darkMode ? '亮色模式' : '深色模式'">
+
+      <!-- 暗色模式切换 -->
+      <button class="collapsed-icon" @click="emit('darkToggle')" :title="darkMode ? '亮色模式' : '深色模式'">
         <svg v-if="darkMode" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
           <circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/>
         </svg>
@@ -111,14 +119,27 @@ function toggleCollapse() { collapsed.value = !collapsed.value }
           <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/>
         </svg>
       </button>
-      <button class="collapsed-icon" id="expand-btn" @click="toggleCollapse" title="展开侧边栏">
-        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><polyline points="9 18 15 12 9 6"/></svg>
+
+      <!-- 新建对话 -->
+      <button class="collapsed-icon" @click="emit('new')" title="新建对话">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+      </button>
+
+      <!-- 弹性空白 -->
+      <span class="collapsed-spacer"></span>
+
+      <!-- 设置 (底部) -->
+      <button class="collapsed-icon" @click="emit('settings')" title="设置">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
       </button>
     </div>
 
-    <!-- ── 底部：设置入口 ── -->
+    <!-- ── 底部：设置入口 (仅展开模式) ── -->
     <div id="sidebar-footer" v-show="!collapsed">
-      <button @click="emit('settings')">⚙ 设置</button>
+      <button @click="emit('settings')">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+        设置
+      </button>
     </div>
   </aside>
 </template>
@@ -132,6 +153,7 @@ function toggleCollapse() { collapsed.value = !collapsed.value }
   backdrop-filter: blur(var(--blur-glass)) saturate(1.3);
   -webkit-backdrop-filter: blur(var(--blur-glass)) saturate(1.3);
   border-right: 1px solid var(--border-glass);
+  border-radius: 0;
   transition: width var(--transition-slow);
 }
 #sidebar.collapsed { width: 52px; min-width: 52px; }
@@ -183,27 +205,31 @@ function toggleCollapse() { collapsed.value = !collapsed.value }
 /* ── 按钮 ── */
 #dark-toggle, #collapse-btn {
   cursor: pointer; background: var(--bg-glass); border: 1px solid var(--border-glass);
-  border-radius: var(--radius-sm); padding: 6px; width: 32px; height: 32px;
+  border-radius: var(--radius-btn); padding: 6px; width: 32px; height: 32px;
   display: flex; align-items: center; justify-content: center;
   color: var(--text-secondary);
   transition: all var(--transition-fast);
 }
 #dark-toggle:hover, #collapse-btn:hover { background: var(--bg-glass-hover); color: var(--crimson); }
 
-/* ── 折叠模式图标 ── */
+/* ── 折叠模式 ── */
 #sidebar-collapsed {
   flex: 1; display: flex; flex-direction: column; align-items: center;
   gap: 4px; padding: 8px 0; overflow-y: auto;
 }
+.collapsed-conn {
+  display: flex; align-items: center; justify-content: center;
+  padding: 8px 0;
+}
+.collapsed-spacer { flex: 1; }
 .collapsed-icon {
-  width: 40px; height: 40px; border-radius: var(--radius-md);
+  width: 40px; height: 40px; border-radius: var(--radius-btn);
   display: flex; align-items: center; justify-content: center;
   cursor: pointer; background: transparent; border: none;
   color: var(--text-secondary);
   transition: all var(--transition-fast);
 }
 .collapsed-icon:hover { background: var(--crimson-alpha); color: var(--crimson); }
-#expand-btn { margin-top: auto; }
 
 /* ── 机身 ── */
 #sidebar-body {
@@ -212,7 +238,7 @@ function toggleCollapse() { collapsed.value = !collapsed.value }
 #search-input {
   width: 100%; padding: 8px 12px;
   border: 1px solid var(--border-light);
-  border-radius: var(--radius-md);
+  border-radius: 0;
   font-size: 13px; font-family: var(--font-ui);
   background: var(--bg-glass-raised);
   color: var(--text-primary);
@@ -224,12 +250,13 @@ function toggleCollapse() { collapsed.value = !collapsed.value }
 #new-btn {
   width: 100%; padding: 8px;
   border: 1px dashed var(--border-glass);
-  border-radius: var(--radius-md);
+  border-radius: var(--radius-btn);
   background: transparent;
   color: var(--text-secondary);
   cursor: pointer; margin-bottom: 8px; font-size: 13px;
   transition: all var(--transition-fast);
   font-family: var(--font-ui);
+  display: flex; align-items: center; justify-content: center; gap: 6px;
 }
 #new-btn:hover {
   background: var(--crimson-alpha);
@@ -239,7 +266,7 @@ function toggleCollapse() { collapsed.value = !collapsed.value }
 #session-list { display: flex; flex-direction: column; gap: 2px; }
 .session-item {
   display: flex; align-items: center; padding: 10px 12px;
-  border-radius: var(--radius-md);
+  border-radius: 0;
   cursor: pointer; font-size: 13px;
   transition: background var(--transition-fast);
   position: relative;
@@ -267,7 +294,7 @@ function toggleCollapse() { collapsed.value = !collapsed.value }
 .rename-input {
   width: 100%; padding: 4px 6px;
   border: 1px solid var(--crimson);
-  border-radius: var(--radius-sm); font-size: 13px;
+  border-radius: 0; font-size: 13px;
   font-family: var(--font-ui);
   outline: none;
   background: var(--bg-glass-raised);
@@ -282,12 +309,13 @@ function toggleCollapse() { collapsed.value = !collapsed.value }
 #sidebar-footer button {
   width: 100%; padding: 8px;
   border: 1px solid var(--border-light);
-  border-radius: var(--radius-md);
+  border-radius: var(--radius-btn);
   background: var(--bg-glass-raised);
   color: var(--text-secondary);
   cursor: pointer; font-size: 13px; font-family: var(--font-ui);
   transition: all var(--transition-fast);
   text-align: center;
+  display: flex; align-items: center; justify-content: center; gap: 6px;
 }
 #sidebar-footer button:hover {
   background: var(--crimson-alpha);

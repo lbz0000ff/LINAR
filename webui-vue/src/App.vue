@@ -22,8 +22,30 @@ marked.use({
     }
   }
 })
-mermaid.initialize({ startOnLoad: false, theme: 'base' })
-
+function initMermaid(isDark) {
+  const themeVars = isDark ? {
+    primaryColor: 'oklch(30% 0.005 250)',
+    primaryTextColor: 'oklch(85% 0.005 65)',
+    primaryBorderColor: 'oklch(40% 0.005 250)',
+    lineColor: 'oklch(60% 0.005 250)',
+    secondaryColor: 'oklch(25% 0.005 250)',
+    tertiaryColor: 'oklch(22% 0.005 250)',
+    noteBkgColor: 'oklch(28% 0.02 220 / 0.5)',
+    noteTextColor: 'oklch(85% 0.005 65)',
+    fontSize: '14px',
+  } : {
+    primaryColor: 'oklch(94% 0.005 60)',
+    primaryTextColor: 'oklch(28% 0.008 65)',
+    primaryBorderColor: 'oklch(85% 0.005 60)',
+    lineColor: 'oklch(75% 0.005 60)',
+    secondaryColor: 'oklch(96% 0.004 60)',
+    tertiaryColor: 'oklch(98% 0.003 60)',
+    noteBkgColor: 'oklch(92% 0.015 220 / 0.4)',
+    noteTextColor: 'oklch(28% 0.008 65)',
+    fontSize: '14px',
+  }
+  mermaid.initialize({ startOnLoad: false, theme: isDark ? 'dark' : 'base', themeVariables: themeVars })
+}
 // ── 状态 ──
 const sessions = ref([])
 const messages = ref([])
@@ -39,6 +61,19 @@ const permMode = ref('safe')
 const darkMode = ref(false)
 const msgContainer = ref(null)
 const showScrollBtn = ref(false)
+
+// ── Mermaid 初始化（必须在 darkMode ref 之后）──
+initMermaid(darkMode.value)
+watch(darkMode, (val) => {
+  initMermaid(val)
+  nextTick(() => {
+    document.querySelectorAll('.mermaid').forEach(el => {
+      delete el.dataset.processed
+      el.innerHTML = el.dataset.original || el.textContent || ''
+    })
+    try { mermaid.run({ nodes: document.querySelectorAll('.mermaid') }) } catch (_) {}
+  })
+})
 
 function onMsgScroll() {
   if (!msgContainer.value) return
@@ -76,7 +111,7 @@ function handleMessage(event) {
   else if (t === 'reasoning_token') handleReasoning(event.data || '')
   else if (t === 'tool_call') handleToolCall(event)
   else if (t === 'tool_result') handleToolResult(event)
-  else if (t === 'error') addMessage({ role: 'system', text: '⚠ ' + (event.data || '') })
+  else if (t === 'error') addMessage({ role: 'system', text: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display:inline;vertical-align:-3px"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg> ' + (event.data || '') })
   else if (t === 'done') { /* streaming done, wait for complete */ }
   else if (t === 'complete') handleComplete()
   else if (t === 'usage') { usage.value = event.data }
@@ -169,12 +204,12 @@ function postRender() {
         if (!pre.querySelector('.copy-btn')) {
           const btn = document.createElement('button')
           btn.className = 'copy-btn'
-          btn.textContent = '📋'
+          btn.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>'
           btn.title = '复制代码'
           btn.onclick = () => {
             navigator.clipboard.writeText(block.textContent)
-            btn.textContent = '✓'
-            setTimeout(() => btn.textContent = '📋', 2000)
+            btn.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>'
+            setTimeout(() => btn.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>', 2000)
           }
           pre.style.position = 'relative'
           pre.appendChild(btn)
@@ -191,7 +226,12 @@ function postRender() {
         }
       })
     } catch (_) {}
-    try { mermaid.run({ nodes: document.querySelectorAll('.mermaid') }) } catch (_) {}
+    try {
+      document.querySelectorAll('.mermaid').forEach(el => {
+        if (!el.dataset.original) el.dataset.original = el.textContent || ''
+      })
+      mermaid.run({ nodes: document.querySelectorAll('.mermaid') })
+    } catch (_) {}
   })
 }
 function extractFilePaths(text) {
@@ -207,7 +247,7 @@ function renderFileAttachments(paths) {
       const url = '/raw-file/' + encodeURIComponent(p.replace(/\\/g, '/'))
       return '<div class="msg-image"><img src="' + url + '" style="max-width:100%;max-height:300px;border-radius:8px;cursor:pointer" onclick="window.open(this.src,\'_blank\')"></div>'
     }
-    return '<div class="msg-image">📄 ' + escapeHtml(p) + '</div>'
+    return '<div class="msg-image"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display:inline;vertical-align:-3px;margin-right:4px"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>' + escapeHtml(p) + '</div>'
   }).join('')
 }
 
@@ -332,7 +372,9 @@ function approveTool(idx, action) {
   const m = messages.value[idx]
   if (!m) return
   m.needsApproval = false
-  m.approveResult = action.includes('allow') ? '✓ 已允许' : '✗ 已拒绝'
+  m.approveResult = action.includes('allow')
+    ? '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display:inline;vertical-align:-2px"><polyline points="20 6 9 17 4 12"/></svg> 已允许'
+    : '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" style="display:inline;vertical-align:-2px"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg> 已拒绝'
   messages.value = [...messages.value]
   send('permission_response', { action })
 }
@@ -434,7 +476,10 @@ onUnmounted(() => offMessage(handleMessage))
           <!-- AI / streaming -->
           <div v-else-if="msg.role === 'ai' || msg.role === 'streaming'" class="msg-ai-bubble">
             <div v-if="msg.reasoning" class="msg-reasoning" :data-expanded="!msg.collapsed">
-              <div class="reasoning-toggle" @click="msg.collapsed = !msg.collapsed; messages = [...messages]">💭 思考过程</div>
+              <div class="reasoning-toggle" @click="msg.collapsed = !msg.collapsed; messages = [...messages]">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+                思考过程
+              </div>
               <div v-show="!msg.collapsed" class="reasoning-text">{{ msg.reasoning }}</div>
             </div>
             <div v-if="msg.text" class="msg-content" v-html="msg.text"></div>
@@ -445,24 +490,39 @@ onUnmounted(() => offMessage(handleMessage))
           <!-- 工具调用 -->
           <div v-else-if="msg.role === 'tool'" class="msg-tool-bubble" :data-tool-name="msg.tool_name">
             <div class="tool-header">
-              ⚙ {{ msg.tool_name }}
-              <span v-if="msg.status === 'running'" class="tool-status">⟳ 处理中...</span>
-              <span v-else class="tool-status done">✓ 完成</span>
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+              {{ msg.tool_name }}
+              <span v-if="msg.status === 'running'" class="tool-status">处理中...</span>
+              <span v-else class="tool-status done">
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
+                完成
+              </span>
             </div>
             <div v-if="msg.args && Object.keys(msg.args).length" class="tool-params">
               <span class="collapse-toggle" @click="msg._showArgs = !msg._showArgs">{{ msg._showArgs ? '▼' : '▶' }} 参数</span>
               <pre v-show="msg._showArgs">{{ JSON.stringify(msg.args, null, 2) }}</pre>
             </div>
             <div v-if="msg.needsApproval" class="tool-perm-section">
-              <div class="tool-perm-label">🔑 需要审批</div>
+              <div class="tool-perm-label">
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 2l-2 2m-7.61 7.61a5.5 5.5 0 1 1-7.778 7.778 5.5 5.5 0 0 1 7.777-7.777z"/><path d="M12 2v4M12 22v-4M2 12h4M22 12h-4"/></svg>
+                需要审批
+              </div>
               <div class="tool-perm-buttons">
-                <button class="perm-btn allow" @click="approveTool(idx, 'allow_once')">✓</button>
-                <button class="perm-btn deny" @click="approveTool(idx, 'deny_once')">✗</button>
-                <button class="perm-btn allow" @click="approveTool(idx, 'allow_session')">✓✓</button>
-                <button class="perm-btn deny" @click="approveTool(idx, 'deny_session')">✗✗</button>
+                <button class="perm-btn allow" @click="approveTool(idx, 'allow_once')">
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
+                </button>
+                <button class="perm-btn deny" @click="approveTool(idx, 'deny_once')">
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+                </button>
+                <button class="perm-btn allow" @click="approveTool(idx, 'allow_session')">
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/><polyline points="20 6 9 17 4 12" transform="translate(3,0)"/></svg>
+                </button>
+                <button class="perm-btn deny" @click="approveTool(idx, 'deny_session')">
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/><line x1="15" y1="3" x2="9" y2="3" transform="translate(3,0)"/><line x1="9" y1="3" x2="15" y2="3" transform="translate(3,0)"/></svg>
+                </button>
               </div>
             </div>
-            <div v-if="msg.approveResult" class="tool-perm-result" :class="msg.approveResult.includes('允许') ? 'approved' : 'denied'">{{ msg.approveResult }}</div>
+            <div v-if="msg.approveResult" class="tool-perm-result" :class="msg.approveResult.includes('允许') ? 'approved' : 'denied'" v-html="msg.approveResult"></div>
             <div v-if="msg.result" class="tool-result-detail">
               <span class="collapse-toggle" @click="msg._showResult = !msg._showResult">{{ msg._showResult ? '▼' : '▶' }} 结果</span>
               <pre v-show="msg._showResult">{{ msg.result }}</pre>
@@ -471,7 +531,10 @@ onUnmounted(() => offMessage(handleMessage))
 
           <!-- ask_user -->
           <div v-else-if="msg.role === 'ask_user'" class="msg-tool-bubble ask-card">
-            <div class="tool-header">❓ ask_user</div>
+            <div class="tool-header">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+              ask_user
+            </div>
             <div class="ask-prompt">{{ msg.prompt }}</div>
             <div v-if="msg.choices?.length" class="ask-options">
               <button v-for="(c, ci) in msg.choices" :key="ci" class="ask-option"
@@ -488,23 +551,14 @@ onUnmounted(() => offMessage(handleMessage))
           <!-- 规划 -->
           <div v-else-if="msg.role === 'plan'" class="msg-plan">
             <div class="plan-toggle" @click="msg._open = !msg._open; messages = [...messages]">
-              📋 {{ msg._open ? '收起规划' : '展开规划' }}
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg>
+              {{ msg._open ? '收起规划' : '展开规划' }}
             </div>
             <div v-show="msg._open" class="plan-body"><pre>{{ msg._text }}</pre></div>
           </div>
 
           <!-- 系统 -->
           <div v-else-if="msg.role === 'system' || msg.role === 'notification'" class="msg-system">{{ msg.text }}</div>
-        </div>
-        <!-- 上下文进度条 -->
-        <div v-if="usage?.prompt_tokens" id="usage-bar">
-          <span class="usage-label">Context:</span>
-          <span class="usage-value">{{ formatTokens(usage.prompt_tokens) }} / 1.00M</span>
-          <div class="usage-track"><div class="usage-fill" :style="{ width: Math.min(100, (usage.prompt_tokens / 1000000) * 100) + '%' }"></div></div>
-          <span class="usage-pct">{{ Math.min(100, Math.round((usage.prompt_tokens / 1000000) * 100)) }}%</span>
-          <span v-if="usage.prompt_cache_hit_tokens || usage.prompt_cache_miss_tokens" class="usage-cache">
-            cache: {{ cacheRate(usage) }}%
-          </span>
         </div>
         <!-- 滚动到底部 FAB -->
         <button v-if="showScrollBtn" class="scroll-bottom-fab" @click="scrollToBottom" title="滚动到底部">
@@ -514,9 +568,9 @@ onUnmounted(() => offMessage(handleMessage))
       </div>
       <InputArea
         :is-processing="isProcessing" :perm-mode="permMode" :connected="connected"
+        :usage="usage"
         @send="onSend" @stop="onStop"
         @mode-change="permMode = $event; send('switch_permission_mode', { mode: $event })"
-        @settings="showSettings = true"
       />
     </main>
     <SettingsPage v-if="showSettings" @close="showSettings = false" @dark-mode="toggleDarkMode" :dark-mode="darkMode" />
@@ -530,17 +584,29 @@ onUnmounted(() => offMessage(handleMessage))
 /* ── 聊天面板 ── */
 #chat-area {
   flex: 1; display: flex; flex-direction: column; min-height: 0;
-  background: var(--bg-glass-raised); margin: 8px 8px 8px 0;
-  border-radius: var(--radius-lg);
-  border: 1px solid var(--border-glass);
-  box-shadow: var(--shadow-glass);
+  background: var(--bg-glass); margin: 8px 8px 8px 0;
+  border-radius: 0;
+  border-top: 1px solid oklch(100% 0 0 / 0.3);
+  border-left: 1px solid oklch(100% 0 0 / 0.2);
+  border-right: 1px solid oklch(0% 0 0 / 0.06);
+  border-bottom: 1px solid oklch(0% 0 0 / 0.08);
+  box-shadow: var(--shadow-raised);
   overflow: hidden;
+  backdrop-filter: blur(var(--blur-glass)) saturate(1.8);
+  -webkit-backdrop-filter: blur(var(--blur-glass)) saturate(1.8);
+}
+body.dark #chat-area {
+  border-top: 1px solid oklch(100% 0 0 / 0.08);
+  border-left: 1px solid oklch(100% 0 0 / 0.05);
+  border-right: 1px solid oklch(0% 0 0 / 0.15);
+  border-bottom: 1px solid oklch(0% 0 0 / 0.2);
 }
 #chat-header {
   display: flex; align-items: center; padding: 14px 20px;
   border-bottom: 1px solid var(--border-light); gap: 8px;
   background: var(--bg-glass);
-  backdrop-filter: blur(var(--blur-glass)) saturate(1.3);
+  backdrop-filter: blur(var(--blur-glass)) saturate(1.8);
+  -webkit-backdrop-filter: blur(var(--blur-glass)) saturate(1.8);
 }
 #chat-title { font-weight: 600; font-size: 15px; flex: 1; color: var(--text-primary); }
 #processing-hint { font-size: 12px; color: var(--text-weak); }
@@ -563,7 +629,7 @@ onUnmounted(() => offMessage(handleMessage))
   align-self: flex-end;
   background: var(--crimson); color: var(--text-on-crimson);
   padding: 10px 16px;
-  border-radius: 16px 16px 4px 16px;
+  border-radius: var(--radius-bubble) var(--radius-bubble) 4px var(--radius-bubble);
   white-space: pre-wrap; word-break: break-word;
   box-shadow: 0 2px 8px var(--crimson-glow);
 }
@@ -573,7 +639,7 @@ onUnmounted(() => offMessage(handleMessage))
 .msg-ai-bubble .msg-content {
   background: var(--bg-ai-bubble);
   padding: 12px 16px;
-  border-radius: 16px 16px 16px 4px;
+  border-radius: var(--radius-bubble) var(--radius-bubble) var(--radius-bubble) 4px;
   border: 1px solid var(--border-light);
   font-family: var(--font-serif);
   font-size: 14.5px;
@@ -586,7 +652,7 @@ onUnmounted(() => offMessage(handleMessage))
 .msg-content pre {
   background: oklch(30% 0.005 250 / 0.06);
   border: 1px solid var(--border-light);
-  border-radius: var(--radius-md);
+  border-radius: var(--radius-btn);
   padding: 12px 16px; overflow-x: auto; margin: 10px 0;
   font-family: var(--font-mono); font-size: 13px;
 }
@@ -604,7 +670,7 @@ onUnmounted(() => offMessage(handleMessage))
 .reasoning-toggle {
   font-size: 12px; color: var(--text-weak);
   user-select: none; cursor: pointer;
-  padding: 4px 8px; border-radius: var(--radius-sm);
+  padding: 4px 8px; border-radius: var(--radius-btn);
   display: inline-block; transition: background var(--transition-fast);
 }
 .reasoning-toggle:hover { background: var(--crimson-alpha); }
@@ -622,7 +688,7 @@ onUnmounted(() => offMessage(handleMessage))
   align-self: flex-start; max-width: 92%;
   background: var(--bg-tool-bubble);
   border: 1px solid var(--border-light);
-  border-radius: var(--radius-md);
+  border-radius: var(--radius-bubble);
   padding: 10px 14px; font-size: 13px;
 }
 .tool-header { font-weight: 500; margin-bottom: 4px; color: var(--text-primary); }
@@ -634,7 +700,7 @@ onUnmounted(() => offMessage(handleMessage))
 }
 .tool-params pre {
   font-size: 11.5px; background: oklch(0% 0 0 / 0.04);
-  padding: 6px 8px; border-radius: var(--radius-sm);
+  padding: 6px 8px; border-radius: var(--radius-btn);
   overflow-x: auto; font-family: var(--font-mono);
 }
 
@@ -647,7 +713,7 @@ onUnmounted(() => offMessage(handleMessage))
 .tool-perm-buttons { display: flex; gap: 6px; }
 .perm-btn {
   padding: 4px 12px; border: 1px solid var(--border-glass);
-  border-radius: var(--radius-sm); cursor: pointer; font-size: 12px;
+  border-radius: var(--radius-btn); cursor: pointer; font-size: 12px;
   background: var(--bg-glass); transition: all var(--transition-fast);
 }
 .perm-btn:hover { background: var(--bg-glass-hover); }
@@ -655,7 +721,7 @@ onUnmounted(() => offMessage(handleMessage))
 .perm-btn.deny { color: var(--text-primary); border-color: var(--border-glass); }
 .tool-perm-result {
   font-size: 12px; margin-top: 6px; padding: 4px 10px;
-  border-radius: var(--radius-sm);
+  border-radius: var(--radius-btn);
 }
 .tool-perm-result.approved { color: var(--crimson); background: var(--crimson-alpha); }
 .tool-perm-result.denied { color: var(--text-weak); background: oklch(0% 0 0 / 0.04); }
@@ -667,7 +733,7 @@ onUnmounted(() => offMessage(handleMessage))
 }
 .tool-result-detail pre {
   font-size: 11.5px; background: oklch(0% 0 0 / 0.04);
-  padding: 6px 8px; border-radius: var(--radius-sm);
+  padding: 6px 8px; border-radius: var(--radius-btn);
   overflow-x: auto; font-family: var(--font-mono);
 }
 
@@ -684,7 +750,7 @@ onUnmounted(() => offMessage(handleMessage))
 .ask-option {
   text-align: left; padding: 8px 12px;
   border: 1px solid var(--border-light);
-  border-radius: var(--radius-md);
+  border-radius: var(--radius-btn);
   background: var(--bg-glass);
   cursor: pointer; font-size: 13px; font-family: var(--font-ui);
   transition: all var(--transition-fast);
@@ -707,7 +773,7 @@ onUnmounted(() => offMessage(handleMessage))
 .ask-custom input {
   flex: 1; padding: 8px 10px;
   border: 1px solid var(--border-light);
-  border-radius: var(--radius-md);
+  border-radius: var(--radius-btn);
   font-size: 13px; font-family: var(--font-ui);
   background: var(--bg-glass);
   color: var(--text-primary);
@@ -717,7 +783,7 @@ onUnmounted(() => offMessage(handleMessage))
 .ask-custom button {
   padding: 8px 16px;
   border: 1px solid var(--crimson);
-  border-radius: var(--radius-md);
+  border-radius: var(--radius-btn);
   background: var(--crimson);
   color: var(--text-on-crimson);
   cursor: pointer; font-size: 12px;
@@ -736,7 +802,7 @@ onUnmounted(() => offMessage(handleMessage))
   align-self: center; max-width: 90%;
   background: var(--bg-plan-bubble);
   border: 1px solid oklch(55% 0.03 220 / 0.2);
-  border-radius: var(--radius-md);
+  border-radius: var(--radius-btn);
   padding: 10px 14px; font-size: 12px;
 }
 .plan-toggle {
@@ -764,7 +830,7 @@ onUnmounted(() => offMessage(handleMessage))
 .msg-image { margin-top: 6px; }
 .msg-image img {
   max-width: 100%; max-height: 280px;
-  border-radius: var(--radius-md);
+  border-radius: var(--radius-btn);
   cursor: pointer;
   border: 1px solid var(--border-light);
   transition: opacity var(--transition-fast);
@@ -804,7 +870,7 @@ onUnmounted(() => offMessage(handleMessage))
 .copy-btn {
   position: absolute; top: 6px; right: 6px;
   background: var(--bg-glass); border: 1px solid var(--border-light);
-  border-radius: var(--radius-sm); cursor: pointer;
+  border-radius: var(--radius-btn); cursor: pointer;
   padding: 2px 8px; font-size: 13px; line-height: 1.6;
   opacity: 0.5; transition: opacity var(--transition-fast);
   color: var(--text-primary); z-index: 1;
@@ -886,5 +952,50 @@ onUnmounted(() => offMessage(handleMessage))
   font-family: var(--font-ui);
   text-transform: uppercase; letter-spacing: 0.08em;
   pointer-events: none; opacity: 0.5;
+}
+
+/* ── 代码高亮 — 暗色模式 VSCode 风格 ── */
+body.dark .msg-content pre {
+  background: oklch(20% 0.005 250);
+  border-color: oklch(70% 0.005 250 / 0.1);
+}
+body.dark .hljs { color: oklch(85% 0.005 250); background: oklch(20% 0.005 250); }
+body.dark .hljs-keyword,
+body.dark .hljs-selector-tag,
+body.dark .hljs-literal,
+body.dark .hljs-section,
+body.dark .hljs-link { color: oklch(65% 0.15 310); } /* 紫 — 关键字 */
+body.dark .hljs-string,
+body.dark .hljs-title,
+body.dark .hljs-name,
+body.dark .hljs-type,
+body.dark .hljs-attribute,
+body.dark .hljs-symbol,
+body.dark .hljs-bullet,
+body.dark .hljs-addition,
+body.dark .hljs-variable,
+body.dark .hljs-template-tag,
+body.dark .hljs-template-variable { color: oklch(60% 0.14 145); } /* 青绿 — 字符串 */
+body.dark .hljs-comment,
+body.dark .hljs-quote,
+body.dark .hljs-deletion,
+body.dark .hljs-meta { color: oklch(50% 0.005 250); } /* 灰 — 注释 */
+body.dark .hljs-number,
+body.dark .hljs-regexp,
+body.dark .hljs-built_in,
+body.dark .hljs-selector-id,
+body.dark .hljs-selector-class { color: oklch(60% 0.12 40); } /* 橙 — 数字 */
+body.dark .hljs-attr,
+body.dark .hljs-params { color: oklch(68% 0.12 85); } /* 黄 — 属性 */
+body.dark .hljs-function,
+body.dark .hljs-title.function_ { color: oklch(60% 0.15 255); } /* 蓝 — 函数 */
+body.dark .hljs-property,
+body.dark .hljs-tag { color: oklch(65% 0.08 200); } /* 浅青 — 属性 */
+body.dark .hljs-emphasis { font-style: italic; }
+body.dark .hljs-strong { font-weight: 600; }
+body.dark .msg-content p > code,
+body.dark .msg-content li > code {
+  background: oklch(58% 0.165 27 / 0.15);
+  color: oklch(65% 0.15 25);
 }
 </style>

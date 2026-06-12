@@ -97,7 +97,7 @@ function switchSection(id) { activeSection.value = id }
   border-bottom: 1px solid var(--border-light);
 }
 #settings-close {
-  width: 32px; height: 32px; border-radius: var(--radius-sm);
+  width: 32px; height: 32px; border-radius: var(--radius-btn);
   display: flex; align-items: center; justify-content: center;
   cursor: pointer; background: var(--bg-glass);
   border: 1px solid var(--border-glass);
