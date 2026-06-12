@@ -22,29 +22,34 @@ marked.use({
     }
   }
 })
-function initMermaid(isDark) {
-  const themeVars = isDark ? {
-    primaryColor: 'oklch(30% 0.005 250)',
-    primaryTextColor: 'oklch(85% 0.005 65)',
-    primaryBorderColor: 'oklch(40% 0.005 250)',
-    lineColor: 'oklch(60% 0.005 250)',
-    secondaryColor: 'oklch(25% 0.005 250)',
-    tertiaryColor: 'oklch(22% 0.005 250)',
-    noteBkgColor: 'oklch(28% 0.02 220 / 0.5)',
-    noteTextColor: 'oklch(85% 0.005 65)',
-    fontSize: '14px',
-  } : {
-    primaryColor: 'oklch(94% 0.005 60)',
-    primaryTextColor: 'oklch(28% 0.008 65)',
-    primaryBorderColor: 'oklch(85% 0.005 60)',
-    lineColor: 'oklch(75% 0.005 60)',
-    secondaryColor: 'oklch(96% 0.004 60)',
-    tertiaryColor: 'oklch(98% 0.003 60)',
-    noteBkgColor: 'oklch(92% 0.015 220 / 0.4)',
-    noteTextColor: 'oklch(28% 0.008 65)',
-    fontSize: '14px',
-  }
-  mermaid.initialize({ startOnLoad: false, theme: isDark ? 'dark' : 'base', themeVariables: themeVars })
+function resolveCSSVar(name) {
+  const val = getComputedStyle(document.documentElement).getPropertyValue(name).trim()
+  if (!val) return '#ccc'
+  // Let the browser resolve OKLch → RGB, Mermaid can't parse OKLch
+  const el = document.createElement('div')
+  el.style.color = val
+  document.body.appendChild(el)
+  const resolved = getComputedStyle(el).color
+  document.body.removeChild(el)
+  return resolved  // "rgb(r, g, b)"
+}
+
+function initMermaid() {
+  mermaid.initialize({
+    startOnLoad: false,
+    theme: 'base',
+    themeVariables: {
+      primaryColor: resolveCSSVar('--bg-glass'),
+      primaryTextColor: resolveCSSVar('--text-primary'),
+      primaryBorderColor: resolveCSSVar('--border-glass'),
+      lineColor: resolveCSSVar('--text-secondary'),
+      secondaryColor: resolveCSSVar('--bg-ai-bubble'),
+      tertiaryColor: resolveCSSVar('--bg-page'),
+      noteBkgColor: resolveCSSVar('--bg-plan-bubble'),
+      noteTextColor: resolveCSSVar('--text-secondary'),
+      fontSize: '14px',
+    },
+  })
 }
 // ── 状态 ──
 const sessions = ref([])
@@ -62,10 +67,10 @@ const darkMode = ref(false)
 const msgContainer = ref(null)
 const showScrollBtn = ref(false)
 
-// ── Mermaid 初始化（必须在 darkMode ref 之后）──
-initMermaid(darkMode.value)
-watch(darkMode, (val) => {
-  initMermaid(val)
+// ── Mermaid 初始化（CSS 变量自动适应暗色/亮色）──
+initMermaid()
+watch(darkMode, () => {
+  initMermaid()
   nextTick(() => {
     document.querySelectorAll('.mermaid').forEach(el => {
       delete el.dataset.processed
