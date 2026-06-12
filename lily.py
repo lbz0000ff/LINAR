@@ -67,7 +67,7 @@ def _launch_web() -> None:
     """Launch the FastAPI server in a subprocess (keeps terminal clean)."""
     agent_dir = os.path.join(_project_root, "agent")
     proc = subprocess.Popen(
-        [sys.executable, "-m", "agent.main"],
+        [sys.executable, "main.py"],
         cwd=agent_dir,
     )
     print(f"[lily] Web UI started at http://127.0.0.1:8080")

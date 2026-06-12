@@ -302,14 +302,13 @@ _all_tools = {
 
 # ── public API ───────────────────────────────────────────────
 
-def get_tools(enabled_sets=None):
+def get_tools(enabled_sets=None, include_mcp=True):
     """Return a dict of tools filtered by enabled toolset names.
 
     If enabled_sets is None, returns all tools (backwards-compatible).
-    Also starts MCP servers from config and appends their tools.
+    When include_mcp=True (default), also starts MCP servers.
     """
-    # Start MCP servers once
-    mcp_tools = _init_mcp_servers()
+    mcp_tools = _init_mcp_servers() if include_mcp else {}
 
     if enabled_sets is None:
         all_tools = dict(_all_tools)
@@ -322,7 +321,7 @@ def get_tools(enabled_sets=None):
         for tool_name in _TOOLSETS.get(name, []):
             if tool_name in _all_tools:
                 selected[tool_name] = _all_tools[tool_name]
-    if "mcp" in enabled_sets:
+    if include_mcp and "mcp" in enabled_sets:
         selected.update(mcp_tools)
     log.info("Loaded %d tools from enabled sets: %s", len(selected), enabled_sets)
     return selected

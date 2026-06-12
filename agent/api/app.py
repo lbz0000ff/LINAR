@@ -2,6 +2,7 @@
 
 import os
 import sys
+import asyncio
 import logging
 from pathlib import Path
 
@@ -22,9 +23,12 @@ from .session_manager import SessionManager
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     sm = SessionManager()
-    sm.initialize()
+    sm.init_light()  # native tools only, returns fast (~0.1s)
     app.state.sm = sm
+    # Start MCP servers in background — uvicorn will start before them
+    background_task = asyncio.create_task(sm.init_mcp_background())
     yield
+    background_task.cancel()
     sm.shutdown()
 
 

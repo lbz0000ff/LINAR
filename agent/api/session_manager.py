@@ -139,20 +139,39 @@ class SessionManager:
         self._broadcast_queues: list[asyncio.Queue] = []
         self._session_lock = asyncio.Lock()
 
-    def initialize(self):
+    def init_light(self):
+        """Fast init: native tools only, no MCP startup."""
         _agent_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..")
         _project_root = os.path.dirname(_agent_dir)
         sys.path.insert(0, _agent_dir)
 
         cfg = load_config()
         enabled = cfg.get("tools", {}).get("enabled_sets", None)
-        self.tools = get_tools(enabled)
+        self._enabled = enabled
+        # Native tools only — MCP starts later in background
+        native = [s for s in (enabled or []) if s != "mcp"]
+        self.tools = get_tools(native or None, include_mcp=False)
 
         skills_dir = os.path.join(_project_root, "skills")
         if os.path.isdir(skills_dir):
             load_skills_from_markdown(skills_dir)
 
-        log.info("SessionManager initialized (tools=%d)", len(self.tools))
+        log.info("SessionManager initialized (native tools=%d)", len(self.tools))
+
+    async def init_mcp_background(self):
+        """Start MCP servers in background, update all sessions when ready."""
+        log.info("Starting MCP servers in background...")
+        from tool_registry import reload_mcp_servers
+        try:
+            full_tools = await asyncio.to_thread(reload_mcp_servers)
+            self.tools = full_tools
+            # Update all existing sessions with the full toolset
+            for session in self._sessions.values():
+                session.agent.tools = full_tools
+                session.agent.llm.tools = full_tools
+            log.info("MCP tools ready: %d total tools", len(full_tools))
+        except Exception as e:
+            log.warning("MCP background init failed: %s", e)
 
     def _broadcast_event(self, event: dict):
         """Put event into all subscriber queues."""
