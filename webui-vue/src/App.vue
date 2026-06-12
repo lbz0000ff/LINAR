@@ -12,6 +12,16 @@ import InputArea from './components/InputArea.vue'
 import SettingsPage from './components/SettingsPage.vue'
 
 marked.setOptions({ breaks: true, gfm: true })
+// Custom renderer: detect ```mermaid blocks
+marked.use({
+  renderer: {
+    code({ text, lang }) {
+      if (lang === 'mermaid') return `<div class="mermaid">${text}</div>`
+      const langAttr = lang ? ` class="language-${lang}"` : ''
+      return `<pre><code${langAttr}>${escapeHtml(text)}</code></pre>`
+    }
+  }
+})
 mermaid.initialize({ startOnLoad: false, theme: 'base' })
 
 // ── 状态 ──
