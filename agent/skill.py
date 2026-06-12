@@ -56,8 +56,8 @@ def _get_async_loop() -> asyncio.AbstractEventLoop:
     return _async_loop
 
 
-# ── Claude Code granular tool name → Lily tool name mapping ──
-_CLAUDE_TO_LILY_TOOLS = {
+# ── Hook-compatible tool name → Lily tool name mapping ──
+_HOOK_TOOL_MAP = {
     "Bash": ["cmd_execute"],
     "Read": ["read_file", "search_files"],
     "Write": ["write_file"],
@@ -73,7 +73,7 @@ _CLAUDE_TO_LILY_TOOLS = {
 
 
 def _resolve_tool_name(raw: str) -> list[str]:
-    """Resolve a Claude Code granular tool name to Lily tool names.
+    """Resolve a granular tool name to Lily tool names.
 
     ``Bash(python3 *)`` → ``["cmd_execute"]`` (arg pattern ignored for now)
     ``Read`` → ``["read_file", "search_files"]``
@@ -83,9 +83,9 @@ def _resolve_tool_name(raw: str) -> list[str]:
     base = raw.split("(")[0] if "(" in raw else raw
     base = base.strip()
 
-    # Check Claude Code names first
-    if base in _CLAUDE_TO_LILY_TOOLS:
-        return _CLAUDE_TO_LILY_TOOLS[base]
+    # Check hook-compatible names first
+    if base in _HOOK_TOOL_MAP:
+        return _HOOK_TOOL_MAP[base]
 
     # Pass-through: assume it's already a Lily tool name
     return [base]

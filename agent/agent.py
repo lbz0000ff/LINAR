@@ -467,7 +467,7 @@ class Agent:
                 cmd = [sys.executable, script]
             else:
                 cmd = [script]
-            env = {**context, "CLAUDE_SKILL_DIR": skill_dir, "CLAUDE_HOOK_EVENT": event}
+            env = {**context, "ECHOLILY_SKILL_DIR": skill_dir, "ECHOLILY_HOOK_EVENT": event}
             result = await asyncio.to_thread(
                 subprocess.run, cmd,
                 capture_output=True, text=True, timeout=30,
@@ -831,8 +831,8 @@ class Agent:
                     raw_args = tc["arguments"]
                     args_dict = json.loads(raw_args) if isinstance(raw_args, str) else raw_args
                     hook_result = await self._run_hook("PreToolUse", {
-                        "CLAUDE_TOOL_NAME": tc["name"],
-                        "CLAUDE_TOOL_ARGUMENTS": tc["arguments"],
+                        "ECHOLILY_TOOL_NAME": tc["name"],
+                        "ECHOLILY_TOOL_ARGUMENTS": tc["arguments"],
                     })
                     if hook_result:
                         try:
@@ -957,9 +957,9 @@ class Agent:
                 })
                 self.emit({"type": "tool_result", "name": tc["name"], "result": result_str})
                 await self._run_hook("PostToolUse", {
-                    "CLAUDE_TOOL_NAME": tc["name"], "CLAUDE_TOOL_ARGUMENTS": tc["arguments"],
-                    "CLAUDE_TOOL_RESULT": result_str,
-                    "CLAUDE_TOOL_ERROR": result_str if is_failure else "",
+                    "ECHOLILY_TOOL_NAME": tc["name"], "ECHOLILY_TOOL_ARGUMENTS": tc["arguments"],
+                    "ECHOLILY_TOOL_RESULT": result_str,
+                    "ECHOLILY_TOOL_ERROR": result_str if is_failure else "",
                 })
                 await asyncio.to_thread(
                     db.save_message, self.session_id, "tool",
