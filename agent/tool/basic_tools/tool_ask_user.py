@@ -3,6 +3,7 @@
 The LLM calls this tool when it needs information only the user can provide,
 such as passwords, file paths, or confirmation before proceeding.
 """
+import asyncio
 from .tool import Tool
 
 
@@ -60,7 +61,9 @@ class Tool_AskUser(Tool):
         "required": ["prompt"],
     }
 
-    def execute(self, prompt: str, password: bool = False, choices: list | None = None) -> str:
+    async def execute(self, prompt: str, password: bool = False, choices: list | None = None) -> str:
         if self.interactive_input:
+            if asyncio.iscoroutinefunction(self.interactive_input):
+                return await self.interactive_input(prompt, password=password, choices=choices)
             return self.interactive_input(prompt, password=password, choices=choices)
         return ""

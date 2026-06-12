@@ -27,10 +27,13 @@ const darkMode = ref(false)
 // ── WS 消息分发 ──
 function handleMessage(event) {
   const t = event.type
+  const ts = t === 'token' ? event.data?.slice(0, 30) : ''
+  if (t !== 'token' && t !== 'reasoning_token') console.log('[ws]', t, ts || '')
   if (t === 'sessions' && event.data) loadSessions(event.data)
   else if (t === 'session_msgs' && event.data) {
     messages.value = convertDbMessages(event.data).map(m => ({ ...m, collapsed: true }))
     if (event.title) chatTitle.value = event.title
+    nextTick(() => { try { mermaid.run({ nodes: document.querySelectorAll('.mermaid') }) } catch (_) {} })
   }
   else if (t === 'new_session_created') {
     if (isNewSession.value) { currentSessionId.value = event.session_id; isNewSession.value = false }
@@ -60,12 +63,32 @@ function convertDbMessages(dbMsgs) {
     const text = m.content || ''
     const filePaths = extractFilePaths(text)
     const cleanText = stripFileTags(text)
-    return {
-      role: m.role || 'user', text: cleanText, _rawText: text,
+    const role = m.role === 'agent' ? 'ai' : (m.role || 'user')
+    const base = {
+      role, text: cleanText, _rawText: text,
       tool_name: m.tool_name || '', reasoning: m.reasoning || '',
       tool_call_id: m.tool_call_id || '', tool_calls: m.tool_calls || '',
       created_at: m.created_at || '', _filePaths: filePaths,
     }
+    // Reconstruct tool call state from stored JSON content
+    if (role === 'tool' && text) {
+      try {
+        const parsed = JSON.parse(text)
+        base.args = parsed.args || {}
+        const r = typeof parsed.result === 'string' ? parsed.result : ''
+        base.result = r.length > 2000 ? r.slice(0, 2000) + '...' : r
+        base.status = 'done'
+      } catch (_) {
+        base.args = {}
+        base.result = text.slice(0, 2000)
+        base.status = 'done'
+      }
+    }
+    // Render markdown for AI messages on load
+    if (role === 'ai' && cleanText) {
+      base.text = renderMd(cleanText)
+    }
+    return base
   })
 }
 
@@ -294,7 +317,7 @@ onUnmounted(() => offMessage(handleMessage))
               <div class="reasoning-toggle" @click="msg.collapsed = !msg.collapsed; messages = [...messages]">💭 思考过程</div>
               <div v-show="!msg.collapsed" class="reasoning-text">{{ msg.reasoning }}</div>
             </div>
-            <div class="msg-content" v-html="msg.text"></div>
+            <div v-if="msg.text" class="msg-content" v-html="msg.text"></div>
             <!-- 历史消息中的文件附件 -->
             <div v-if="msg._filePaths?.length" v-html="renderFileAttachments(msg._filePaths)"></div>
           </div>
