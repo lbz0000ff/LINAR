@@ -16,41 +16,13 @@ marked.setOptions({ breaks: true, gfm: true })
 marked.use({
   renderer: {
     code({ text, lang }) {
-      if (lang === 'mermaid') return `<div class="mermaid">${text}</div>`
+      if (lang === 'mermaid') return `<div class="mermaid-wrap"><div class="mermaid">${text}</div></div>`
       const langAttr = lang ? ` class="language-${lang}"` : ''
       return `<pre><code${langAttr}>${escapeHtml(text)}</code></pre>`
     }
   }
 })
-function resolveCSSVar(name) {
-  const val = getComputedStyle(document.documentElement).getPropertyValue(name).trim()
-  if (!val) return '#ccc'
-  // Let the browser resolve OKLch → RGB, Mermaid can't parse OKLch
-  const el = document.createElement('div')
-  el.style.color = val
-  document.body.appendChild(el)
-  const resolved = getComputedStyle(el).color
-  document.body.removeChild(el)
-  return resolved  // "rgb(r, g, b)"
-}
-
-function initMermaid() {
-  mermaid.initialize({
-    startOnLoad: false,
-    theme: 'base',
-    themeVariables: {
-      primaryColor: resolveCSSVar('--bg-glass'),
-      primaryTextColor: resolveCSSVar('--text-primary'),
-      primaryBorderColor: resolveCSSVar('--border-glass'),
-      lineColor: resolveCSSVar('--text-secondary'),
-      secondaryColor: resolveCSSVar('--bg-ai-bubble'),
-      tertiaryColor: resolveCSSVar('--bg-page'),
-      noteBkgColor: resolveCSSVar('--bg-plan-bubble'),
-      noteTextColor: resolveCSSVar('--text-secondary'),
-      fontSize: '14px',
-    },
-  })
-}
+mermaid.initialize({ startOnLoad: false })
 // ── 状态 ──
 const sessions = ref([])
 const messages = ref([])
@@ -67,18 +39,6 @@ const darkMode = ref(false)
 const msgContainer = ref(null)
 const showScrollBtn = ref(false)
 
-// ── Mermaid 初始化（CSS 变量自动适应暗色/亮色）──
-initMermaid()
-watch(darkMode, () => {
-  initMermaid()
-  nextTick(() => {
-    document.querySelectorAll('.mermaid').forEach(el => {
-      delete el.dataset.processed
-      el.innerHTML = el.dataset.original || el.textContent || ''
-    })
-    try { mermaid.run({ nodes: document.querySelectorAll('.mermaid') }) } catch (_) {}
-  })
-})
 
 function onMsgScroll() {
   if (!msgContainer.value) return
@@ -886,6 +846,18 @@ body.dark #chat-area {
 /* ── KaTeX 公式 ── */
 .math-block { overflow-x: auto; padding: 8px 0; text-align: center; }
 .katex { font-size: 1.05em; }
+
+/* ── Mermaid 固定背景容器（不受暗色模式影响）── */
+.mermaid-wrap {
+  background: oklch(98% 0.003 60);
+  border-radius: var(--radius-md);
+  padding: 12px;
+  margin: 10px 0;
+  overflow-x: auto;
+}
+body.dark .mermaid-wrap {
+  background: oklch(96% 0.004 60);
+}
 
 /* ── 空状态 ── */
 .empty-state {

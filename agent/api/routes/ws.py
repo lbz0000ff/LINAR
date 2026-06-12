@@ -145,8 +145,3 @@ async def ws_endpoint(ws: WebSocket):
     finally:
         sender.cancel()
         sm.unsubscribe(sub_queue)
-        # 页面关闭时打断正在运行中的 agent，避免浪费
-        if active_session_id is not None:
-            session = sm.get(active_session_id)
-            if session:
-                session.stop()
