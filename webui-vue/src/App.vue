@@ -129,6 +129,14 @@ function escapeHtml(s) {
   return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
 }
 function stripFileTags(text) { return (text || '').replace(/\[file:[^\]]*\]/g, '').trim() }
+function formatTokens(n) {
+  if (!n) return '0'; if (n >= 1e6) return (n / 1e6).toFixed(2) + 'M'
+  if (n >= 1e3) return (n / 1e3).toFixed(1) + 'K'; return String(n)
+}
+function cacheRate(u) {
+  const hit = u?.prompt_cache_hit_tokens || 0; const miss = u?.prompt_cache_miss_tokens || 0
+  return hit + miss === 0 ? 0 : Math.round(hit / (hit + miss) * 100)
+}
 
 // ── DOM 后处理：高亮、复制按钮、Mermaid ──
 function postRender() {
@@ -426,11 +434,15 @@ onUnmounted(() => offMessage(handleMessage))
           <!-- 系统 -->
           <div v-else-if="msg.role === 'system' || msg.role === 'notification'" class="msg-system">{{ msg.text }}</div>
         </div>
-        <!-- Token 用量条 -->
-        <div v-if="usage?.total_tokens" id="usage-bar">
-          <span>{{ usage.total_tokens }} tokens</span>
-          <div class="usage-track"><div class="usage-fill" :style="{ width: Math.min(100, (usage.total_tokens / 128000) * 100) + '%' }"></div></div>
-          <span>{{ Math.min(100, Math.round((usage.total_tokens / 128000) * 100)) }}%</span>
+        <!-- 上下文进度条 -->
+        <div v-if="usage?.prompt_tokens" id="usage-bar">
+          <span class="usage-label">Context:</span>
+          <span class="usage-value">{{ formatTokens(usage.prompt_tokens) }} / 1.00M</span>
+          <div class="usage-track"><div class="usage-fill" :style="{ width: Math.min(100, (usage.prompt_tokens / 1000000) * 100) + '%' }"></div></div>
+          <span class="usage-pct">{{ Math.min(100, Math.round((usage.prompt_tokens / 1000000) * 100)) }}%</span>
+          <span v-if="usage.prompt_cache_hit_tokens || usage.prompt_cache_miss_tokens" class="usage-cache">
+            cache: {{ cacheRate(usage) }}%
+          </span>
         </div>
       </div>
       <InputArea
