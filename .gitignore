@@ -31,6 +31,7 @@ webui/design-demo
 docs/
 !/README.md
 !/ARCHITECTURE.md
+!/CLAUDE.md
 
 #Exclude all skills except basic skills
 skills/*
