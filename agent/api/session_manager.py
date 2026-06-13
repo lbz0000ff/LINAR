@@ -163,13 +163,14 @@ class SessionManager:
         log.info("Starting MCP servers in background...")
         from tool_registry import reload_mcp_servers
         try:
-            full_tools = await asyncio.to_thread(reload_mcp_servers)
-            self.tools = full_tools
-            # Update all existing sessions with the full toolset
+            mcp_tools = await asyncio.to_thread(reload_mcp_servers)
+            # Merge MCP tools into existing native tools (don't replace!)
+            self.tools.update(mcp_tools)
             for session in self._sessions.values():
-                session.agent.tools = full_tools
-                session.agent.llm.tools = full_tools
-            log.info("MCP tools ready: %d total tools", len(full_tools))
+                session.agent.tools.update(mcp_tools)
+                session.agent.llm.tools.update(mcp_tools)
+            log.info("MCP tools ready: %d MCP tools (native=%d, total=%d)",
+                      len(mcp_tools), len(self.tools) - len(mcp_tools), len(self.tools))
         except Exception as e:
             log.warning("MCP background init failed: %s", e)
 
