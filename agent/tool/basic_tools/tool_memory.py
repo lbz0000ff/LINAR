@@ -210,23 +210,21 @@ class Tool_Remember(Tool):
     description: str = "Store a summary of important conversation turns to memory for future retrieval."
     tool_schema: dict = {
         "name": "remember",
-        "description": "Stores information to persistent memory files that are reloaded "
-                       "in future conversations.\n\n"
-                       "- user: the USER's personal traits, preferences, habits → USER.md\n"
-                       "- normal: facts about Lily herself or the conversation → MEMORY.md\n"
-                       "- archive: content too long to fit in a single MEMORY.md line (>250 chars) "
-                       "→ saved as a separate .md file, with [MEM:tag] in MEMORY.md\n"
+        "description": "Stores information to persistent memory.\n\n"
+                       "- user: the USER's personal traits, preferences, habits → Fact Store\n"
+                       "- normal: facts about Lily herself or the conversation → Fact Store\n"
+                       "- archive: long detailed content → saved as a separate file\n"
                        "- event: bookmark conversation turns → [EVENT:session_id,turns] "
-                       "short sentence in MEMORY.md",
+                       "short sentence in memory index",
         "parameters": {
             "type": "object",
             "properties": {
                 "memory_type": {
                     "type": "string",
-                    "description": "user: user's traits/preferences → USER.md. "
-                                   "normal: fact about Lily/conversation → MEMORY.md. "
-                                   "archive: long content → separate file with [MEM:tag]. "
-                                   "event: bookmark conversation turns → [EVENT:...] short sentence."
+                    "description": "user: user's traits/preferences → Fact Store. "
+                                   "normal: fact about Lily/conversation → Fact Store. "
+                                   "archive: long content → separate file. "
+                                   "event: bookmark conversation turns."
                 },
                 "value": {
                     "type": "string",
@@ -306,12 +304,43 @@ class Tool_Remember(Tool):
         _write_file(_MEMORY_FILE, content)
         return label
 
-    # ── user: user traits/preferences → USER.md ────────────
+    # ── user: user traits/preferences → Fact Store ───────
 
     def _user(self, value: str) -> str:
+        """Write a user fact to the Fact Store (topic: preference)."""
+        try:
+            from memory.fact import Fact, FactStore
+            from memory.collision import detect as _cd, Duplicate, Extends, Conflict
+
+            store = FactStore()
+            candidates = store.get_by_topic("preference", active=True)
+            result = _cd(value, candidates)
+
+            if isinstance(result, Duplicate):
+                preview = value[:80] + ("…" if len(value) > 80 else "")
+                return f"Already exists as [{result.existing.id}]: {preview}"
+
+            fact = Fact(content=value, topic="preference", source="remember_tool")
+            if isinstance(result, (Extends, Conflict)):
+                store.commit(fact, conflicting=result.existing)
+                action = "updated" if isinstance(result, Extends) else "conflict"
+            else:
+                store.commit(fact)
+                action = "stored"
+
+            store.save()
+            preview = value[:80] + ("…" if len(value) > 80 else "")
+            return f"{action} in Fact Store as [{fact.id}]: {preview}"
+        except Exception as e:
+            # Fallback to old USER.md on any failure
+            from logger import get_logger as _gl
+            _gl(__name__).warning("FactStore write failed (%s), falling back to USER.md", e)
+            return self._user_fallback(value)
+
+    def _user_fallback(self, value: str) -> str:
+        """Original USER.md writer — kept as fallback."""
         content = _read_file(_USER_FILE)
 
-        # Dedup check
         dedup_id, match = _is_duplicate(content, "U", value, _get_dedup_threshold())
         if dedup_id:
             preview = value[:80] + ("…" if len(value) > 80 else "")
@@ -334,10 +363,43 @@ class Tool_Remember(Tool):
         preview = value[:80] + ("…" if len(value) > 80 else "")
         return f"Stored in USER.md as [U{uid}]: {preview}"
 
-    # ── normal: short fact → MEMORY.md (auto-archive if too long) ────
+    # ── normal: short fact → Fact Store (topic: general) ─
 
     def _normal(self, value: str) -> str:
-        # Auto-redirect long entries to archive
+        """Write a general fact to the Fact Store (topic: general)."""
+        if len(value) > 250:
+            return self._archive(value)
+
+        try:
+            from memory.fact import Fact, FactStore
+            from memory.collision import detect as _cd, Duplicate, Extends, Conflict
+
+            store = FactStore()
+            candidates = store.get_by_topic("general", active=True)
+            result = _cd(value, candidates)
+
+            if isinstance(result, Duplicate):
+                preview = value[:80] + ("…" if len(value) > 80 else "")
+                return f"Already exists as [{result.existing.id}]: {preview}"
+
+            fact = Fact(content=value, topic="general", source="remember_tool")
+            if isinstance(result, (Extends, Conflict)):
+                store.commit(fact, conflicting=result.existing)
+                action = "updated" if isinstance(result, Extends) else "conflict"
+            else:
+                store.commit(fact)
+                action = "stored"
+
+            store.save()
+            preview = value[:80] + ("…" if len(value) > 80 else "")
+            return f"{action} in Fact Store as [{fact.id}]: {preview}"
+        except Exception as e:
+            from logger import get_logger as _gl
+            _gl(__name__).warning("FactStore write failed (%s), falling back to MEMORY.md", e)
+            return self._normal_fallback(value)
+
+    def _normal_fallback(self, value: str) -> str:
+        """Original MEMORY.md writer — kept as fallback."""
         if len(value) > 250:
             return self._archive(value)
         mid = self._append(f"[M{_next_id(_read_file(_MEMORY_FILE), 'M')}]", value)

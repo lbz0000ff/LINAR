@@ -64,6 +64,26 @@ DEFAULTS = {
         "protect_last_rounds": 3,
         "strategy": "compact",  # "compact" | "compress"
     },
+    "memory": {
+        "enabled": True,
+        "extraction": {
+            "min_interval_rounds": 8,
+            "max_interval_rounds": 20,
+            "max_window_rounds": 20,
+        },
+        "collision": {
+            "threshold_exact": 0.85,
+            "threshold_extends": 0.60,
+        },
+        "view": {
+            "properties_limit": 15,
+            "pinned_limit": 5,
+            "candidate_pool_size": 30,
+            "selected_slots": 15,
+            "score_decay": 0.8,
+            "new_fact_bias": 0.3,
+        },
+    },
     "aux": {
         "provider": "deepseek",
         "model": "",
@@ -81,8 +101,8 @@ DEFAULTS = {
         "files": [
             "system_prompt_base.md",
             "SOUL.md",
-            "USER.md",
-            "MEMORY.md",
+            "USR.md",
+            "AGT.md",
         ],
     },
     "hooks": {

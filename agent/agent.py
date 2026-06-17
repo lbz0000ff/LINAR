@@ -104,6 +104,22 @@ class Agent:
         load_hooks_from_config(merged_hooks_config, self.hooks)
     def _build_prompt(self, cfg):
         """Load and join prompt files listed in config."""
+        # ── Memory View compilation (session start, one-shot) ──────────
+        if cfg.get("memory", {}).get("enabled", True):
+            try:
+                from memory.fact import FactStore
+                from memory.topic import TopicRegistry
+                from memory.compiler import compile_view
+
+                store = FactStore()
+                tr = TopicRegistry()
+                if store.has_changed_since_last_compile():
+                    # Use aux model if available, otherwise main model
+                    mem_cfg = cfg.get("aux") or cfg.get("llm", {})
+                    compile_view(store, tr, llm_cfg=mem_cfg)
+            except Exception as e:
+                log.warning("Memory compilation skipped: %s", e)
+
         prompt_dir = "prompt"
         parts = []
         for filename in cfg.get("prompt", {}).get("files", []):

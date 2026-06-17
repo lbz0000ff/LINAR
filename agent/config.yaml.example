@@ -44,9 +44,8 @@ vision:
     max_image_size_mb: 20
 
 # Memory Configuration
-max_memory_length: 2200          # MEMORY.md 字符上限（~1100 汉字 / ~350 词）
-max_user_preferences_length: 500 # USER.md 字符上限（~250 汉字 / ~80 词）
-memory_dedup_threshold: 0.85     # similarity ratio (0-1) for fuzzy memory dedup
+# Now managed by the State-Oriented Memory System — see ``memory:`` section below.
+# Legacy memory tools (remember/recall) still available via the "memory" toolset.
 
 # Tool Selection
 tools:
@@ -133,10 +132,29 @@ mcp_servers:
   #   command: npx
   #   args: ["-y", "@modelcontextprotocol/server-github"]
 
+# Memory Configuration (State-Oriented Memory System)
+# See docs/MEMORY_ARCHITECTURE.md for design details.
+memory:
+    enabled: true
+    extraction:
+        min_interval_rounds: 8    # Min rounds between extractions
+        max_interval_rounds: 20   # Max rounds between extractions (safety valve)
+        max_window_rounds: 20     # Max window size sent to LLM
+    collision:
+        threshold_exact: 0.85     # difflib ratio for exact dedup
+        threshold_extends: 0.60   # difflib ratio for extends/conflict
+    view:
+        properties_limit: 15
+        pinned_limit: 5
+        candidate_pool_size: 30
+        selected_slots: 15
+        score_decay: 0.8          # view_score decay per compilation
+        new_fact_bias: 0.3        # initial view_score for new facts
+
 # Prompt File Loading Order
 prompt:
     files:
         - SOUL.md
         - system_prompt_base.md
-        - USER.md
-        - MEMORY.md
+        - USR.md          # Compiled user state view (replaces USER.md)
+        - AGT.md          # Compiled agent state view (replaces MEMORY.md)

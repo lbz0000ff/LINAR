@@ -15,6 +15,9 @@ from enum import Enum, auto
 from openai import AsyncOpenAI
 
 from hooks import HookContext, HookEvent
+from logger import get_logger as _get_logger
+
+log = _get_logger(__name__)
 
 
 class Stage(Enum):
@@ -101,6 +104,9 @@ class Orchestrator:
                 )
                 await self._transition(Stage.ERROR)
                 raise
+
+        # ── Memory extraction (after each conversation round) ──
+        await self._try_memory_extraction()
 
         self._post_process_cleanup()
         await self._transition(Stage.COMPLETE)
@@ -477,6 +483,44 @@ class Orchestrator:
                 plan_status.agent_ref = None
             self.agent.current_plan = None
             self.current_plan = None
+
+    # ── memory ──────────────────────────────────────────────
+
+    async def _try_memory_extraction(self) -> None:
+        """Try to extract memory facts after a conversation round.
+
+        Non‑fatal: failures are logged, never raised.
+        """
+        cfg = getattr(self.agent, "cfg", {})
+        if not cfg.get("memory", {}).get("enabled", True):
+            return
+
+        try:
+            from memory.fact import FactStore
+            from memory.topic import TopicRegistry
+            from memory.extractor import try_extract as _try_extract
+
+            session_id = self.agent.session_id
+            if not session_id:
+                return
+
+            import database as db
+            messages = db.get_session_messages(session_id)
+            current_round = self.agent._conversation_round
+
+            store = FactStore()
+            tr = TopicRegistry()
+            # Use aux model if configured, otherwise main model
+            llm_cfg = cfg.get("aux") or cfg.get("llm", {})
+
+            await asyncio.to_thread(
+                _try_extract,
+                store, tr, messages,
+                session_id, current_round, llm_cfg,
+            )
+        except Exception as e:
+            from logger import get_logger as _gl
+            _gl(__name__).warning("Memory extraction skipped: %s", e)
 
     # ── helpers ───────────────────────────────────────────
 
