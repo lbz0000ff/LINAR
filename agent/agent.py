@@ -4,6 +4,7 @@ import os
 import re
 import subprocess
 import sys
+import time
 
 from llm import LLM
 from config import load_config
@@ -11,6 +12,7 @@ from logger import get_logger
 from permissions import PermissionManager
 import database as db
 from skill import get_skill
+from hooks import HookRegistry, HookContext, HookEvent, _LEGACY_HOOK_EVENT
 
 log = get_logger(__name__)
 
@@ -76,6 +78,30 @@ class Agent:
         self.trim_to_chars = self.chat_cfg.get("trim_to", 5000)
         self.protect_last_rounds = self.chat_cfg.get("protect_last_rounds", 3)
         self.strategy = self.chat_cfg.get("strategy", "compact")
+
+        # ── Hook system ───────────────────────────────────────────────────
+        self.hooks = HookRegistry()
+        # Load hooks from config
+        hooks_config = cfg.get("hooks", {})
+        from hooks_config import load_hooks_from_config, DEFAULT_HOOKS_CONFIG
+
+        # Merge config hooks with defaults
+        merged_hooks_config = DEFAULT_HOOKS_CONFIG.copy()
+        if hooks_config:
+            # Merge register lists (config overrides defaults)
+            config_register = hooks_config.get("register")
+            if isinstance(config_register, list):
+                # Remove disabled hooks from defaults
+                disabled_events = {h["event"] for h in config_register if h.get("enabled", False) is False}
+                active_config_hooks = [h for h in config_register if h.get("enabled", True) is not False]
+
+                # Start with defaults (excluding disabled)
+                merged_hooks_config["register"] = [
+                    h for h in DEFAULT_HOOKS_CONFIG["register"]
+                    if h["event"] not in disabled_events
+                ] + active_config_hooks
+
+        load_hooks_from_config(merged_hooks_config, self.hooks)
     def _build_prompt(self, cfg):
         """Load and join prompt files listed in config."""
         prompt_dir = "prompt"
@@ -413,8 +439,32 @@ class Agent:
                 arguments = json.loads(arguments)
             except (json.JSONDecodeError, TypeError):
                 arguments = {}
+
+        # Dispatch PERMISSION_CHECK hook (observation-only, cannot override)
+        await self.hooks.dispatch_fire_and_forget(
+            HookContext(
+                event=HookEvent.PERMISSION_CHECK,
+                agent=self,
+                timestamp=time.time(),
+                tool_name=tool_name,
+                tool_arguments=arguments,
+                metadata={"permission_level": None},
+            )
+        )
+
         level = self.permissions.check(tool_name, tool_args=arguments)
         if level == "deny":
+            # Dispatch TOOL_DENIED hook
+            await self.hooks.dispatch_fire_and_forget(
+                HookContext(
+                    event=HookEvent.TOOL_DENIED,
+                    agent=self,
+                    timestamp=time.time(),
+                    tool_name=tool_name,
+                    tool_arguments=arguments,
+                    metadata={"reason": "permission_denied"},
+                )
+            )
             return (
                 f"[PERMISSION_DENIED] Tool '{tool_name}' is restricted by "
                 f"permission settings. Do NOT retry — it will fail again."
@@ -435,10 +485,32 @@ class Agent:
                 return None
             if result == "never":
                 self.permissions.set_override(tool_name, "deny")
+                # Dispatch TOOL_DENIED hook (user rejected)
+                await self.hooks.dispatch_fire_and_forget(
+                    HookContext(
+                        event=HookEvent.TOOL_DENIED,
+                        agent=self,
+                        timestamp=time.time(),
+                        tool_name=tool_name,
+                        tool_arguments=arguments,
+                        metadata={"reason": "user_rejected_never"},
+                    )
+                )
                 return (
                     f"[REJECTED_BY_USER] Tool '{tool_name}' was blocked — "
                     f"the user chose to never allow it. Do NOT retry."
                 )
+            # Dispatch TOOL_DENIED hook (user rejected)
+            await self.hooks.dispatch_fire_and_forget(
+                HookContext(
+                    event=HookEvent.TOOL_DENIED,
+                    agent=self,
+                    timestamp=time.time(),
+                    tool_name=tool_name,
+                    tool_arguments=arguments,
+                    metadata={"reason": "user_rejected_once"},
+                )
+            )
             return (
                 f"[REJECTED_BY_USER] Tool '{tool_name}' was not approved by the "
                 f"user. Try a different approach or ask the user."
@@ -446,6 +518,46 @@ class Agent:
         return None
     # ── lifecycle hooks ──────────────────────────────────────────
     async def _run_hook(self, event: str, context: dict) -> str | None:
+        """Run hook (legacy external process shim).
+
+        This method maintains backward compatibility with skill-based external
+        process hooks. It also triggers HookRegistry hooks for the same event.
+
+        DEPRECATED: New code should use HookRegistry directly via self.hooks.dispatch().
+
+        Args:
+            event: Legacy event name (e.g., "PreToolUse", "PostToolUse")
+            context: Context dictionary (passed as env vars to external process)
+
+        Returns:
+            String result from external process hook, or None
+        """
+        # ── Trigger HookRegistry hooks (new system) ────────────────────────
+        hook_event = _LEGACY_HOOK_EVENT.get(event)
+        if hook_event:
+            # Build HookContext from legacy context dict
+            hook_ctx = HookContext(
+                event=hook_event,
+                agent=self,
+                timestamp=time.time(),
+                tool_name=context.get("ECHOLILY_TOOL_NAME", ""),
+                tool_arguments=context.get("ECHOLILY_TOOL_ARGUMENTS", ""),
+                tool_result=context.get("ECHOLILY_TOOL_RESULT", ""),
+                tool_error=context.get("ECHOLILY_TOOL_ERROR", ""),
+                user_input=context.get("ECHOLILY_USER_INPUT", ""),
+                agent_text=context.get("ECHOLILY_AGENT_TEXT", ""),
+                stage=context.get("ECHOLILY_STAGE", ""),
+                previous_stage=context.get("ECHOLILY_PREVIOUS_STAGE", ""),
+            )
+
+            # Dispatch hooks
+            await self.hooks.dispatch(hook_ctx)
+
+            # Check if HookRegistry hooks blocked execution
+            if hook_ctx.blocked:
+                return f"[BLOCKED_BY_HOOK] {hook_ctx.block_reason}"
+
+        # ── Legacy external process hooks (for backward compatibility) ───────
         if not self._active_skill or not self._active_skill.hooks:
             return None
         script = self._active_skill.hooks.get(event)
@@ -548,7 +660,7 @@ class Agent:
             total - len(self._format_chat_history()),
             len(middle) - len(compacted),
         )
-    def add_user_message(self, text: str):
+    async def add_user_message(self, text: str):
         """Append a user message with a [round N] marker and archive it."""
         if self.session_id is None:
             self.session_id = db.create_session()
@@ -558,7 +670,15 @@ class Agent:
         self.chat_history.append({
             "role": "user", "content": text, "round": self._conversation_round,
         })
-        db.save_message(self.session_id, "user", text, conversation_round=self._conversation_round)
+        # Dispatch USER_MESSAGE hook (fire-and-forget for db persistence)
+        await self.hooks.dispatch_fire_and_forget(
+            HookContext(
+                event=HookEvent.USER_MESSAGE,
+                agent=self,
+                timestamp=time.time(),
+                user_input=text,
+            )
+        )
         if self._conversation_round == 1:
             db.update_session_title(self.session_id, text[:80])
     def switch_session(self, session_id: int) -> bool:
@@ -717,6 +837,17 @@ class Agent:
             if self.max_llm_calls > 0 and llm_call > self.max_llm_calls:
                 break
             llm_messages = self._build_llm_messages()
+
+            # Dispatch LLM_START hook
+            await self.hooks.dispatch_fire_and_forget(
+                HookContext(
+                    event=HookEvent.LLM_START,
+                    agent=self,
+                    timestamp=time.time(),
+                    metadata={"call_number": llm_call},
+                )
+            )
+
             self.emit({"type": "start"})
             stream = self.llm.stream_response_messages(llm_messages)
             text_parts = []
@@ -729,16 +860,23 @@ class Agent:
                     u = chunk.usage
                     extra = getattr(u, "model_extra", None) or {}
                     self._last_prompt_tokens = u.prompt_tokens or 0
-                    self.emit({
-                        "type": "usage",
-                        "data": {
-                            "prompt_tokens": u.prompt_tokens or 0,
-                            "completion_tokens": u.completion_tokens or 0,
-                            "total_tokens": u.total_tokens or 0,
-                            "prompt_cache_hit_tokens": extra.get("prompt_cache_hit_tokens", 0),
-                            "prompt_cache_miss_tokens": extra.get("prompt_cache_miss_tokens", 0),
-                        },
-                    })
+                    usage_data = {
+                        "prompt_tokens": u.prompt_tokens or 0,
+                        "completion_tokens": u.completion_tokens or 0,
+                        "total_tokens": u.total_tokens or 0,
+                        "prompt_cache_hit_tokens": extra.get("prompt_cache_hit_tokens", 0),
+                        "prompt_cache_miss_tokens": extra.get("prompt_cache_miss_tokens", 0),
+                    }
+                    self.emit({"type": "usage", "data": usage_data})
+                    # Dispatch LLM_USAGE hook (fire-and-forget for metrics tracking)
+                    await self.hooks.dispatch_fire_and_forget(
+                        HookContext(
+                            event=HookEvent.LLM_USAGE,
+                            agent=self,
+                            timestamp=time.time(),
+                            usage_data=usage_data,
+                        )
+                    )
                 if not chunk.choices:
                     continue
                 delta = chunk.choices[0].delta
@@ -768,6 +906,18 @@ class Agent:
                     "round": self._conversation_round,
                 })
                 break
+
+            # Dispatch LLM_DONE hook
+            await self.hooks.dispatch_fire_and_forget(
+                HookContext(
+                    event=HookEvent.LLM_DONE,
+                    agent=self,
+                    timestamp=time.time(),
+                    agent_text="".join(text_parts),
+                    metadata={"call_number": llm_call},
+                )
+            )
+
             self.emit({"type": "done"})
             text = "".join(text_parts)
             reasoning = "".join(reasoning_parts)
@@ -790,14 +940,19 @@ class Agent:
                         for tc in tool_calls
                     ]
                 self.chat_history.append(entry)
-                await asyncio.to_thread(
-                    db.save_message, self.session_id, "agent", text,
-                    conversation_round=self._conversation_round, reasoning=reasoning,
-                    tool_calls=json.dumps([{
-                        "id": tc["id"], "type": "function",
-                        "function": {"name": tc["name"], "arguments": tc["arguments"]},
-                    } for tc in tool_calls], ensure_ascii=False) if tool_calls else "",
-                    prompt_tokens=self._last_prompt_tokens or 0,
+                # Dispatch AGENT_RESPONSE hook (fire-and-forget for db persistence)
+                await self.hooks.dispatch_fire_and_forget(
+                    HookContext(
+                        event=HookEvent.AGENT_RESPONSE,
+                        agent=self,
+                        timestamp=time.time(),
+                        agent_text=text,
+                        metadata={
+                            "reasoning": reasoning,
+                            "tool_calls": tool_calls,
+                            "prompt_tokens": self._last_prompt_tokens or 0,
+                        }
+                    )
                 )
             if not tool_calls:
                 if reasoning and not text and self._reasoning_only_retries < 1:
@@ -816,7 +971,7 @@ class Agent:
                 break
             self._interrupted = False
             for tc in tool_calls:
-                log.info("[session=%s round=%s] Tool: %s", self.session_id, self._conversation_round, tc["name"])
+                # Tool logging handled by log_tool_call hook (hooks_builtin.py)
                 if self.stop_event.is_set():
                     self._interrupted = True
                     self.chat_history.append({
@@ -961,12 +1116,7 @@ class Agent:
                     "ECHOLILY_TOOL_RESULT": result_str,
                     "ECHOLILY_TOOL_ERROR": result_str if is_failure else "",
                 })
-                await asyncio.to_thread(
-                    db.save_message, self.session_id, "tool",
-                    json.dumps({"args": tc["arguments"], "result": result_str}, ensure_ascii=False),
-                    tool_name=tc["name"], conversation_round=self._conversation_round,
-                    tool_call_id=tc.get("id", ""),
-                )
+                # Tool persistence handled by persist_tool_result hook (hooks_builtin.py)
             self._compact_history()
             if self._interrupted:
                 break

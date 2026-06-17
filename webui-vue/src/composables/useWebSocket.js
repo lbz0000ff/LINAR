@@ -3,8 +3,10 @@
 
 import { ref } from 'vue'
 
-// 相对路径：走 Vite proxy（开发）或同端口（生产）
-const WS_URL = `${location.protocol === 'https:' ? 'wss:' : 'ws:'}//${location.host}/ws`
+// Electron 环境直连后端，浏览器环境走 Vite proxy / 同端口
+const WS_URL = window.electronAPI?.isElectron
+  ? 'ws://127.0.0.1:8080/ws'
+  : `${location.protocol === 'https:' ? 'wss:' : 'ws:'}//${location.host}/ws`
 
 let ws = null
 let reconnectTimer = null

@@ -19,13 +19,9 @@ function switchSection(id) { activeSection.value = id }
   <teleport to="body">
     <div id="settings-backdrop" @click.self="emit('close')">
       <div id="settings-panel">
-        <!-- 头部 -->
-        <div id="settings-header">
-          <button id="settings-close" @click="emit('close')" title="关闭设置">
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
-          </button>
-          <h2>设置</h2>
-        </div>
+        <button id="settings-close" @click="emit('close')" title="关闭">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+        </button>
         <!-- Tabs -->
         <div id="settings-nav">
           <button v-for="sec in sections" :key="sec.id"
@@ -70,42 +66,40 @@ function switchSection(id) { activeSection.value = id }
   backdrop-filter: blur(4px);
   -webkit-backdrop-filter: blur(4px);
   animation: backdropIn 200ms ease-out;
-  display: flex; justify-content: flex-end;
+  display: flex; justify-content: center; align-items: center;
 }
 @keyframes backdropIn { from { opacity: 0; } to { opacity: 1; } }
 
-/* ── 面板 ── */
+/* ── 面板（居中对话框）── */
 #settings-panel {
-  width: 380px; max-width: 90vw; height: 100%;
+  position: relative;
+  width: 440px; max-width: 90vw; max-height: 80vh;
   background: var(--bg-glass-raised);
   backdrop-filter: blur(var(--blur-glass)) saturate(1.4);
   -webkit-backdrop-filter: blur(var(--blur-glass)) saturate(1.4);
-  border-left: 1px solid var(--border-glass);
-  box-shadow: -4px 0 20px oklch(0% 0 0 / 0.12);
+  border: 1px solid var(--border-glass);
+  border-radius: 12px;
+  box-shadow: 0 8px 40px oklch(0% 0 0 / 0.2);
   display: flex; flex-direction: column;
-  animation: slideInRight 280ms ease-out;
+  overflow: hidden;
+  animation: modalIn 250ms ease-out;
 }
-@keyframes slideInRight {
-  from { transform: translateX(100%); }
-  to { transform: translateX(0); }
+@keyframes modalIn {
+  from { opacity: 0; transform: scale(0.92) translateY(-12px); }
+  to { opacity: 1; transform: scale(1) translateY(0); }
 }
 
-/* ── 头部 ── */
-#settings-header {
-  display: flex; align-items: center; gap: 12px;
-  padding: 16px 20px;
-  border-bottom: 1px solid var(--border-light);
-}
+/* ── 关闭按钮（边框右上角）── */
 #settings-close {
-  width: 32px; height: 32px; border-radius: var(--radius-btn);
+  position: absolute; top: 8px; right: 8px; z-index: 1;
+  width: 28px; height: 28px; border-radius: 6px;
   display: flex; align-items: center; justify-content: center;
-  cursor: pointer; background: var(--bg-glass);
-  border: 1px solid var(--border-glass);
-  color: var(--text-secondary);
+  cursor: pointer; background: transparent;
+  border: none;
+  color: var(--text-weak);
   transition: all var(--transition-fast);
 }
-#settings-close:hover { background: var(--bg-glass-hover); color: var(--crimson); }
-#settings-header h2 { font-size: 16px; font-weight: 600; color: var(--text-primary); }
+#settings-close:hover { background: oklch(0% 0 0 / 0.08); color: var(--crimson); }
 
 /* ── Tab 导航 ── */
 #settings-nav {

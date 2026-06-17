@@ -3,14 +3,40 @@
   "private": true,
   "version": "0.0.0",
   "type": "module",
+  "main": "electron/main.js",
   "scripts": {
-    "dev": "vite",
+    "dev": "concurrently -k -n vite,electron -c blue,green \"vite\" \"wait-on http://localhost:5173 && node scripts/start-electron.cjs .\"",
     "build": "vite build",
-    "preview": "vite preview"
+    "pack": "vite build && electron-builder --dir",
+    "dist": "vite build && electron-builder"
+  },
+  "build": {
+    "appId": "com.echolily.app",
+    "productName": "EchoLily",
+    "electronVersion": "36.9.5",
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "dist/**/*",
+      "electron/**/*",
+      "package.json"
+    ],
+    "win": {
+      "target": "nsis"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true
+    }
   },
   "devDependencies": {
+    "concurrently": "^9.2.1",
+    "electron": "^36.9.5",
+    "electron-builder": "^26.0.0",
     "typescript": "~6.0.2",
-    "vite": "^8.0.12"
+    "vite": "^8.0.12",
+    "wait-on": "^9.0.10"
   },
   "dependencies": {
     "@vitejs/plugin-vue": "^6.0.7",

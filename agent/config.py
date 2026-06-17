@@ -85,6 +85,10 @@ DEFAULTS = {
             "MEMORY.md",
         ],
     },
+    "hooks": {
+        "enabled": True,
+        "default_timeout": 5.0,
+    },
 }
 
 

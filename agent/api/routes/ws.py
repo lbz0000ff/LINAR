@@ -11,6 +11,7 @@ import logging
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
 import database as db
+from config import load_config
 
 router = APIRouter()
 log = logging.getLogger(__name__)
@@ -23,6 +24,38 @@ _CONFIG_PATH = os.path.join(
 
 async def _send(ws: WebSocket, data: dict):
     await ws.send_text(json.dumps(data, ensure_ascii=False, default=str))
+
+
+async def _handle_btw(ws: WebSocket, session, question: str, _send_fn):
+    """Call aux LLM with original context + side question, emit btw_result."""
+    answer: str
+    try:
+        cfg = load_config()
+        aux_cfg = cfg.get("aux") or {}
+        from openai import AsyncOpenAI
+        client = AsyncOpenAI(
+            base_url=aux_cfg.get("base_url") or cfg.get("llm", {}).get("base_url", ""),
+            api_key=aux_cfg.get("api_key") or cfg.get("llm", {}).get("api_key", ""),
+        )
+        # Gather context from the last user message in chat history
+        btw_context = ""
+        for msg in reversed(getattr(session.agent, "chat_history", [])):
+            if isinstance(msg, dict) and msg.get("role") == "user":
+                btw_context = str(msg.get("content", ""))
+                break
+        resp = await client.chat.completions.create(
+            model=aux_cfg.get("model") or cfg.get("llm", {}).get("model", "gpt-4o"),
+            messages=[
+                {"role": "system", "content": "You are a helpful assistant. Answer concisely based on the context provided."},
+                {"role": "user", "content": f"Context:\n{btw_context}\n\nSide question:\n{question}"},
+            ],
+            temperature=0.5,
+            max_tokens=500,
+        )
+        answer = resp.choices[0].message.content.strip()
+    except Exception as exc:
+        answer = f"(BTW query failed: {exc})"
+    await _send_fn(ws, {"type": "btw_result", "data": {"question": question, "answer": answer}})
 
 
 @router.websocket("/ws")
@@ -73,6 +106,27 @@ async def ws_endpoint(ws: WebSocket):
                 if session:
                     session.agent.permissions.switch_mode(mode)
                 await _send(ws, {"type": "permission_mode", "mode": mode})
+
+            elif t == "list_skills":
+                from skill import all_skills
+                skills = [{"name": s.name, "desc": s.description} for s in all_skills()]
+                await _send(ws, {"type": "skills", "data": skills})
+
+            elif t == "btw":
+                question = data.get("data", "")
+                if active_session_id is not None:
+                    session = sm.get(active_session_id)
+                    if session:
+                        asyncio.create_task(_handle_btw(ws, session, question, _send))
+
+            elif t == "steer":
+                msg = data.get("data", "")
+                if active_session_id is not None:
+                    session = sm.get(active_session_id)
+                    if session:
+                        session.agent.interrupt()
+                        session.agent.btw(msg)
+                        await _send(ws, {"type": "steer_ack", "data": msg})
 
             elif t == "stop":
                 session = sm.get(active_session_id) if active_session_id else None

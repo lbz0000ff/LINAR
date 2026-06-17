@@ -37,10 +37,55 @@ function commitRename(id) {
   renamingId.value = null
 }
 function toggleCollapse() { collapsed.value = !collapsed.value }
+
+// ── Resize handle ──
+const sidebarEl = ref(null)
+let resizeWidth = 320
+
+function onResizeStart(e) {
+  e.preventDefault()
+  const startX = e.clientX
+  const startWidth = sidebarEl.value?.clientWidth || 320
+  const wasCollapsed = collapsed.value
+
+  // Disable CSS transition during drag for smooth resize
+  if (sidebarEl.value) sidebarEl.value.style.transition = 'none'
+  document.body.style.cursor = 'col-resize'
+  document.body.style.userSelect = 'none'
+
+  function onMove(ev) {
+    const w = Math.max(52, Math.min(520, startWidth + ev.clientX - startX))
+    resizeWidth = w
+    if (sidebarEl.value) {
+      if (wasCollapsed && w < 200) {
+        sidebarEl.value.style.width = '52px'
+      } else {
+        sidebarEl.value.style.width = w + 'px'
+        collapsed.value = false
+      }
+    }
+  }
+  function onUp() {
+    document.removeEventListener('mousemove', onMove)
+    document.removeEventListener('mouseup', onUp)
+    document.body.style.cursor = ''
+    document.body.style.userSelect = ''
+    // Restore CSS transition
+    if (sidebarEl.value) sidebarEl.value.style.transition = ''
+    // Decide final state
+    const w = sidebarEl.value?.clientWidth || 52
+    if (w < 200) {
+      collapsed.value = true
+    }
+    if (sidebarEl.value) sidebarEl.value.style.width = ''
+  }
+  document.addEventListener('mousemove', onMove)
+  document.addEventListener('mouseup', onUp)
+}
 </script>
 
 <template>
-  <aside id="sidebar" :class="{ collapsed }">
+  <aside id="sidebar" ref="sidebarEl" :class="{ collapsed }">
     <!-- ── 头部：品牌 + 连接灯 + 暗色切换 + 折叠 ── -->
     <div id="sidebar-header">
       <div id="sidebar-brand">
@@ -49,7 +94,6 @@ function toggleCollapse() { collapsed.value = !collapsed.value }
         <span v-show="!collapsed" class="conn-dot" :class="statusClass" :title="statusLabel">
           <span class="conn-pulse"></span>
         </span>
-        <span v-show="!collapsed" class="conn-label">{{ statusLabel }}</span>
       </div>
       <div id="sidebar-header-actions" v-show="!collapsed">
         <button id="dark-toggle" @click="emit('darkToggle')" :title="darkMode ? '亮色模式' : '深色模式'">
@@ -141,6 +185,7 @@ function toggleCollapse() { collapsed.value = !collapsed.value }
         设置
       </button>
     </div>
+    <div class="sidebar-resize-handle" @mousedown="onResizeStart"></div>
   </aside>
 </template>
 
@@ -148,15 +193,16 @@ function toggleCollapse() { collapsed.value = !collapsed.value }
 #sidebar {
   width: var(--sidebar-width);
   min-width: 200px;
-  display: flex; flex-direction: column; overflow: hidden;
+  display: flex; flex-direction: column; position: relative; overflow: hidden;
   background: var(--bg-glass);
   backdrop-filter: blur(var(--blur-glass)) saturate(1.3);
   -webkit-backdrop-filter: blur(var(--blur-glass)) saturate(1.3);
   border-right: 1px solid var(--border-glass);
   border-radius: 0;
-  transition: width var(--transition-slow);
+  will-change: width; contain: layout style; transition: width 200ms ease;
+  max-width: 520px;
 }
-#sidebar.collapsed { width: 52px; min-width: 52px; }
+#sidebar.collapsed { width: 52px; min-width: 52px; max-width: 52px; }
 
 /* ── 头部 ── */
 #sidebar-header {
@@ -198,10 +244,6 @@ function toggleCollapse() { collapsed.value = !collapsed.value }
   0% { transform: scale(1); opacity: 0.6; }
   100% { transform: scale(2.2); opacity: 0; }
 }
-.conn-label {
-  font-size: 11px; color: var(--text-weak); white-space: nowrap;
-}
-
 /* ── 按钮 ── */
 #dark-toggle, #collapse-btn {
   cursor: pointer; background: var(--bg-glass); border: 1px solid var(--border-glass);
@@ -321,5 +363,16 @@ function toggleCollapse() { collapsed.value = !collapsed.value }
   background: var(--crimson-alpha);
   color: var(--crimson);
   border-color: var(--crimson-alpha);
+}
+
+/* ── Resize handle ── */
+.sidebar-resize-handle {
+  position: absolute; right: 0; top: 0; bottom: 0;
+  width: 4px; cursor: col-resize; z-index: 10;
+  transition: background var(--transition-fast);
+}
+.sidebar-resize-handle:hover,
+.sidebar-resize-handle:active {
+  background: var(--crimson-alpha);
 }
 </style>

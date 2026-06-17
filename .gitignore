@@ -2,6 +2,7 @@
 .vscode/
 .temp/
 .agents/
+.reserved/
 .pytest_cache/
 __pycache__/
 *.pyc
@@ -31,7 +32,6 @@ webui/design-demo
 docs/
 !/README.md
 !/ARCHITECTURE.md
-!/CLAUDE.md
 
 #Exclude all skills except basic skills
 skills/*

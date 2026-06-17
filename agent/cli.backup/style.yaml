@@ -1,0 +1,35 @@
+# UI color theme for Lily Terminal
+# Colors use Rich markup syntax (e.g. "bold cyan", "red", "grey62", "dim")
+
+banner:
+  border: "grey"
+  echo: "#f3f1e1"
+  lily: "#e2e1db"
+  i: "#8c2a2b"
+  shadow: "grey"
+  title: "yellow"
+  hint: "grey62"
+
+console:
+  header: "#8c2a2b"
+  header_user: "#13a8cd"
+  reasoning: "dim italic"
+  tool_name: "grey85"
+  tool_detail: "grey62"
+  error: "bold red"
+  success: "green"
+  stats_dim: "dim"
+  stats_good: "bold green"
+  stats_warn: "bold yellow"
+  stats_bad: "red"
+  new_session: "dim"
+  goodbye: "#8c2a2b"
+
+mode_colors:
+  reasoning:
+    hide: "red"
+    full: "yellow"
+  tool_calls:
+    hide: "red"
+    show_tools: "cyan"
+    detailed: "yellow"

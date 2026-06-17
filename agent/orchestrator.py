@@ -9,9 +9,12 @@ import asyncio
 import json
 import os
 import re as _re
+import time
 
 from enum import Enum, auto
 from openai import AsyncOpenAI
+
+from hooks import HookContext, HookEvent
 
 
 class Stage(Enum):
@@ -49,47 +52,79 @@ class Orchestrator:
     # ── public API ────────────────────────────────────────
 
     async def start(self, user_input: str) -> None:
-        self._transition(Stage.INGEST)
+        await self._transition(Stage.INGEST)
         btw_notes = getattr(self.agent, 'consume_btw', lambda: [])()
         if btw_notes:
             user_input += "\n\n" + "\n".join(f"[BTW: {note}]" for note in btw_notes)
-        self.agent.add_user_message(user_input)
+        await self.agent.add_user_message(user_input)
 
-        self._transition(Stage.ROUTE)
+        await self._transition(Stage.ROUTE)
         self._route()
 
         if self.needs_plan:
-            self._transition(Stage.PLAN)
+            await self._transition(Stage.PLAN)
             await self._generate_plan()
 
         if self._should_execute_dag():
-            self._transition(Stage.DAG_EXECUTE)
+            await self._transition(Stage.DAG_EXECUTE)
             await self._execute_dag_plan()
-            self._transition(Stage.PROCESS)
+            await self._transition(Stage.PROCESS)
             try:
                 await self.agent.process_with_llm()
-            except Exception:
-                self._transition(Stage.ERROR)
+            except Exception as e:
+                # Dispatch LLM_ERROR hook
+                await self.agent.hooks.dispatch_fire_and_forget(
+                    HookContext(
+                        event=HookEvent.LLM_ERROR,
+                        agent=self.agent,
+                        timestamp=time.time(),
+                        tool_error=str(e),
+                        metadata={"error_type": type(e).__name__},
+                    )
+                )
+                await self._transition(Stage.ERROR)
                 raise
         else:
-            self._transition(Stage.PROCESS)
+            await self._transition(Stage.PROCESS)
             try:
                 await self.agent.process_with_llm()
-            except Exception:
-                self._transition(Stage.ERROR)
+            except Exception as e:
+                # Dispatch LLM_ERROR hook
+                await self.agent.hooks.dispatch_fire_and_forget(
+                    HookContext(
+                        event=HookEvent.LLM_ERROR,
+                        agent=self.agent,
+                        timestamp=time.time(),
+                        tool_error=str(e),
+                        metadata={"error_type": type(e).__name__},
+                    )
+                )
+                await self._transition(Stage.ERROR)
                 raise
 
         self._post_process_cleanup()
-        self._transition(Stage.COMPLETE)
-        self._transition(Stage.IDLE)
+        await self._transition(Stage.COMPLETE)
+        await self._transition(Stage.IDLE)
 
     async def run_skill(self, skill, user_input: str) -> None:
         if getattr(skill, "context", "") == "fork":
             await self._run_skill_forked(skill, user_input)
             return
 
-        self._transition(Stage.SKILL_LOAD)
+        await self._transition(Stage.SKILL_LOAD)
         skill.on_load(self.agent)
+
+        # Dispatch SKILL_LOAD hook
+        await self.agent.hooks.dispatch_fire_and_forget(
+            HookContext(
+                event=HookEvent.SKILL_LOAD,
+                agent=self.agent,
+                timestamp=time.time(),
+                skill_name=skill.name,
+                metadata={"description": getattr(skill, "description", "")},
+            )
+        )
+
         self.agent.chat_history.append({
             "role": "meta",
             "content": (
@@ -100,27 +135,38 @@ class Orchestrator:
         })
 
         if user_input.strip():
-            self.agent.add_user_message(user_input)
-            self._transition(Stage.SKILL_EXEC)
+            await self.agent.add_user_message(user_input)
+            await self._transition(Stage.SKILL_EXEC)
             try:
                 await self.agent.process_with_llm()
             except Exception:
-                self._transition(Stage.ERROR)
+                await self._transition(Stage.ERROR)
                 skill.on_unload(self.agent)
                 raise
         else:
             self.agent.emit({"type": "skill_loaded", "data": {"name": skill.name, "desc": skill.description}})
 
-        self._transition(Stage.SKILL_UNLOAD)
+        await self._transition(Stage.SKILL_UNLOAD)
+
+        # Dispatch SKILL_UNLOAD hook
+        await self.agent.hooks.dispatch_fire_and_forget(
+            HookContext(
+                event=HookEvent.SKILL_UNLOAD,
+                agent=self.agent,
+                timestamp=time.time(),
+                skill_name=skill.name,
+            )
+        )
+
         skill.on_unload(self.agent)
-        self._transition(Stage.COMPLETE)
-        self._transition(Stage.IDLE)
+        await self._transition(Stage.COMPLETE)
+        await self._transition(Stage.IDLE)
 
     async def _run_skill_forked(self, skill, user_input: str) -> None:
         from agent_factory import create_agent
         from agent import Agent
 
-        self._transition(Stage.SKILL_LOAD)
+        await self._transition(Stage.SKILL_LOAD)
         self.agent.emit({"type": "skill_fork", "data": skill.name})
 
         try:
@@ -135,8 +181,8 @@ class Orchestrator:
             sub_agent = Agent(tools=sub_tools)
         except Exception as exc:
             self.agent.emit({"type": "error", "data": f"Failed to fork agent: {exc}"})
-            self._transition(Stage.COMPLETE)
-            self._transition(Stage.IDLE)
+            await self._transition(Stage.COMPLETE)
+            await self._transition(Stage.IDLE)
             return
 
         sub_agent.emit = self.agent.emit
@@ -147,15 +193,39 @@ class Orchestrator:
 
         try:
             skill.on_load(sub_agent)
-            sub_agent.add_user_message(user_input)
-            self._transition(Stage.SKILL_EXEC)
+
+            # Dispatch SKILL_LOAD hook for forked skill
+            await self.agent.hooks.dispatch_fire_and_forget(
+                HookContext(
+                    event=HookEvent.SKILL_LOAD,
+                    agent=self.agent,
+                    timestamp=time.time(),
+                    skill_name=skill.name,
+                    metadata={"forked": True, "description": getattr(skill, "description", "")},
+                )
+            )
+
+            await sub_agent.add_user_message(user_input)
+            await self._transition(Stage.SKILL_EXEC)
             try:
                 await sub_agent.process_with_llm()
             except Exception:
-                self._transition(Stage.ERROR)
+                await self._transition(Stage.ERROR)
                 skill.on_unload(sub_agent)
                 raise
-            self._transition(Stage.SKILL_UNLOAD)
+            await self._transition(Stage.SKILL_UNLOAD)
+
+            # Dispatch SKILL_UNLOAD hook for forked skill
+            await self.agent.hooks.dispatch_fire_and_forget(
+                HookContext(
+                    event=HookEvent.SKILL_UNLOAD,
+                    agent=self.agent,
+                    timestamp=time.time(),
+                    skill_name=skill.name,
+                    metadata={"forked": True},
+                )
+            )
+
             skill.on_unload(sub_agent)
         finally:
             for t in sub_tools.values():
@@ -164,8 +234,8 @@ class Orchestrator:
                 if hasattr(t, 'stop_event'):
                     t.stop_event = self.agent.stop_event
 
-        self._transition(Stage.COMPLETE)
-        self._transition(Stage.IDLE)
+        await self._transition(Stage.COMPLETE)
+        await self._transition(Stage.IDLE)
 
     # ── routing ───────────────────────────────────────────
 
@@ -241,11 +311,36 @@ class Orchestrator:
                     if d in agent_results}
             agent = create_agent(agent_hint=hint, predecessor_results=deps,
                                  stop_event=self.agent.stop_event)
+
+            # Dispatch PLAN_NODE_START hook
+            await self.agent.hooks.dispatch_fire_and_forget(
+                HookContext(
+                    event=HookEvent.PLAN_NODE_START,
+                    agent=self.agent,
+                    timestamp=time.time(),
+                    node_id=node_id,
+                    metadata={"hint": hint, "description": description},
+                )
+            )
+
             self.agent.emit({
                 "type": "dag_node_start",
                 "data": {"id": node_id, "hint": hint, "description": description},
             })
             result = await run_agent_task(agent, description, hint, deps)
+
+            # Dispatch PLAN_NODE_COMPLETE hook
+            await self.agent.hooks.dispatch_fire_and_forget(
+                HookContext(
+                    event=HookEvent.PLAN_NODE_COMPLETE,
+                    agent=self.agent,
+                    timestamp=time.time(),
+                    node_id=node_id,
+                    node_result=result[:200],
+                    metadata={"hint": hint, "description": description},
+                )
+            )
+
             self.agent.emit({
                 "type": "dag_node_complete",
                 "data": {"id": node_id, "result": result[:200]},
@@ -349,6 +444,16 @@ class Orchestrator:
             if plan_status:
                 plan_status.agent_ref = self.agent
             self.agent.emit({"type": "plan", "data": plan.format_for_prompt()})
+
+            # Dispatch PLAN_CREATED hook
+            await self.agent.hooks.dispatch_fire_and_forget(
+                HookContext(
+                    event=HookEvent.PLAN_CREATED,
+                    agent=self.agent,
+                    timestamp=time.time(),
+                    plan_data={"goal": data.get("goal", user_input), "tasks": sub_tasks_raw},
+                )
+            )
         except Exception as exc:
             self.agent.emit({"type": "plan_error", "data": str(exc)})
             self.needs_plan = False
@@ -375,7 +480,19 @@ class Orchestrator:
 
     # ── helpers ───────────────────────────────────────────
 
-    def _transition(self, stage: Stage) -> None:
-        """Record a state change."""
-        self.previous_stage = self.stage
+    async def _transition(self, stage: Stage) -> None:
+        """Record a state change and dispatch hooks."""
+        prev = self.stage
+        self.previous_stage = prev
         self.stage = stage
+
+        # Fire-and-forget: state transitions should not block
+        await self.agent.hooks.dispatch_fire_and_forget(
+            HookContext(
+                event=HookEvent.STATE_ENTER,
+                agent=self.agent,
+                timestamp=time.time(),
+                stage=stage.name.lower(),
+                previous_stage=prev.name.lower(),
+            )
+        )

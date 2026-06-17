@@ -10,6 +10,8 @@ import 'katex/dist/katex.min.css'
 import Sidebar from './components/Sidebar.vue'
 import InputArea from './components/InputArea.vue'
 import SettingsPage from './components/SettingsPage.vue'
+import TitleBar from './components/TitleBar.vue'
+import RightPanel from './components/RightPanel.vue'
 
 marked.setOptions({ breaks: true, gfm: true })
 // Custom renderer: detect ```mermaid blocks
@@ -31,11 +33,19 @@ const isNewSession = ref(false)
 const pendingMsg = ref('')
 const isProcessing = ref(false)
 const chatTitle = ref('选择会话')
+const currentSkill = ref(null)
+const skillsList = ref([])
 const usage = ref(null)
 const lastFilePaths = ref([])
 const showSettings = ref(false)
 const permMode = ref('safe')
 const darkMode = ref(false)
+// ── 右侧面板 ──
+const showRightPanel = ref(false)
+const dagNodes = ref({})
+const dagGoal = ref('')
+const dagActive = ref(false)
+const btwResults = ref([])
 const msgContainer = ref(null)
 const showScrollBtn = ref(false)
 
@@ -78,14 +88,20 @@ function handleMessage(event) {
   else if (t === 'tool_result') handleToolResult(event)
   else if (t === 'error') addMessage({ role: 'system', text: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display:inline;vertical-align:-3px"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg> ' + (event.data || '') })
   else if (t === 'done') { /* streaming done, wait for complete */ }
-  else if (t === 'complete') handleComplete()
+  else if (t === 'complete') { currentSkill.value = null; handleComplete() }
   else if (t === 'usage') { usage.value = event.data }
-  else if (t === 'skill_loaded') addMessage({ role: 'notification', text: '技能加载: ' + (event.data?.name || '') })
+  else if (t === 'skill_loaded') { currentSkill.value = event.data?.name || null; addMessage({ role: 'notification', text: '技能加载: ' + (event.data?.name || '') }) }
   else if (t === 'permission_request') handlePermission(event)
   else if (t === 'promise_resolved') addMessage({ role: 'notification', text: '异步任务完成: ' + (event.data?.id || '') })
-  else if (t === 'plan_start') { planText.value = ''; addMessage({ role: 'plan', _text: '', _open: true }) }
-  else if (t === 'plan') { const last = messages.value[messages.value.length - 1]; if (last?.role === 'plan') { last._text += (event.data || ''); messages.value = [...messages.value] } }
-  else if (t === 'plan_complete') { const last = messages.value[messages.value.length - 1]; if (last?.role === 'plan') { last._open = false; messages.value = [...messages.value] } }
+  else if (t === 'plan_start') { planText.value = ''; addMessage({ role: 'plan', _text: '', _open: true }); dagNodes.value = {}; dagActive.value = true; dagGoal.value = ''; showRightPanel.value = true }
+  else if (t === 'plan') { const last = messages.value[messages.value.length - 1]; if (last?.role === 'plan') { last._text += (event.data || ''); messages.value = [...messages.value] }; dagGoal.value = (event.data || '') }
+  else if (t === 'plan_execute') { /* DAG execution begins — nodes will follow */ }
+  else if (t === 'dag_node_start') { const d = event.data; dagNodes.value = { ...dagNodes.value, [d.id]: { id: d.id, description: d.description, hint: d.hint, status: 'IN_PROGRESS', result: '' } } }
+  else if (t === 'dag_node_complete') { const d = event.data; dagNodes.value = { ...dagNodes.value, [d.id]: { ...(dagNodes.value[d.id] || {}), status: 'COMPLETED', result: d.result } } }
+  else if (t === 'plan_complete') { const last = messages.value[messages.value.length - 1]; if (last?.role === 'plan') { last._open = false; messages.value = [...messages.value] }; dagActive.value = false }
+  else if (t === 'plan_error') { dagActive.value = false }
+  else if (t === 'skills') skillsList.value = event.data || []
+  else if (t === 'btw_result') { const d = event.data; btwResults.value = [{ question: d.question, answer: d.answer, ts: Date.now() }, ...btwResults.value]; showRightPanel.value = true }
   else if (t === 'config_json') handleConfig(event.data || {})
 }
 
@@ -222,8 +238,7 @@ const planEl = ref(null)
 // ── 会话管理 ──
 function loadSessions(data) {
   sessions.value = data || []
-  if (!currentSessionId.value && sessions.value.length)
-    switchSession(sessions.value[0].id)
+  // Start fresh — don't auto-load last session
 }
 function switchSession(id) {
   if (isProcessing.value) { send('stop', {}); isProcessing.value = false }
@@ -372,6 +387,47 @@ function onSend(text, files) {
 function onStop() {
   send('stop', {}); isProcessing.value = false
 }
+function onShowHelp() {
+  addMessage({ role: 'system', text: '<b>可用指令：</b><br>/help — 显示帮助<br>/reasoning — 切换思考过程显示<br>/reset — 重置对话<br>/stop — 停止生成<br>/jobs — 查看后台任务<br>/reload_mcp — 重新加载 MCP 工具' })
+}
+function onToggleReasoning() {
+  messages.value.forEach(m => {
+    if (m.role === 'ai' || m.role === 'streaming') m.collapsed = !m.collapsed
+  })
+  messages.value = [...messages.value]
+}
+function onReset() {
+  messages.value = []
+  isProcessing.value = false
+  usage.value = null
+  if (currentSessionId.value) { send('stop', {}); newSession() }
+}
+function onJobs() {
+  send('message', { data: '/jobs' })
+  isProcessing.value = true
+}
+function onReloadMCP() {
+  send('reload_mcp', {})
+  addMessage({ role: 'notification', text: 'MCP 工具重新加载中...' })
+}
+function onSteer(msg) {
+  send('stop', {})
+  send('steer', { data: msg })
+  addMessage({ role: 'notification', text: '已发送修正指令: ' + msg })
+  isProcessing.value = false
+}
+function onBtw(msg) {
+  send('btw', { data: msg })
+  addMessage({ role: 'notification', text: '已发送侧边查询: ' + msg })
+}
+function onRefreshSessions() { send('list_sessions', {}) }
+function onSwitchToSession(id) {
+  const n = Number(id)
+  if (n && sessions.value.find(s => s.id === n)) switchSession(n)
+}
+function onExitApp() {
+  if (window.electronAPI?.isElectron) window.electronAPI.close()
+}
 function toggleDarkMode() {
   darkMode.value = !darkMode.value
   document.body.classList.toggle('dark', darkMode.value)
@@ -380,6 +436,9 @@ function toggleDarkMode() {
 
 // ── 设置 ──
 function handleConfig(cfg) {}
+
+// Request skills when WS connects
+watch(connected, (val) => { if (val) send('list_skills', {}) })
 
 onMounted(() => {
   // 恢复深色模式偏好
@@ -396,8 +455,10 @@ onUnmounted(() => offMessage(handleMessage))
 </script>
 
 <template>
-  <div id="app-layout" :class="{ dark: darkMode }">
-    <Sidebar
+  <div id="app-root" :class="{ dark: darkMode }">
+    <TitleBar />
+    <div id="app-layout">
+      <Sidebar
       :sessions="sessions" :current-id="currentSessionId"
       :status="status" :dark-mode="darkMode"
       @switch="switchSession" @new="newSession"
@@ -405,9 +466,17 @@ onUnmounted(() => offMessage(handleMessage))
       @dark-toggle="toggleDarkMode"
       @settings="showSettings = true"
     />
-    <main id="chat-area">
+    <main id="chat-area" :class="{ 'has-right-panel': showRightPanel }">
       <header id="chat-header">
         <span id="chat-title">{{ chatTitle }}</span>
+        <span v-if="currentSkill" id="skill-badge">{{ currentSkill }}</span>
+        <button id="panel-toggle" @click="showRightPanel = !showRightPanel"
+          :title="showRightPanel ? '隐藏面板' : '显示面板'">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <polyline v-if="showRightPanel" points="15 18 9 12 15 6"/>
+            <polyline v-else points="9 18 15 12 9 6"/>
+          </svg>
+        </button>
         <span v-if="isProcessing" id="processing-hint">
           <span class="pulse-dots">
             <span class="pulse-dot"></span><span class="pulse-dot"></span><span class="pulse-dot"></span>
@@ -533,18 +602,30 @@ onUnmounted(() => offMessage(handleMessage))
       </div>
       <InputArea
         :is-processing="isProcessing" :perm-mode="permMode" :connected="connected"
-        :usage="usage"
-        @send="onSend" @stop="onStop"
+        :usage="usage" :skills="skillsList"
+        @send="onSend" @stop="onStop" @show-help="onShowHelp"
+        @toggle-reasoning="onToggleReasoning" @reset="onReset"
+        @steer="onSteer" @btw="onBtw"
+        @refresh-sessions="onRefreshSessions" @switch-to-session="onSwitchToSession"
+        @exit-app="onExitApp"
         @mode-change="permMode = $event; send('switch_permission_mode', { mode: $event })"
       />
     </main>
+    <RightPanel
+      v-if="showRightPanel"
+      :dag-nodes="dagNodes" :dag-goal="dagGoal"
+      :dag-active="dagActive" :btw-results="btwResults"
+      @close="showRightPanel = false"
+    />
     <SettingsPage v-if="showSettings" @close="showSettings = false" @dark-mode="toggleDarkMode" :dark-mode="darkMode" />
+    </div>
   </div>
 </template>
 
 <style>
 /* ── 布局 ── */
-#app-layout { display: flex; height: 100%; width: 100%; }
+#app-root { display: flex; flex-direction: column; height: 100%; width: 100%; }
+#app-layout { display: flex; flex: 1; min-height: 0; }
 
 /* ── 聊天面板 ── */
 #chat-area {
@@ -566,6 +647,17 @@ body.dark #chat-area {
   border-right: 1px solid oklch(0% 0 0 / 0.15);
   border-bottom: 1px solid oklch(0% 0 0 / 0.2);
 }
+#chat-area.has-right-panel {
+  margin-right: 0;
+}
+#panel-toggle {
+  width: 30px; height: 30px; border-radius: var(--radius-btn);
+  display: flex; align-items: center; justify-content: center;
+  cursor: pointer; background: transparent; border: 1px solid var(--border-light);
+  color: var(--text-weak); flex-shrink: 0;
+  transition: all var(--transition-fast);
+}
+#panel-toggle:hover { background: var(--bg-glass-raised); color: var(--crimson); border-color: var(--crimson-alpha); }
 #chat-header {
   display: flex; align-items: center; padding: 14px 20px;
   border-bottom: 1px solid var(--border-light); gap: 8px;
@@ -574,6 +666,13 @@ body.dark #chat-area {
   -webkit-backdrop-filter: blur(var(--blur-glass)) saturate(1.8);
 }
 #chat-title { font-weight: 600; font-size: 15px; flex: 1; color: var(--text-primary); }
+#skill-badge {
+  font-size: 11px; font-weight: 600; padding: 2px 8px;
+  border-radius: var(--radius-btn);
+  background: var(--crimson-alpha);
+  color: var(--crimson);
+  font-family: var(--font-mono);
+}
 #processing-hint { font-size: 12px; color: var(--text-weak); }
 
 /* ── 消息容器 ── */

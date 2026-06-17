@@ -10,9 +10,14 @@ Lily is a self-hosted, memory-augmented LLM agent framework. Unlike stateless ch
 # Set API key
 set DEEPSEEK_API_KEY=your_key_here
 
-# Start the terminal
-cd agent && python cli/terminal.py
+# Start backend (terminal 1)
+cd agent && python main.py
+
+# Start Ink TUI (terminal 2)
+cd tui-ink && npm start
 ```
+
+> **两种 TUI 可选：** 传统的 Python TUI（`cd agent && python cli/terminal.py`）已备份到 `agent/cli.backup/`。新的 React Ink TUI 提供更现代的终端体验。详见 [Terminal UI (Ink)](#terminal-ui-ink)。
 
 ## Demo: Scientific Notebook Assistant
 
@@ -44,7 +49,7 @@ The demo proves that Lily is not just a chatbot — it's an **agent that can aut
 - **Task planning with DAG execution** — Automatic task decomposition (linear subtasks or parallel DAG) with ThreadPoolExecutor-based wave scheduling.
 - **Orchestrator state machine** — Explicit 10-stage state machine (IDLE → INGEST → ROUTE → PLAN → PROCESS / DAG_EXECUTE / SKILL → COMPLETE) for predictable flow control.
 - **MCP protocol support** — MCP client that connects to any MCP-compatible server (e.g., ComfyUI for image generation), extending agent capabilities beyond text.
-- **REPL terminal** — Dual-panel streaming TUI built with prompt_toolkit + Rich, with configurable themes and display modes for reasoning/tool-calls.
+- **REPL terminal (dual TUI)** — Python TUI (prompt_toolkit + Rich) + new React Ink TUI (TypeScript, WebSocket) with configurable themes and display modes for reasoning/tool-calls.
 - **Session management** — Full conversation history in SQLite, session switching/rename/delete, full-text keyword search across sessions.
 - **Permission system** — Per-tool allow/ask/deny with three runtime modes (safe/auto/review) and glob pattern support.
 
@@ -111,14 +116,61 @@ All configuration lives in `agent/config.yaml`:
 - **Logging** — level, file path, rotation settings
 - **Chat history** — compaction strategy, character limits
 
+## Terminal UI (Ink)
+
+EchoLily 新增了基于 **React Ink** (TypeScript + Node.js) 的现代化 TUI，替代旧的 prompt_toolkit 实现。通过 WebSocket 连接 Python 后端，前后端分离。
+
+### 安装
+
+```bash
+cd tui-ink
+npm install
+```
+
+### 使用
+
+```bash
+# 终端 1：启动 Python 后端
+cd agent && python main.py
+
+# 终端 2：启动 Ink TUI
+cd tui-ink && npm start
+```
+
+### 按键绑定
+
+| 按键 | 功能 |
+|------|------|
+| `Enter` | 提交输入 |
+| `Tab` | 命令补全 |
+| `Ctrl+C` | 中断 LLM / 退出 |
+| `Ctrl+A` | 跳到输出顶部 |
+| `Ctrl+E` | 跳到输出底部 |
+| `PageUp` / `PageDown` | 输出区翻页 |
+| `Shift+Tab` | 循环权限模式 (Safe → Auto → Review) |
+| `Esc` | 关闭浮层 |
+
+### 架构
+
+```
+Ink TUI (Node.js) ← WebSocket → Python Backend (FastAPI)
+     tui-ink/                          agent/api/app.py
+```
+
+后端的 WebSocket 协议无需任何改动，Ink TUI 复用现有协议。
+
+### 原始 Python TUI
+
+旧的 prompt_toolkit TUI 已备份到 `agent/cli.backup/`，需要时仍可通过以下命令使用：
+
+```bash
+cd agent && python cli.backup/terminal.py
+```
+
 ## Dependencies
 
-- `openai` — LLM API client
-- `prompt_toolkit` — REPL input handling
-- `rich` — terminal rendering
-- `pyyaml` — configuration parsing
-- `httpx` / `requests` — web fetching
-- `trafilatura` / `html2text` — HTML-to-text conversion (optional)
+- **Python**: `openai`, `prompt_toolkit`, `rich`, `pyyaml`, `httpx`/`requests`, `trafilatura`/`html2text` (optional)
+- **Node.js** (Ink TUI): `ink`, `react`, `zustand`, `ws`, `js-yaml`
 
 ## License
 

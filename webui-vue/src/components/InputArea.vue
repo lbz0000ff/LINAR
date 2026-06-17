@@ -1,18 +1,21 @@
 <script setup>
-import { ref } from 'vue'
+import { ref, computed, watch } from 'vue'
 
 const props = defineProps({
   isProcessing: Boolean,
   permMode: String,
   connected: Boolean,
   usage: Object,
+  skills: Array,
 })
-const emit = defineEmits(['send', 'stop', 'modeChange'])
+const emit = defineEmits(['send', 'stop', 'modeChange', 'toggleReasoning', 'reset', 'showHelp', 'steer', 'btw', 'refreshSessions', 'switchToSession', 'exitApp'])
 
 const inputText = ref('')
 const attachments = ref([])
 const cmdOpen = ref(false)
+const cmdHighlight = ref(0)
 const fileInput = ref(null)
+const inputAreaEl = ref(null)
 
 const MODES = ['safe', 'auto', 'review']
 const MODE_CLASS = { safe: 'mode-safe', auto: 'mode-auto', review: 'mode-review' }
@@ -22,9 +25,69 @@ const COMMANDS = [
   { cmd: '/reasoning', desc: '切换思考过程显示' },
   { cmd: '/reset', desc: '重置对话' },
   { cmd: '/stop', desc: '停止生成' },
-  { cmd: '/jobs', desc: '查看后台任务' },
-  { cmd: '/reload_mcp', desc: '重新加载 MCP 工具' },
+  { cmd: '/steer', desc: '修正 Agent 行为（需参数）', hasArg: true },
+  { cmd: '/btw', desc: '侧边查询（需参数）', hasArg: true },
+  { cmd: '/sessions', desc: '刷新会话列表' },
+  { cmd: '/session', desc: '切换会话（需参数）', hasArg: true },
+  { cmd: '/exit', desc: '关闭窗口' },
 ]
+
+const SLASH_ACTIONS = {
+  '/help': () => { emit('showHelp'); inputText.value = '' },
+  '/reasoning': () => { emit('toggleReasoning'); inputText.value = '' },
+  '/reset': () => { emit('reset'); inputText.value = '' },
+  '/stop': () => { emit('stop'); inputText.value = '' },
+  '/sessions': () => { emit('refreshSessions'); inputText.value = '' },
+  '/exit': () => { emit('exitApp'); inputText.value = '' },
+}
+
+function handleSlashAction(text) {
+  const spaceIdx = text.indexOf(' ')
+  const cmd = spaceIdx > 0 ? text.slice(0, spaceIdx) : text
+  const arg = spaceIdx > 0 ? text.slice(spaceIdx + 1).trim() : ''
+
+  // Exact-match commands
+  if (SLASH_ACTIONS[cmd]) { SLASH_ACTIONS[cmd](); return true }
+
+  // Commands with arguments
+  if (cmd === '/steer' && arg) { emit('steer', arg); inputText.value = ''; return true }
+  if (cmd === '/btw' && arg) { emit('btw', arg); inputText.value = ''; return true }
+  if (cmd === '/session' && arg) { emit('switchToSession', arg); inputText.value = ''; return true }
+
+  // Skill commands — send as regular message (orchestrator handles skill invocation)
+  const skillNames = (props.skills || []).map(s => s.name)
+  if (skillNames.includes(cmd.slice(1))) {
+    emit('send', text, [])
+    inputText.value = ''
+    return true
+  }
+
+  return false
+}
+
+const allCommands = computed(() => {
+  const skillCmds = (props.skills || []).map(s => ({
+    cmd: '/' + s.name, desc: s.desc || '加载技能 ' + s.name, isSkill: true,
+  }))
+  return [...COMMANDS, ...skillCmds]
+})
+
+const filteredCommands = computed(() => {
+  const q = inputText.value.trim().toLowerCase()
+  if (!q.startsWith('/')) return allCommands.value
+  return allCommands.value.filter(c => c.cmd.toLowerCase().startsWith(q))
+})
+
+// Auto-show menu when typing "/"
+watch(inputText, (val) => {
+  const trimmed = val.trim()
+  if (trimmed.startsWith('/') && !trimmed.includes(' ')) {
+    cmdOpen.value = true
+    cmdHighlight.value = 0
+  } else if (!trimmed.startsWith('/')) {
+    cmdOpen.value = false
+  }
+})
 
 function formatTokens(n) {
   if (!n) return '0'
@@ -33,24 +96,40 @@ function formatTokens(n) {
   return String(n)
 }
 
+const backendOrigin = window.electronAPI?.isElectron ? 'http://127.0.0.1:8080' : ''
+
 function onSend() {
-  if (!inputText.value.trim() || props.isProcessing) return
+  const text = inputText.value.trim()
+  if (!text) return
+
+  // Slash commands always work, even during processing
+  if (text.startsWith('/')) {
+    if (handleSlashAction(text)) { cmdOpen.value = false; return }
+    // Commands needing args that weren't provided — ignore
+    if (!text.includes(' ')) return
+    // Slash with args but unknown command — ignore
+    return
+  }
+
+  // Regular text blocked during processing
+  if (props.isProcessing) return
+
   if (attachments.value.length) {
     const paths = []
     let pending = attachments.value.length
     attachments.value.forEach(att => {
       const xhr = new XMLHttpRequest()
-      xhr.open('POST', '/upload', true)
+      xhr.open('POST', backendOrigin + '/upload', true)
       xhr.setRequestHeader('X-Filename', encodeURIComponent(att.file.name))
       xhr.onload = () => {
         if (xhr.status === 200) { try { const r = JSON.parse(xhr.responseText); if (r.path) paths.push(r.path) } catch (_) {} }
-        pending--; if (!pending) { emit('send', inputText.value, paths); inputText.value = ''; attachments.value = [] }
+        pending--; if (!pending) { emit('send', text, paths); inputText.value = ''; attachments.value = [] }
       }
-      xhr.onerror = () => { pending--; if (!pending) { emit('send', inputText.value, paths); inputText.value = ''; attachments.value = [] } }
+      xhr.onerror = () => { pending--; if (!pending) { emit('send', text, paths); inputText.value = ''; attachments.value = [] } }
       xhr.send(att.file._file || att.file)
     })
   } else {
-    emit('send', inputText.value, [])
+    emit('send', text, [])
     inputText.value = ''
   }
 }
@@ -71,14 +150,74 @@ function cycleMode() {
   emit('modeChange', MODES[next])
 }
 
-function insertCmd(cmd) {
-  inputText.value = cmd + ' '
+function selectCmd(cmd) {
+  inputText.value = cmd.cmd + ' '
   cmdOpen.value = false
+}
+
+function onCmdKeydown(e) {
+  if (!cmdOpen.value) return
+  const len = filteredCommands.value.length
+  if (e.key === 'ArrowDown') {
+    e.preventDefault()
+    cmdHighlight.value = (cmdHighlight.value + 1) % len
+  } else if (e.key === 'ArrowUp') {
+    e.preventDefault()
+    cmdHighlight.value = (cmdHighlight.value - 1 + len) % len
+  } else if (e.key === 'Tab') {
+    e.preventDefault()
+    selectCmd(filteredCommands.value[cmdHighlight.value] || filteredCommands.value[0])
+  } else if (e.key === 'Escape') {
+    cmdOpen.value = false
+  }
+}
+
+// ── Input resize handle ──
+const inputEl = ref(null)
+let inputHeight = null
+
+function onInputResizeStart(e) {
+  e.preventDefault()
+  const startY = e.clientY
+  const startH = inputEl.value?.clientHeight || 38
+  document.body.style.cursor = 'row-resize'
+  document.body.style.userSelect = 'none'
+
+  function onMove(ev) {
+    const h = Math.max(38, Math.min(window.innerHeight * 0.5, startH - (ev.clientY - startY)))
+    inputHeight = h
+    if (inputEl.value) inputEl.value.style.height = h + 'px'
+  }
+  function onUp() {
+    document.removeEventListener('mousemove', onMove)
+    document.removeEventListener('mouseup', onUp)
+    document.body.style.cursor = ''
+    document.body.style.userSelect = ''
+  }
+  document.addEventListener('mousemove', onMove)
+  document.addEventListener('mouseup', onUp)
 }
 </script>
 
 <template>
-  <div id="input-area" class="glass-mac">
+  <div id="input-area" ref="inputAreaEl" class="glass-mac">
+    <!-- Command menu — above textarea, full width -->
+    <div v-if="cmdOpen" id="cmd-panel">
+      <div class="cmd-search">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" style="opacity:0.5;flex-shrink:0"><line x1="18" y1="4" x2="6" y2="20"/></svg>
+        <span class="cmd-search-text">{{ inputText || '/' }}</span>
+      </div>
+      <div class="cmd-list">
+        <div v-for="(c, i) in filteredCommands" :key="c.cmd"
+          class="cmd-item" :class="{ highlighted: i === cmdHighlight }"
+          @click="selectCmd(c)" @mouseenter="cmdHighlight = i">
+          <span class="cmd-name">{{ c.cmd }}</span>
+          <span class="cmd-desc">{{ c.desc }}</span>
+        </div>
+        <div v-if="!filteredCommands.length" class="cmd-empty">无匹配指令</div>
+      </div>
+    </div>
+
     <!-- Attachments preview -->
     <div v-if="attachments.length" id="attachments">
       <div v-for="(att, i) in attachments" :key="i" class="attach-chip">
@@ -90,54 +229,49 @@ function insertCmd(cmd) {
       </div>
     </div>
 
-    <!-- Row 1: Input field only -->
+    <!-- Input resize handle -->
+    <div class="input-resize-handle" @mousedown="onInputResizeStart"></div>
+
+    <!-- Row 1: Input field -->
     <textarea
+      ref="inputEl"
       id="input" v-model="inputText" rows="1"
-      :placeholder="connected ? '输入消息...' : '未连接 — 等待 WebSocket...'"
+      :placeholder="connected ? '输入消息... ( / 查看指令)' : '未连接 — 等待 WebSocket...'"
       :disabled="!connected"
+      @keydown="onCmdKeydown"
       @keydown.enter.prevent="!isProcessing && connected && onSend()"
     ></textarea>
 
     <!-- Row 2: Toolbar -->
     <div id="input-toolbar">
       <div id="toolbar-left">
-        <!-- 附件上传 (图标) -->
         <button class="tb-btn tb-icon" @click="fileInput.click()" title="添加附件">
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
         </button>
         <input ref="fileInput" type="file" multiple style="display:none" @change="onFileChange">
 
-        <!-- 权限等级 (文字) -->
         <button class="tb-btn tb-text tb-perm" :class="MODE_CLASS[permMode] || 'mode-safe'" @click="cycleMode">
           {{ permMode.toUpperCase() }}
         </button>
 
-        <!-- [/] 指令按钮 (斜杠图标) -->
-        <div class="cmd-wrapper">
-          <button class="tb-btn tb-icon" @click="cmdOpen = !cmdOpen" title="指令">
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><line x1="18" y1="4" x2="6" y2="20"/></svg>
-          </button>
-          <div v-if="cmdOpen" id="cmd-menu">
-            <div v-for="c in COMMANDS" :key="c.cmd" class="cmd-item" @click="insertCmd(c.cmd)">
-              {{ c.cmd }} <span class="cmd-desc">{{ c.desc }}</span>
-            </div>
-          </div>
-        </div>
+        <button class="tb-btn tb-icon" @click="cmdOpen = !cmdOpen" title="指令">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><line x1="18" y1="4" x2="6" y2="20"/></svg>
+        </button>
       </div>
 
-      <!-- 上下文用量条 (固定宽度，居中) -->
-      <div id="usage-inline" v-if="usage?.prompt_tokens">
+      <div id="usage-inline">
+        <template v-if="usage?.prompt_tokens">
         <div class="usage-track"><div class="usage-fill" :style="{ width: Math.min(100, (usage.prompt_tokens / 1000000) * 100) + '%' }"></div></div>
         <span class="usage-val">{{ formatTokens(usage.prompt_tokens) }}<span class="usage-max"> / 1M</span></span>
+        </template>
       </div>
 
-      <!-- 发送按钮 (极简上箭头) -->
       <button
-        id="send-btn" :class="{ stop: isProcessing }"
+        id="send-btn" :class="{ stop: isProcessing && !inputText.trim() }"
         :disabled="!inputText.trim() && !isProcessing"
-        @click="isProcessing ? emit('stop') : onSend()"
+        @click="(isProcessing && !inputText.trim()) ? emit('stop') : onSend()"
       >
-        <svg v-if="!isProcessing" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="19" x2="12" y2="5"/><polyline points="5 12 12 5 19 12"/></svg>
+        <svg v-if="!isProcessing || inputText.trim()" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="19" x2="12" y2="5"/><polyline points="5 12 12 5 19 12"/></svg>
         <span v-else class="stop-text">停止</span>
       </button>
     </div>
@@ -147,8 +281,54 @@ function insertCmd(cmd) {
 <style scoped>
 /* ── 输入区容器 — Big Sur 毛玻璃 ── */
 #input-area {
+  position: relative;
   padding: 10px 20px 14px;
   border-top: 1px solid var(--border-light);
+}
+
+/* ── 指令面板 ── */
+#cmd-panel {
+  position: absolute; bottom: 100%; left: 0; right: 0;
+  margin: 0 8px 6px 8px;
+  background: var(--bg-glass-solid);
+  border: 1px solid var(--border-glass);
+  border-radius: var(--radius-btn);
+  box-shadow: var(--shadow-overlay);
+  z-index: 100;
+  overflow: hidden;
+}
+.cmd-search {
+  display: flex; align-items: center; gap: 8px;
+  padding: 8px 14px;
+  border-bottom: 1px solid var(--border-light);
+  font-size: 13px; color: var(--text-secondary);
+  font-family: var(--font-mono);
+}
+.cmd-search-text { color: var(--text-primary); }
+.cmd-list {
+  max-height: 200px; overflow-y: auto;
+}
+.cmd-item {
+  display: flex; align-items: baseline; gap: 12px;
+  padding: 8px 14px; cursor: pointer; font-size: 13px;
+  transition: background var(--transition-fast);
+}
+.cmd-item:hover,
+.cmd-item.highlighted {
+  background: var(--crimson-alpha);
+  color: var(--crimson);
+}
+.cmd-name {
+  font-family: var(--font-mono);
+  white-space: nowrap; min-width: 80px;
+}
+.cmd-desc {
+  color: var(--text-weak);
+}
+.cmd-item.highlighted .cmd-desc { color: var(--crimson); opacity: 0.7; }
+.cmd-empty {
+  padding: 12px 14px; font-size: 13px; color: var(--text-weak);
+  text-align: center;
 }
 
 /* ── Row 1: 输入框 ── */
@@ -203,7 +383,7 @@ function insertCmd(cmd) {
 .tb-perm.mode-auto { color: oklch(55% 0.12 75); border-color: oklch(55% 0.12 75 / 0.25); }
 .tb-perm.mode-review { color: oklch(50% 0.12 30); border-color: oklch(50% 0.12 30 / 0.25); }
 
-/* ── 上下文用量条 (固定宽度，居中常驻) ── */
+/* ── 上下文用量条 ── */
 #usage-inline {
   flex: 0 1 140px; display: flex; align-items: center; gap: 6px;
   padding: 0 16px; min-width: 0;
@@ -243,27 +423,6 @@ function insertCmd(cmd) {
 }
 #send-btn.stop:hover { background: var(--text-primary); }
 
-/* ── 指令菜单 ── */
-.cmd-wrapper { position: relative; }
-#cmd-menu {
-  position: absolute; bottom: 100%; left: 0; margin-bottom: 6px;
-  background: var(--bg-glass-raised);
-  backdrop-filter: blur(var(--blur-glass)) saturate(1.8);
-  -webkit-backdrop-filter: blur(var(--blur-glass)) saturate(1.8);
-  border: 1px solid var(--border-glass);
-  border-radius: var(--radius-btn);
-  box-shadow: var(--shadow-overlay);
-  z-index: 100; max-height: 240px; overflow-y: auto;
-  min-width: 210px;
-}
-.cmd-item {
-  padding: 8px 14px; cursor: pointer; font-size: 13px;
-  white-space: nowrap; color: var(--text-primary);
-  transition: background var(--transition-fast);
-}
-.cmd-item:hover { background: var(--crimson-alpha); color: var(--crimson); }
-.cmd-desc { color: var(--text-weak); margin-left: 8px; }
-
 /* ── 附件预览 ── */
 #attachments {
   display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 8px;
@@ -283,4 +442,15 @@ function insertCmd(cmd) {
   transition: color var(--transition-fast);
 }
 .chip-remove:hover { color: var(--crimson); }
+
+/* ── Input resize handle ── */
+.input-resize-handle {
+  height: 4px; cursor: row-resize;
+  transition: background var(--transition-fast);
+  margin-bottom: 4px;
+}
+.input-resize-handle:hover,
+.input-resize-handle:active {
+  background: var(--crimson-alpha);
+}
 </style>

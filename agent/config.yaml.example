@@ -1,4 +1,3 @@
-<<<<<<< HEAD
 # Lily Configuration Example
 # Copy to config.yaml and adjust values for your environment.
 # Environment variables are referenced as ${VAR_NAME}.
@@ -8,17 +7,6 @@ version: 0.1.0
 description: An AI agent designed to assist with various tasks.
 
 # API Providers — base_url and api_key are inherited by llm / aux
-=======
-# EchoLily Configuration Example
-# Copy to config.yaml and adjust values for your environment.
-# Environment variables are referenced as ${VAR_NAME}.
-
-project_name: EchoLily
-version: 0.3.0
-description: An AI agent designed to assist with various tasks.
-
-# API Providers — base_url and api_key are inherited by llm / aux / vision
->>>>>>> 1331a93f7185c5815c1025b1f0357e4e1da8dd8b
 providers:
   deepseek:
     base_url: "https://api.deepseek.com/v1"
@@ -26,18 +14,11 @@ providers:
   zhipu:
     base_url: "https://open.bigmodel.cn/api/paas/v4"
     api_key: "${ZHIPU_API_KEY}"
-<<<<<<< HEAD
-=======
-  ollama:
-    base_url: "http://localhost:11434/v1"
-    api_key: "ollama"
->>>>>>> 1331a93f7185c5815c1025b1f0357e4e1da8dd8b
 
 # Main Model Configuration
 llm:
     provider: deepseek
     model: "deepseek-v4-flash"
-<<<<<<< HEAD
     temperature: 0.7
     max_tokens: 1000000
     top_p: 1.0
@@ -47,12 +28,6 @@ max_turns: 0                    # 0 = unlimited; N = max LLM rounds
 show_reasoning: full              # "hide" | "full"
 show_tool_calls: detailed       # "hide" | "show_tools" | "detailed"
 
-=======
-    temperature: 0.4
-    max_tokens: 1000000
-    top_p: 1.0
-
->>>>>>> 1331a93f7185c5815c1025b1f0357e4e1da8dd8b
 # Auxiliary Model Configuration (planning, routing, lightweight tasks)
 aux:
     provider: deepseek
@@ -60,36 +35,17 @@ aux:
     temperature: 0.3
 
 # Vision Model Configuration (image analysis via vision_query tool)
-<<<<<<< HEAD
 vision:
     enabled: false
     provider: ""
     model: ""
-=======
-# Supports any OpenAI-compatible vision API (Zhipu GLM-5V, Ollama Qwen3-VL, etc.)
-vision:
-    enabled: false
-    provider: "ollama"
-    model: "qwen3-vl:4b"
->>>>>>> 1331a93f7185c5815c1025b1f0357e4e1da8dd8b
     temperature: 0.7
     max_images: 5
     max_image_size_mb: 20
 
-<<<<<<< HEAD
 # Memory Configuration
 max_memory_length: 2200          # MEMORY.md 字符上限（~1100 汉字 / ~350 词）
 max_user_preferences_length: 500 # USER.md 字符上限（~250 汉字 / ~80 词）
-=======
-# System Configuration
-max_llm_calls: 0                    # 0 = unlimited; N = max LLM rounds
-show_reasoning: full              # "hide" | "full"
-show_tool_calls: detailed       # "hide" | "show_tools" | "detailed"
-
-# Memory Configuration
-max_memory_length: 2200          # MEMORY.md 字符上限
-max_user_preferences_length: 500 # USER.md 字符上限
->>>>>>> 1331a93f7185c5815c1025b1f0357e4e1da8dd8b
 memory_dedup_threshold: 0.85     # similarity ratio (0-1) for fuzzy memory dedup
 
 # Tool Selection
@@ -107,19 +63,11 @@ tools:
 
 # Chat History Management
 chat_history:
-<<<<<<< HEAD
     max_chars: 10000        # compact when history exceeds this
     trim_to: 5000           # target length after compact
     protect_last_turns: 3   # keep recent N turns untouched
     strategy: compact       # "compact" | "compress"
     truncate_at: 5000        # per-tool limits override this; see agent.py _PER_TOOL_TRUNCATION_LIMITS
-=======
-    max_chars: 50000        # compact when history exceeds this
-    trim_to: 5000           # target length after compact
-    protect_last_rounds: 3   # keep recent N rounds untouched
-    strategy: compact       # "compact" | "compress"
-    truncate_at: 5000        # per-tool limits override this
->>>>>>> 1331a93f7185c5815c1025b1f0357e4e1da8dd8b
 
 # Web Search Configuration
 web_search:
@@ -150,22 +98,8 @@ permissions:
         delete_dir: ask
         web_fetch: ask
         web_search: allow
-<<<<<<< HEAD
         vision_query: ask        # image analysis — confirm before calling external API
         truncate_long_output: ask   # "allow" = silent truncate, "ask" = prompt user
-=======
-        vision_query: ask
-    cmd_safe_prefixes:
-        - "Get-"
-        - "ls"
-        - "cat "
-        - "dir"
-        - "echo "
-        - "python --version"
-        - "which "
-        - "pwd"
-        - "cd "
->>>>>>> 1331a93f7185c5815c1025b1f0357e4e1da8dd8b
 
 # Permission Modes — switch via Shift+Tab in the TUI
 #   safe  : most dev tools ask, read-only tools auto-allow
@@ -185,13 +119,8 @@ permission_modes:
                 delete_dir: ask
                 web_fetch: ask
                 vision_query: ask
-<<<<<<< HEAD
                 truncate_long_output: ask
         review: {}
-=======
-        review: {}
-            # empty → everything defaults to "ask"
->>>>>>> 1331a93f7185c5815c1025b1f0357e4e1da8dd8b
 
 # MCP Servers (Model Context Protocol)
 mcp_servers:
@@ -199,20 +128,6 @@ mcp_servers:
     enabled: true
     command: python
     args: ["-m", "mcp_server_fetch"]
-<<<<<<< HEAD
-=======
-  anysearch:
-    enabled: true
-    start_timeout: 10
-    command: npx
-    args: ["-y", "mcp-remote", "https://api.anysearch.com/mcp",
-           "--header", "Authorization: Bearer ${ANYSEARCH_API_KEY}"]
-  playwright:
-    enabled: true
-    start_timeout: 60
-    command: npx
-    args: ["-y", "@playwright/mcp", "--browser", "msedge", "--headless"]
->>>>>>> 1331a93f7185c5815c1025b1f0357e4e1da8dd8b
   # github:
   #   enabled: true
   #   command: npx
