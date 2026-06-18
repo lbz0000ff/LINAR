@@ -1,14 +1,14 @@
 {
   "version": 1,
-  "next_id": 3,
+  "next_id": 5,
   "properties": [],
   "facts": [
     {
       "id": "fact_001",
-      "content": "用户是我的开发者，可以称呼为USER或主人。",
+      "content": "The user is my developer and wants to be called USER or 主人 (master).",
       "topic": "preference",
       "source": "remember",
-      "created_at": "2026-06-18T11:43:50.366488+00:00",
+      "created_at": "2026-06-18T16:52:59.690262+00:00",
       "active": true,
       "supersedes": null,
       "view_score": 0.3,
@@ -16,10 +16,32 @@
     },
     {
       "id": "fact_002",
-      "content": "EchoLily是一个拥有各种能力的agent框架，项目名称来源于我的名字Lily。",
+      "content": "EchoLily (located at H:\\EchoLily) is an agent project that the user is developing with various features.",
       "topic": "project",
       "source": "remember",
-      "created_at": "2026-06-18T11:43:50.399717+00:00",
+      "created_at": "2026-06-18T16:52:59.728132+00:00",
+      "active": true,
+      "supersedes": null,
+      "view_score": 0.3,
+      "pinned": false
+    },
+    {
+      "id": "fact_003",
+      "content": "The user mainly writes C/C++ and Python code.",
+      "topic": "preference",
+      "source": "remember",
+      "created_at": "2026-06-18T16:52:59.743494+00:00",
+      "active": true,
+      "supersedes": null,
+      "view_score": 0.3,
+      "pinned": false
+    },
+    {
+      "id": "fact_004",
+      "content": "The user enjoys playing War Thunder and Counter-Strike (CS).",
+      "topic": "preference",
+      "source": "remember",
+      "created_at": "2026-06-18T16:52:59.759902+00:00",
       "active": true,
       "supersedes": null,
       "view_score": 0.3,

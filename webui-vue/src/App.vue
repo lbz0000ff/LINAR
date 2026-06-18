@@ -309,17 +309,24 @@ function handleToolCall(event) {
     messages.value.push({ role: 'ask_user', prompt: args.prompt || '', choices: args.choices || [], _answered: false, _customInput: '' })
     return
   }
-  messages.value.push({ role: 'tool', tool_name: name, args, result: null, status: 'running' })
+  messages.value.push({ role: 'tool', tool_name: name, tool_call_id: event.id || '', args, result: null, status: 'running' })
 }
 
 function handleToolResult(event) {
   let resultStr = typeof event.result === 'string' ? event.result : JSON.stringify(event.result || '')
   if (resultStr.length > 200) resultStr = resultStr.slice(0, 200) + '...'
+  const id = event.id
   for (let i = messages.value.length - 1; i >= 0; i--) {
     const m = messages.value[i]
-    if (m.role === 'tool' && m.tool_name === event.name && m.status === 'running') {
-      m.result = resultStr; m.status = 'done'
-      messages.value = [...messages.value]; return
+    if (m.role === 'tool') {
+      if (id && m.tool_call_id && m.tool_call_id === id) {
+        m.result = resultStr; m.status = 'done'
+        messages.value = [...messages.value]; return
+      }
+      if (!id && m.tool_name === event.name && m.status === 'running') {
+        m.result = resultStr; m.status = 'done'
+        messages.value = [...messages.value]; return
+      }
     }
   }
 }

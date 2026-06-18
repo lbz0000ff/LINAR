@@ -942,7 +942,7 @@ class Agent:
                 tc = tool_call_deltas[idx]
                 if tc["name"]:
                     tool_calls.append(tc)
-                    self.emit({"type": "tool_call", "name": tc["name"], "arguments": tc["arguments"]})
+                    self.emit({"type": "tool_call", "name": tc["name"], "id": tc["id"], "arguments": tc["arguments"]})
             if text or reasoning or tool_calls:
                 entry = {
                     "role": "agent", "content": text, "round": self._conversation_round,
@@ -1126,7 +1126,7 @@ class Agent:
                     "name": tc["name"], "arguments": tc["arguments"],
                     "result": result_str, "round": self._conversation_round,
                 })
-                self.emit({"type": "tool_result", "name": tc["name"], "result": result_str})
+                self.emit({"type": "tool_result", "name": tc["name"], "id": tc["id"], "result": result_str})
                 await self._run_hook("PostToolUse", {
                     "ECHOLILY_TOOL_NAME": tc["name"], "ECHOLILY_TOOL_ARGUMENTS": tc["arguments"],
                     "ECHOLILY_TOOL_RESULT": result_str,
