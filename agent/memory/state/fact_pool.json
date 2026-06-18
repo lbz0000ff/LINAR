@@ -1,0 +1,29 @@
+{
+  "version": 1,
+  "next_id": 3,
+  "properties": [],
+  "facts": [
+    {
+      "id": "fact_001",
+      "content": "用户是我的开发者，可以称呼为USER或主人。",
+      "topic": "preference",
+      "source": "remember",
+      "created_at": "2026-06-18T11:43:50.366488+00:00",
+      "active": true,
+      "supersedes": null,
+      "view_score": 0.3,
+      "pinned": false
+    },
+    {
+      "id": "fact_002",
+      "content": "EchoLily是一个拥有各种能力的agent框架，项目名称来源于我的名字Lily。",
+      "topic": "project",
+      "source": "remember",
+      "created_at": "2026-06-18T11:43:50.399717+00:00",
+      "active": true,
+      "supersedes": null,
+      "view_score": 0.3,
+      "pinned": false
+    }
+  ]
+}

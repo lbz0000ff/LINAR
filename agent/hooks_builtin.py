@@ -147,7 +147,7 @@ async def persist_agent_response(context: HookContext) -> None:
         await asyncio.to_thread(
             db.save_message,
             context.agent.session_id,
-            "assistant",
+            "agent",
             context.agent_text,
             conversation_round=context.agent._conversation_round,
             reasoning=reasoning,
