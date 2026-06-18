@@ -16,11 +16,13 @@
 - NEVER call resolve_promise unless the user explicitly asks about a completed task. Calling it on a running task will be REJECTED.
 
 ## Memory
-- `remember` to save: `user` for real personal traits, `normal` for what happened/decided, `archive` for content > 250 chars.
-- `recall` to retrieve: `archive`/`event`/`search`/`recent`.
-- Only use `user` type for real, self-stated, stable traits — not hypothetical answers.
-- Do NOT use `read_file` or `search_files` to read memory files.
-- USER.md and MEMORY.md are reloaded before each LLM call — answer from context; no tool needed.
+- The system automatically extracts key facts from conversations every few rounds.
+- `remember(content=, topic=)` — manually save a fact. Topic is required; use `get_topic_list` to see available topics.
+- `recall_fact(query=, limit=)` — search stored facts by keyword.
+- `recall_topic(topic=)` — browse all facts under a topic.
+- `get_topic_list` — list all existing topics with definitions.
+- Compiled memory is injected into your prompt automatically — no tool needed for context.
+- Do NOT use `read_file` or `search_files` to read memory or prompt files.
 
 ## Temporary files
 - Create temp files in `.temp` directory, not in the project directory.

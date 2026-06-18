@@ -20,6 +20,7 @@ test/*
 agent/memory/chat_history/*
 agent/memory/archived/*
 agent/prompt/USER.md
+agent/prompt/AGENT.md
 agent/prompt/MEMORY.md
 agent/tool/mcp_tools/server/comfyui-mcp/
 demo/

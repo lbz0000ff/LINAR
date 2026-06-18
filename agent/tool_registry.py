@@ -12,7 +12,7 @@ from tool.basic_tools.tool_fileio import (
 )
 from tool.basic_tools.tool_cmd import Tool_CmdExecute
 from tool.basic_tools.tool_web import Tool_WebFetch, Tool_WebSearch
-from tool.basic_tools.tool_memory import Tool_Remember, Tool_Recall
+from tool.basic_tools.tool_memory import Tool_Remember, Tool_RecallFact, Tool_RecallTopic, Tool_GetTopicList
 from tool.basic_tools.tool_ask_user import Tool_AskUser
 from tool.basic_tools.tool_skill import Tool_SkillView
 from tool.basic_tools.tool_plan import Tool_PlanAdvance, Tool_PlanStatus
@@ -219,7 +219,9 @@ _TOOL_CLASSES = {
     "web_fetch": Tool_WebFetch,
     "web_search": Tool_WebSearch,
     "remember": Tool_Remember,
-    "recall": Tool_Recall,
+    "recall_fact": Tool_RecallFact,
+    "recall_topic": Tool_RecallTopic,
+    "get_topic_list": Tool_GetTopicList,
     "ask_user": Tool_AskUser,
     "skill_view": Tool_SkillView,
     "plan_advance": Tool_PlanAdvance,
@@ -238,7 +240,7 @@ _TOOLSETS = {
     ],
     "shell": ["cmd_execute", "cancel_promise"],
     "web": ["web_fetch", "web_search"],
-    "memory": ["remember", "recall"],
+    "memory": ["remember", "recall_fact", "recall_topic", "get_topic_list"],
     "interactive": ["ask_user", "skill_view", "resolve_promise"],
     "plan": ["plan_advance", "plan_status"],
     "vision": ["vision_query"],
@@ -290,7 +292,9 @@ _all_tools = {
     "web_fetch": Tool_WebFetch(),
     "web_search": Tool_WebSearch(),
     "remember": Tool_Remember(),
-    "recall": Tool_Recall(),
+    "recall_fact": Tool_RecallFact(),
+    "recall_topic": Tool_RecallTopic(),
+    "get_topic_list": Tool_GetTopicList(),
     "ask_user": Tool_AskUser(),
     "skill_view": Tool_SkillView(),
     "plan_advance": Tool_PlanAdvance(),

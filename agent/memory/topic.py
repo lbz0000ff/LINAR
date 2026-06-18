@@ -3,13 +3,11 @@
 Topics are flat categories with a one-sentence definition that is
 generated once and frozen.  They form a tree (each fact belongs to
 exactly one topic), never a graph.
-
-The initial topic set is hard-coded as a fallback; once persisted,
-topics live in ``topics.json`` and can grow over time.
 """
 
 from __future__ import annotations
 
+import difflib
 import json
 import os
 from dataclasses import dataclass, field, asdict
@@ -34,10 +32,6 @@ _TOPICS_PATH = os.path.join(
 
 _SEED_TOPICS: list[dict[str, str]] = [
     {
-        "name": "general",
-        "definition": "general information that does not fit any other specific topic",
-    },
-    {
         "name": "preference",
         "definition": "user's personal preferences, habits, and behavioral tendencies",
     },
@@ -47,13 +41,15 @@ _SEED_TOPICS: list[dict[str, str]] = [
     },
     {
         "name": "behavior",
-        "description": "the agent's own behavior patterns, methodology, and long-term experience",
+        "definition": "the agent's own behavior patterns, methodology, and long-term experience",
     },
     {
         "name": "workflow",
         "definition": "workflow preferences and toolchain configuration",
     },
 ]
+
+_FUZZY_THRESHOLD = 0.70
 
 # ---------------------------------------------------------------------------
 # Topic
@@ -65,7 +61,7 @@ class Topic:
     """A flat semantic category for grouping facts."""
 
     name: str
-    definition: str
+    definition: str = ""
     created_at: str = field(
         default_factory=lambda: datetime.now(timezone.utc).isoformat()
     )
@@ -86,7 +82,7 @@ class Topic:
 class TopicRegistry:
     """Load, save, and query topic definitions.
 
-    If no persisted file exists, creates one with the seed topics.
+    If no persisted file exists, creates one with the seed topics on first run.
     """
 
     def __init__(self, path: str | None = None) -> None:
@@ -110,7 +106,6 @@ class TopicRegistry:
             except (json.JSONDecodeError, KeyError) as e:
                 log.warning("Failed to load topics: %s — reseeding", e)
 
-        # Seed on first run
         log.info("Seeding default topics")
         for sd in _SEED_TOPICS:
             t = Topic(name=sd["name"], definition=sd.get("definition", ""))
@@ -118,7 +113,6 @@ class TopicRegistry:
         self._save()
 
     def save(self) -> None:
-        """Persist topics to JSON."""
         self._save()
 
     def _save(self) -> None:
@@ -141,20 +135,65 @@ class TopicRegistry:
     def find(self, name: str) -> Topic | None:
         return self._topics.get(name)
 
-    def add(self, name: str, definition: str) -> Topic:
+    def add(self, name: str, definition: str = "") -> Topic:
         """Add a new topic. Overwrites if *name* already exists."""
         t = Topic(name=name, definition=definition)
         self._topics[name] = t
         self._save()
-        log.info("Added topic '%s': %s", name, definition)
+        log.info("Added topic '%s': %s", name, definition or "(no definition)")
         return t
-
-    def get_definitions_text(self) -> str:
-        """Return a formatted string of all topic definitions (for LLM prompts)."""
-        lines = ["Available topics:"]
-        for t in self._topics.values():
-            lines.append(f"  - {t.name}: {t.definition}")
-        return "\n".join(lines)
 
     def __contains__(self, name: str) -> bool:
         return name in self._topics
+
+    # ── topic resolution ──────────────────────────────────────
+
+    def resolve_topic(self, name: str) -> tuple[str, bool, bool]:
+        """Resolve a topic name to an existing or new topic.
+
+        Returns ``(resolved_name, is_new, fuzzy_matched)``:
+
+        * Exact match → ``("preference", False, False)``
+        * Fuzzy match → ``("preference", False, True)``  (spelling correction)
+        * No match   → ``("custom_name", True, False)``  (new topic created)
+        """
+        name = name.strip().lower()
+        if not name:
+            name = "general"
+            log.warning("Empty topic name, falling back to 'general'")
+
+        # 1. Exact match
+        if name in self._topics:
+            return (name, False, False)
+
+        # 2. Fuzzy match — difflib against all existing topic names
+        best_name: str | None = None
+        best_ratio = 0.0
+        for existing in self._topics:
+            ratio = difflib.SequenceMatcher(None, name, existing).ratio()
+            if ratio > best_ratio:
+                best_ratio = ratio
+                best_name = existing
+
+        if best_name and best_ratio >= _FUZZY_THRESHOLD:
+            log.debug("Fuzzy matched topic '%s' → '%s' (ratio=%.2f)", name, best_name, best_ratio)
+            return (best_name, False, True)
+
+        # 3. No match — create new topic
+        self.add(name)
+        return (name, True, False)
+
+    # ── helper for get_topic_list ─────────────────────────────
+
+    def list_with_counts(self, fact_store: Any | None = None) -> list[dict[str, Any]]:
+        """Return topic list with optional fact counts.
+
+        Each entry: ``{"name": ..., "definition": ..., "fact_count": N}``
+        """
+        result = []
+        for t in self._topics.values():
+            entry = {"name": t.name, "definition": t.definition}
+            if fact_store is not None:
+                entry["fact_count"] = len(fact_store.get_by_topic(t.name, active=True))
+            result.append(entry)
+        return result

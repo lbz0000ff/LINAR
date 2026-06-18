@@ -34,8 +34,8 @@ log = get_logger(__name__)
 # ---------------------------------------------------------------------------
 
 _PROMPT_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "prompt")
-_USR_PATH = os.path.join(_PROMPT_DIR, "USR.md")
-_AGT_PATH = os.path.join(_PROMPT_DIR, "AGT.md")
+_USR_PATH = os.path.join(_PROMPT_DIR, "USER.md")
+_AGT_PATH = os.path.join(_PROMPT_DIR, "AGENT.md")
 
 # ---------------------------------------------------------------------------
 # Configurable limits

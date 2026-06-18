@@ -38,9 +38,9 @@ _VERSION_PATH = os.path.join(_MEMORY_DIR, "compiled_version.txt")
 class Fact:
     """One atomic, self-contained memory unit."""
 
-    id: str
-    content: str
-    topic: str
+    id: str = ""
+    content: str = ""
+    topic: str = ""
     source: str = ""
     created_at: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
     active: bool = True
