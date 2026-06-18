@@ -181,7 +181,8 @@ class Tool_RecallTopic(Tool):
             tr = TopicRegistry()
 
             resolved, _, _ = tr.resolve_topic(topic)
-            facts = store.get_by_topic(resolved, active=active_only)
+            active_filter = None if not active_only else True
+            facts = store.get_by_topic(resolved, active=active_filter)
             facts.sort(key=lambda f: f.view_score, reverse=True)
 
             if not facts:

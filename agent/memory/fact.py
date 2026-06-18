@@ -153,8 +153,16 @@ class FactStore:
             return list(self._facts.values())
         return [f for f in self._facts.values() if f.active == active]
 
-    def get_by_topic(self, topic: str, active: bool = True) -> list[Fact]:
-        """Return facts belonging to *topic* (optionally filtered by *active*)."""
+    def get_by_topic(self, topic: str, active: bool | None = True) -> list[Fact]:
+        """Return facts belonging to *topic*.
+
+        *active* controls filtering:
+        ``True`` (default) — only active facts.
+        ``False`` — only inactive facts.
+        ``None`` — all facts regardless of active status.
+        """
+        if active is None:
+            return [f for f in self._facts.values() if f.topic == topic]
         return [f for f in self._facts.values()
                 if f.topic == topic and f.active == active]
 
