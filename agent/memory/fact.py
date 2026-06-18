@@ -67,8 +67,9 @@ class FactStore:
     Thread-safe for reads and writes (single-threaded writes via RLock).
     """
 
-    def __init__(self, path: str | None = None) -> None:
+    def __init__(self, path: str | None = None, version_path: str | None = None) -> None:
         self._path = path or _FACT_POOL_PATH
+        self._version_path = version_path or _VERSION_PATH
         self._lock = threading.RLock()
         self._facts: dict[str, Fact] = {}
         self._next_id: int = 1
@@ -198,8 +199,8 @@ class FactStore:
         with self._lock:
             # Use float precision to match ``os.path.getmtime()`` resolution.
             stamp = str(time.time())
-            os.makedirs(os.path.dirname(_VERSION_PATH), exist_ok=True)
-            with open(_VERSION_PATH, "w") as f:
+            os.makedirs(os.path.dirname(self._version_path), exist_ok=True)
+            with open(self._version_path, "w") as f:
                 f.write(stamp)
 
     def has_changed_since_last_compile(self) -> bool:
@@ -211,9 +212,9 @@ class FactStore:
         if not os.path.isfile(self._path):
             return True
         pool_mtime = os.path.getmtime(self._path)
-        if not os.path.isfile(_VERSION_PATH):
+        if not os.path.isfile(self._version_path):
             return True
-        with open(_VERSION_PATH) as f:
+        with open(self._version_path) as f:
             raw = f.read().strip()
         if not raw:
             return True

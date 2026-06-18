@@ -197,3 +197,10 @@ class TopicRegistry:
                 entry["fact_count"] = len(fact_store.get_by_topic(t.name, active=True))
             result.append(entry)
         return result
+
+    def get_definitions_text(self) -> str:
+        """Return a formatted string of all topic definitions (for LLM prompts)."""
+        lines = ["Available topics:"]
+        for t in self._topics.values():
+            lines.append(f"  - {t.name}: {t.definition}")
+        return "\n".join(lines)

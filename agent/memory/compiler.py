@@ -267,6 +267,7 @@ def compile_view(store: Any, topic_registry: Any, llm_cfg: dict[str, Any]) -> No
         # Still write empty files (fallback will read old USER.md/MEMORY.md)
         _write_view_files(unconditional, [])
         store.update_view_scores([], decay=_SCORE_DECAY)
+        store.save()
         store.mark_compiled()
         return
 
@@ -305,8 +306,8 @@ def compile_view(store: Any, topic_registry: Any, llm_cfg: dict[str, Any]) -> No
 
     # ── Update scores ───────────────────────────────────────
     store.update_view_scores(selected_ids, decay=_SCORE_DECAY)
-    store.mark_compiled()
-    store.save()
+    store.save()           # persist score changes first
+    store.mark_compiled()  # then mark, so version > fact_pool mtime
 
     log.info(
         "Compilation done: %d unconditional + %d selected = %d facts in View",
