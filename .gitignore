@@ -22,6 +22,7 @@ agent/memory/archived/*
 agent/prompt/USER.md
 agent/prompt/AGENT.md
 agent/prompt/MEMORY.md
+agent/memory/state/
 agent/tool/mcp_tools/server/comfyui-mcp/
 demo/
 
