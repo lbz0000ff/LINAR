@@ -81,3 +81,14 @@ def all_commands() -> list[Command]:
             seen.add(cmd.name)
             result.append(cmd)
     return result
+
+
+# ── Auto-register all built-in commands on first import ──
+def _init_builtins():
+    """Import and register all built-in command modules."""
+    from .cmd_workspace import WorkspaceCommand, CreateWorkspaceCommand, SwitchWorkspaceCommand
+    register(WorkspaceCommand())
+    register(CreateWorkspaceCommand())
+    register(SwitchWorkspaceCommand())
+
+_init_builtins()

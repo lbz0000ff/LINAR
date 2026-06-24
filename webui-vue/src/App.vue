@@ -31,6 +31,7 @@ const messages = ref([])
 const currentSessionId = ref(null)
 const isNewSession = ref(false)
 const pendingMsg = ref('')
+const pendingFiles = ref([])
 const isProcessing = ref(false)
 const chatTitle = ref('选择会话')
 const currentSkill = ref(null)
@@ -46,6 +47,7 @@ const dagNodes = ref({})
 const dagGoal = ref('')
 const dagActive = ref(false)
 const btwResults = ref([])
+const workspacePath = ref('')
 const msgContainer = ref(null)
 const showScrollBtn = ref(false)
 
@@ -80,7 +82,7 @@ function handleMessage(event) {
     if (isNewSession.value) { currentSessionId.value = event.session_id; isNewSession.value = false }
     send('list_sessions', {})
     send('switch_session', { id: event.session_id })
-    if (pendingMsg.value) { send('message', { data: pendingMsg.value }); pendingMsg.value = '' }
+    if (pendingMsg.value) { send('message', { data: pendingMsg.value, files: pendingFiles.value }); pendingMsg.value = ''; pendingFiles.value = [] }
   }
   else if (t === 'token') handleToken(event.data || '')
   else if (t === 'reasoning_token') handleReasoning(event.data || '')
@@ -95,45 +97,45 @@ function handleMessage(event) {
   else if (t === 'promise_resolved') addMessage({ role: 'notification', text: '异步任务完成: ' + (event.data?.id || '') })
   else if (t === 'plan_start') { planText.value = ''; addMessage({ role: 'plan', _text: '', _open: true }); dagNodes.value = {}; dagActive.value = true; dagGoal.value = ''; showRightPanel.value = true }
   else if (t === 'plan') { const last = messages.value[messages.value.length - 1]; if (last?.role === 'plan') { last._text += (event.data || ''); messages.value = [...messages.value] }; dagGoal.value = (event.data || '') }
+  else if (t === 'plan_nodes') { const nodes = event.data || []; const m = {}; nodes.forEach(n => { m[n.id] = { id: n.id, description: n.description, depends_on: n.depends_on || [], hint: n.hint, status: n.status || 'PENDING', result: '' } }); dagNodes.value = m }
   else if (t === 'plan_execute') { /* DAG execution begins — nodes will follow */ }
-  else if (t === 'dag_node_start') { const d = event.data; dagNodes.value = { ...dagNodes.value, [d.id]: { id: d.id, description: d.description, hint: d.hint, status: 'IN_PROGRESS', result: '' } } }
+  else if (t === 'dag_node_start') { const d = event.data; dagNodes.value = { ...dagNodes.value, [d.id]: { id: d.id, description: d.description, hint: d.hint, depends_on: d.depends_on || [], status: 'IN_PROGRESS', result: '' } } }
   else if (t === 'dag_node_complete') { const d = event.data; dagNodes.value = { ...dagNodes.value, [d.id]: { ...(dagNodes.value[d.id] || {}), status: 'COMPLETED', result: d.result } } }
   else if (t === 'plan_complete') { const last = messages.value[messages.value.length - 1]; if (last?.role === 'plan') { last._open = false; messages.value = [...messages.value] }; dagActive.value = false }
   else if (t === 'plan_error') { dagActive.value = false }
   else if (t === 'skills') skillsList.value = event.data || []
+  else if (t === 'system') { addMessage({ role: 'system', text: event.data || '' }) }
   else if (t === 'btw_result') { const d = event.data; btwResults.value = [{ question: d.question, answer: d.answer, ts: Date.now() }, ...btwResults.value]; showRightPanel.value = true }
+  else if (t === 'workspace_updated') { workspacePath.value = event.data?.path || ''; showRightPanel.value = true }
   else if (t === 'config_json') handleConfig(event.data || {})
 }
 
 function convertDbMessages(dbMsgs) {
   return (dbMsgs || []).map(m => {
-    const text = m.content || ''
-    const filePaths = extractFilePaths(text)
-    const cleanText = stripFileTags(text)
+    const raw = m.content || ''
+    let content = raw
+    // Try to restore Content Block array stored as JSON
+    try { if (typeof raw === 'string' && raw.startsWith('[')) { const p = JSON.parse(raw); if (Array.isArray(p)) content = p } } catch (_) {}
     const role = m.role === 'agent' ? 'ai' : (m.role || 'user')
     const base = {
-      role, text: cleanText, _rawText: text,
+      role, text: '', _content: content,
       tool_name: m.tool_name || '', reasoning: m.reasoning || '',
       tool_call_id: m.tool_call_id || '', tool_calls: m.tool_calls || '',
-      created_at: m.created_at || '', _filePaths: filePaths,
+      created_at: m.created_at || '',
     }
     // Reconstruct tool call state from stored JSON content
-    if (role === 'tool' && text) {
+    if (role === 'tool' && typeof raw === 'string') {
       try {
-        const parsed = JSON.parse(text)
+        const parsed = JSON.parse(raw)
         base.args = parsed.args || {}
         const r = typeof parsed.result === 'string' ? parsed.result : ''
         base.result = r.length > 2000 ? r.slice(0, 2000) + '...' : r
         base.status = 'done'
       } catch (_) {
         base.args = {}
-        base.result = text.slice(0, 2000)
+        base.result = raw.slice(0, 2000)
         base.status = 'done'
       }
-    }
-    // Render markdown for AI messages on load
-    if (role === 'ai' && cleanText) {
-      base.text = renderMd(cleanText)
     }
     return base
   })
@@ -163,7 +165,29 @@ function escapeHtml(s) {
   if (!s) return ''
   return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
 }
-function stripFileTags(text) { return (text || '').replace(/\[file:[^\]]*\]/g, '').trim() }
+function stripFileTags(text) { return (text || '').replace(/\[file:[^\]]*\]/g, '').trim() }  // keep for backward compat
+function renderContentBlocks(content) {
+  // String (legacy): render as markdown
+  if (typeof content === 'string') return renderMd(stripFileTags(content))
+  // Content Block array
+  if (!Array.isArray(content) || !content.length) return ''
+  return content.map(b => {
+    if (b.type === 'text') return renderMd(b.text || '')
+    if (b.type === 'image_url') {
+      const url = b.image_url?.url || ''
+      if (url.startsWith('file://')) {
+        const path = url.slice(7)
+        const displayUrl = '/raw-file/' + encodeURIComponent(path.replace(/\\/g, '/'))
+        return `<div class="msg-image"><img src="${displayUrl}" style="max-width:100%;max-height:300px;border-radius:8px;cursor:pointer" onclick="window.open(this.src,'_blank')"></div>`
+      }
+      if (url.startsWith('data:')) {
+        return `<div class="msg-image"><img src="${url}" style="max-width:100%;max-height:300px;border-radius:8px;cursor:pointer"></div>`
+      }
+      return `<div class="msg-image"><a href="${escapeHtml(url)}" target="_blank">📷 ${escapeHtml(url.split('/').pop() || 'Image')}</a></div>`
+    }
+    return ''
+  }).join('')
+}
 function formatTokens(n) {
   if (!n) return '0'; if (n >= 1e6) return (n / 1e6).toFixed(2) + 'M'
   if (n >= 1e3) return (n / 1e3).toFixed(1) + 'K'; return String(n)
@@ -177,6 +201,13 @@ function cacheRate(u) {
 function postRender() {
   nextTick(() => {
     try {
+      // Make all links open in external browser (not in EchoLily's embedded view)
+      document.querySelectorAll('.msg-content a[href]').forEach(a => {
+        if (!a.getAttribute('target')) {
+          a.setAttribute('target', '_blank')
+          a.setAttribute('rel', 'noopener noreferrer')
+        }
+      })
       // highlight.js
       document.querySelectorAll('.msg-content pre code').forEach(block => {
         hljs.highlightElement(block)
@@ -335,10 +366,15 @@ function handleComplete() {
   isProcessing.value = false
   const last = messages.value[messages.value.length - 1]
   if (last && last.role === 'streaming') {
-    // 最终渲染：用完整的原始文本渲染 markdown
     const fullText = last._fullText || last._buffer || ''
-    const filePaths = (lastFilePaths.value || []).concat(extractFilePaths(fullText))
-    last.text = renderMd(fullText) + renderFileAttachments(filePaths)
+    // Build Content Block array for rendering
+    const blocks = [{ type: 'text', text: fullText }]
+    if (lastFilePaths.value?.length) {
+      lastFilePaths.value.forEach(p => {
+        blocks.push({ type: 'image_url', image_url: { url: 'file://' + p.replace(/\\/g, '/') } })
+      })
+    }
+    last._content = blocks
     last.role = 'ai'
     messages.value = [...messages.value]
     postRender()
@@ -380,14 +416,21 @@ function answerAskUser(idx, val) {
 function onSend(text, files) {
   if (!text.trim() || isProcessing.value || !connected.value) return
   const filePaths = files || []
-  let msgText = text
-  if (filePaths.length) msgText += ' ' + filePaths.map(p => '[file:' + p + ']').join('')
-  addMessage({ role: 'user', text })
-  if (filePaths.length) lastFilePaths.value = filePaths
+  const userMsg = { role: 'user', text }
+  if (filePaths.length) {
+    const blocks = [{ type: 'text', text: text.trim() }]
+    filePaths.forEach(p => {
+      blocks.push({ type: 'image_url', image_url: { url: 'file://' + p.replace(/\\/g, '/') } })
+    })
+    userMsg._content = blocks
+    lastFilePaths.value = filePaths
+  }
+  addMessage(userMsg)
   if (isNewSession.value || !currentSessionId.value) {
-    pendingMsg.value = msgText; send('new_session', { files: filePaths })
+    pendingMsg.value = text; pendingFiles.value = filePaths
+    send('new_session', { files: filePaths })
   } else {
-    send('message', { data: msgText, files: filePaths })
+    send('message', { data: text, files: filePaths })
   }
   isProcessing.value = true
 }
@@ -395,7 +438,7 @@ function onStop() {
   send('stop', {}); isProcessing.value = false
 }
 function onShowHelp() {
-  addMessage({ role: 'system', text: '<b>可用指令：</b><br>/help — 显示帮助<br>/reasoning — 切换思考过程显示<br>/reset — 重置对话<br>/stop — 停止生成<br>/jobs — 查看后台任务<br>/reload_mcp — 重新加载 MCP 工具' })
+  addMessage({ role: 'system', text: '<b>可用指令：</b><br>/help — 显示帮助<br>/workspace — 显示当前工作区<br>/workspace-create — 创建工作区<br>/workspace-switch — 切换工作区<br>/reasoning — 切换思考过程显示<br>/reset — 重置对话<br>/stop — 停止生成<br>/jobs — 查看后台任务<br>/reload_mcp — 重新加载 MCP 工具' })
 }
 function onToggleReasoning() {
   messages.value.forEach(m => {
@@ -511,7 +554,7 @@ onUnmounted(() => offMessage(handleMessage))
 
           <!-- 用户 -->
           <div v-if="msg.role === 'user'" class="msg-user-bubble">
-            <div class="msg-content">{{ msg.text }}</div>
+            <div class="msg-content" v-html="renderContentBlocks(msg._content || msg.text)"></div>
           </div>
 
           <!-- AI / streaming -->
@@ -523,9 +566,7 @@ onUnmounted(() => offMessage(handleMessage))
               </div>
               <div v-show="!msg.collapsed" class="reasoning-text">{{ msg.reasoning }}</div>
             </div>
-            <div v-if="msg.text" class="msg-content" v-html="msg.text"></div>
-            <!-- 历史消息中的文件附件 -->
-            <div v-if="msg._filePaths?.length" v-html="renderFileAttachments(msg._filePaths)"></div>
+            <div v-if="msg.text || msg._content" class="msg-content" v-html="renderContentBlocks(msg._content || msg.text)"></div>
           </div>
 
           <!-- 工具调用 -->
@@ -622,6 +663,7 @@ onUnmounted(() => offMessage(handleMessage))
       v-if="showRightPanel"
       :dag-nodes="dagNodes" :dag-goal="dagGoal"
       :dag-active="dagActive" :btw-results="btwResults"
+      :workspace-path="workspacePath"
       @close="showRightPanel = false"
     />
     <SettingsPage v-if="showSettings" @close="showSettings = false" @dark-mode="toggleDarkMode" :dark-mode="darkMode" />
@@ -934,8 +976,9 @@ body.dark #chat-area {
 .msg-content h1 { font-size: 18px; }
 .msg-content h2 { font-size: 16px; }
 .msg-content h3 { font-size: 15px; }
-.msg-content a { color: var(--crimson); text-decoration: none; }
-.msg-content a:hover { text-decoration: underline; }
+.msg-content a { color: var(--crimson); text-decoration: underline; }
+.msg-content a:hover { opacity: 0.8; }
+.msg-user-bubble .msg-content a { color: var(--text-on-crimson); }
 
 /* ── 复制按钮 ── */
 .copy-btn {

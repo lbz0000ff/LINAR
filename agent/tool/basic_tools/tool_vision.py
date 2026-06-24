@@ -1,7 +1,14 @@
 """Tool that lets the agent analyze images using a vision-capable model.
 
-Reads the ``vision`` section from config.yaml to determine which model/provider
-to use.  The vision model is called via its OpenAI-compatible API endpoint.
+Behaviour depends on the ``llm.multimodal`` config flag:
+
+- **multimodal: true** — validates & resolves image sources (base64 / remote URL),
+  then returns an ``[IMAGE_READY]`` marker.  The resolved URLs are injected
+  directly into the chat messages so the multimodal main model can **see the
+  image itself** — zero additional API cost and zero information loss.
+
+- **multimodal: false / absent** — falls back to the dedicated ``vision``
+  provider (e.g. 智谱 GLM-5V-Turbo) which returns a text description.
 """
 
 from .tool import Tool
@@ -9,13 +16,10 @@ from config import load_config
 from openai import OpenAI
 import base64
 import os
-import mimetypes
 import logging
 
 log = logging.getLogger(__name__)
 
-# Some vision APIs (e.g. GLM-4V) may have stricter limits — 20 MB is a safe
-# upper bound for most providers.
 _MAX_IMAGE_SIZE = 20 * 1024 * 1024
 
 _SUPPORTED_EXT = {".jpg", ".jpeg", ".png", ".gif", ".bmp", ".webp"}
@@ -34,14 +38,14 @@ class Tool_VisionQuery(Tool):
     name: str = "vision_query"
     description: str = (
         "Analyze images using a vision-capable model. "
-        "Use this when the user asks about the content of image files, "
+        "Use this when you want to examine the content of image files, "
         "screenshots, photos, diagrams, or any visual data."
     )
     tool_schema: dict = {
         "name": "vision_query",
         "description": (
             "Analyze images using a vision-capable model. "
-            "Use this when the user asks about the content of image files, "
+            "Use this when you want to examine the content of image files, "
             "screenshots, photos, diagrams, or any visual data."
         ),
         "parameters": {
@@ -51,7 +55,7 @@ class Tool_VisionQuery(Tool):
                     "type": "array",
                     "items": {"type": "string"},
                     "description": (
-                        "File paths of the images to analyze. "
+                        "File paths or URLs of the images to analyze. "
                         "Supported: JPEG, PNG, GIF, BMP, WebP."
                     ),
                 },
@@ -73,6 +77,82 @@ class Tool_VisionQuery(Tool):
             return {"error": "No image paths provided."}
 
         cfg = load_config()
+        is_multimodal = cfg.get("llm", {}).get("multimodal", False)
+
+        if is_multimodal:
+            return self._execute_multimodal(images, prompt, cfg)
+        else:
+            return self._execute_fallback(images, prompt, cfg)
+
+    # ── multimodal: encode images → inject via content_blocks ───────
+
+    def _execute_multimodal(self, images: list[str], prompt: str,
+                            cfg: dict) -> dict:
+        """Encode images as base64 ``content_blocks`` for direct injection.
+
+        The images are base64-encoded locally (no API call) and returned
+        as ``content_blocks``.  ``agent.py``'s ``_build_llm_messages``
+        detects these blocks and inserts a user message with the images
+        right after the tool result — so the main model sees the image
+        directly without a text-summary bottleneck.
+        """
+        max_images = 99
+        if len(images) > max_images:
+            return {"error": f"Too many images ({len(images)}). Maximum: {max_images}."}
+
+        content_blocks: list[dict] = []
+
+        for path in images:
+            path = path.strip()
+            if path.startswith(("http://", "https://")):
+                content_blocks.append({
+                    "type": "image_url",
+                    "image_url": {"url": path, "detail": "high"},
+                })
+                continue
+
+            # Local file
+            ext = os.path.splitext(path)[1].lower()
+            if ext not in _SUPPORTED_EXT:
+                return {"error": (
+                    f"Unsupported format '{ext}' for: {path}. "
+                    f"Supported: {', '.join(sorted(_SUPPORTED_EXT))}."
+                )}
+            if not os.path.isfile(path):
+                return {"error": f"File not found: {path}"}
+            size = os.path.getsize(path)
+            if size > _MAX_IMAGE_SIZE:
+                return {"error": (
+                    f"File too large ({size / 1024 / 1024:.1f} MB): {path}. "
+                    f"Maximum: {_MAX_IMAGE_SIZE / 1024 / 1024:.0f} MB."
+                )}
+            try:
+                with open(path, "rb") as f:
+                    b64 = base64.b64encode(f.read()).decode("utf-8")
+            except (OSError, PermissionError) as e:
+                return {"error": f"Cannot read {path}: {e}"}
+            mime = _MIME_MAP.get(ext, "image/png")
+            content_blocks.append({
+                "type": "image_url",
+                "image_url": {"url": f"data:{mime};base64,{b64}", "detail": "high"},
+            })
+
+        if not content_blocks:
+            return {"error": "No valid image sources found."}
+
+        log.info("Vision query (multimodal): %d images encoded for injection",
+                 len(content_blocks))
+        return {
+            "content_blocks": content_blocks,
+            "prompt": prompt,
+            "message": f"Image{'s' if len(content_blocks) > 1 else ''} encoded. Please describe what you see.",
+        }
+
+    # ── non-multimodal: call external vision API ────────────────────
+
+    def _execute_fallback(self, images: list[str], prompt: str,
+                          cfg: dict) -> dict:
+        """Encode images and call the dedicated vision provider API."""
         vision = cfg.get("vision", {})
         if not vision.get("enabled"):
             return {"error": (
@@ -95,7 +175,7 @@ class Tool_VisionQuery(Tool):
         if len(images) > max_images:
             return {"error": f"Too many images ({len(images)}). Maximum: {max_images}."}
 
-        # ── read & encode images ──
+        # ── read & encode ──
         encoded = []
         for path in images:
             path = path.strip()
@@ -122,14 +202,14 @@ class Tool_VisionQuery(Tool):
             encoded.append((mime, b64))
 
         # ── build multimodal content ──
-        content = [{"type": "text", "text": prompt}]
+        content: list = [{"type": "text", "text": prompt}]
         for mime, b64 in encoded:
             content.append({
                 "type": "image_url",
                 "image_url": {"url": f"data:{mime};base64,{b64}"},
             })
 
-        # ── call vision model API ──
+        # ── call external vision API ──
         try:
             client = OpenAI(base_url=base_url, api_key=api_key)
             response = client.chat.completions.create(
@@ -140,11 +220,11 @@ class Tool_VisionQuery(Tool):
             )
             text = response.choices[0].message.content or ""
             log.info(
-                "Vision query: model=%s, images=%d, tokens=%s",
+                "Vision query (fallback): model=%s, images=%d, tokens=%s",
                 model, len(images),
                 getattr(response, "usage", None),
             )
             return {"analysis": text}
         except Exception as e:
-            log.error("Vision API call failed: %s", e)
+            log.error("Vision API call failed (fallback): %s", e)
             return {"error": f"Vision API error: {e}"}

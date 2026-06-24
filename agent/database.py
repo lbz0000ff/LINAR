@@ -24,9 +24,10 @@ def _get_connection() -> sqlite3.Connection:
     conn = getattr(_local, "conn", None)
     if conn is None:
         os.makedirs(_DB_DIR, exist_ok=True)
-        conn = sqlite3.connect(_DB_PATH, check_same_thread=False)
+        conn = sqlite3.connect(_DB_PATH, check_same_thread=False, timeout=10)
         conn.row_factory = sqlite3.Row
         conn.execute("PRAGMA journal_mode=WAL")
+        conn.execute("PRAGMA busy_timeout=5000")
         conn.execute("PRAGMA foreign_keys=ON")
         _local.conn = conn
     return conn
@@ -97,6 +98,12 @@ def init_db():
     except sqlite3.OperationalError:
         pass  # already exists
 
+    # ── migration: add workspace_path column to sessions ──
+    try:
+        conn.execute("ALTER TABLE sessions ADD COLUMN workspace_path TEXT DEFAULT ''")
+    except sqlite3.OperationalError:
+        pass  # already exists
+
     log.info("Database initialized at %s", _DB_PATH)
 
 
@@ -144,11 +151,25 @@ def update_session_marker(session_id: int, marker: str):
     conn.commit()
 
 
+def update_session_workspace(session_id: int, path: str):
+    """Save workspace path for session recovery."""
+    conn = _get_connection()
+    conn.execute(
+        "UPDATE sessions SET workspace_path = ?, updated_at = datetime('now', 'localtime') WHERE id = ?",
+        (path, session_id),
+    )
+    conn.commit()
+
+
 # ---------------------------------------------------------------------------
 # Messages
 # ---------------------------------------------------------------------------
 
-def save_message(session_id: int, role: str, content: str, tool_name: str = "", conversation_round: int = 0, reasoning: str = "", tool_call_id: str = "", tool_calls: str = "", prompt_tokens: int | None = None):
+def save_message(session_id: int, role: str, content, tool_name: str = "", conversation_round: int = 0, reasoning: str = "", tool_call_id: str = "", tool_calls: str = "", prompt_tokens: int | None = None):
+    # Ensure content is a string for DB storage
+    if isinstance(content, list):
+        import json
+        content = json.dumps(content, ensure_ascii=False)
     conn = _get_connection()
     conn.execute(
         "INSERT INTO messages (session_id, role, content, tool_name, conversation_round, reasoning, tool_call_id, tool_calls, prompt_tokens) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
@@ -206,7 +227,7 @@ def get_session_by_id(session_id: int):
     """Return a single session dict or None."""
     conn = _get_connection()
     row = conn.execute(
-        "SELECT id, title, marker, created_at, updated_at FROM sessions WHERE id = ?",
+        "SELECT id, title, marker, created_at, updated_at, workspace_path FROM sessions WHERE id = ?",
         (session_id,),
     ).fetchone()
     return dict(row) if row else None

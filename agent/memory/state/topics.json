@@ -20,6 +20,11 @@
       "name": "workflow",
       "definition": "workflow preferences and toolchain configuration",
       "created_at": "2026-06-18T11:32:59.878175+00:00"
+    },
+    {
+      "name": "resource",
+      "definition": "User's local file resources and data paths.",
+      "created_at": "2026-06-21T19:17:43.017470+00:00"
     }
   ]
 }

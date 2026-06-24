@@ -96,19 +96,27 @@ register_builtin("log_tool_call", log_tool_call)
 async def persist_user_message(context: HookContext) -> None:
     """Persist user message to database.
 
-    Replaces inline db.save_message() calls in agent.py.
+    Reads the latest chat_history entry to capture Content Blocks (if any).
     """
     import database as db
-    import json
+    from content_block import blocks_to_json, extract_text
 
-    if context.user_input:
-        await asyncio.to_thread(
-            db.save_message,
-            context.agent.session_id,
-            "user",
-            context.user_input,
-            conversation_round=context.agent._conversation_round,
-        )
+    history = context.agent.chat_history
+    if not history or not context.agent.session_id:
+        return
+    entry = history[-1]
+    content = entry.get("content", context.user_input or "")
+    # Serialise Content Block arrays for storage
+    db_content = blocks_to_json(content) if isinstance(content, list) else content
+    # Use extracted text for the display string
+    display = extract_text(content) if isinstance(content, list) else str(content or "")
+    await asyncio.to_thread(
+        db.save_message,
+        context.agent.session_id,
+        "user",
+        db_content,
+        conversation_round=context.agent._conversation_round,
+    )
 
 
 register_builtin("persist_user_message", persist_user_message)

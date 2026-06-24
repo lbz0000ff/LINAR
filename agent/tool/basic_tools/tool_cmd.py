@@ -4,6 +4,7 @@ import platform
 import subprocess
 import re
 import threading
+from typing import Any
 import time
 import string
 import shutil
@@ -251,7 +252,6 @@ def _bg_worker(session_id: str, command: str, cwd: str | None, env, stdin_data: 
         result = subprocess.run(
             shell_cmd,
             capture_output=True,
-            text=True,
             cwd=cwd,
             timeout=None,
             env=env,
@@ -259,8 +259,8 @@ def _bg_worker(session_id: str, command: str, cwd: str | None, env, stdin_data: 
         )
         with _bg_lock:
             _bg_processes[session_id] = {
-                "stdout": result.stdout,
-                "stderr": result.stderr,
+                "stdout": result.stdout.decode("utf-8", errors="replace") if result.stdout else "",
+                "stderr": result.stderr.decode("utf-8", errors="replace") if result.stderr else "",
                 "exit_code": result.returncode,
                 "done": True,
                 "done_at": time.time(),
@@ -315,6 +315,7 @@ def _get_windows_shell() -> list[str]:
 
 
 class Tool_CmdExecute(Tool):
+    agent_ref: Any = None
     name: str = "cmd_execute"
     description: str = "Execute a shell command and return its output."
     tool_schema: dict = {
@@ -367,6 +368,11 @@ class Tool_CmdExecute(Tool):
         background = kwargs.get("background", False)
         session_id = kwargs.get("session_id")
         cwd = kwargs.get("cwd")
+        # Default to workspace root if set and no explicit cwd
+        if cwd is None and self.agent_ref is not None:
+            ws = getattr(self.agent_ref, "_workspace_root", None)
+            if ws:
+                cwd = ws
 
         # ── if session_id provided: check background status ──
         if session_id:
@@ -445,7 +451,6 @@ class Tool_CmdExecute(Tool):
             result = subprocess.run(
                 shell_cmd,
                 capture_output=True,
-                text=True,
                 timeout=CMD_TIMEOUT,
                 cwd=cwd,
                 env=shell_env,
@@ -457,7 +462,8 @@ class Tool_CmdExecute(Tool):
         except OSError as e:
             return {"error": f"Failed to execute command: {e}"}
 
-        output = result.stdout or ""
+        output = result.stdout.decode("utf-8", errors="replace") if result.stdout else ""
+        stderr = result.stderr.decode("utf-8", errors="replace") if result.stderr else ""
 
         # ── truncate ──
         output, truncated = _truncate_output(output, CMD_MAX_OUTPUT)
@@ -467,7 +473,7 @@ class Tool_CmdExecute(Tool):
 
         # ── Windows-specific error hints ──
         if platform.system() == "Windows" and result.returncode != 0 and not note:
-            win_hint = _interpret_windows_error(result.stderr)
+            win_hint = _interpret_windows_error(stderr)
             if win_hint:
                 note = win_hint
 
@@ -477,7 +483,7 @@ class Tool_CmdExecute(Tool):
 
         return {
             "stdout": output.strip(),
-            "stderr": (result.stderr or "").strip() or None,
+            "stderr": stderr.strip() or None,
             "exit_code": result.returncode,
             "note": note,
             "truncated": truncated,

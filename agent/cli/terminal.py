@@ -80,6 +80,7 @@ from commands.cmd_logging import LoggingCommand
 from commands.cmd_stop import StopCommand
 from commands.cmd_jobs import ListJobsCommand
 from commands.cmd_reload_mcp import ReloadMCPCommand
+from commands.cmd_workspace import WorkspaceCommand, CreateWorkspaceCommand, SwitchWorkspaceCommand
 from skill import register_skill, get_skill, all_skills, load_skills_from_markdown
 Agent = agent.Agent
 log = get_logger(__name__)
@@ -1410,6 +1411,9 @@ def main() -> None:
     register(StopCommand())
     register(ListJobsCommand())
     register(ReloadMCPCommand())
+    register(WorkspaceCommand())
+    register(CreateWorkspaceCommand())
+    register(SwitchWorkspaceCommand())
     log.info("Registered %d commands", len(all_commands()))
     # ── register skills ──
     md_count = load_skills_from_markdown(

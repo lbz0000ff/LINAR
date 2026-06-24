@@ -9,6 +9,7 @@ const props = defineProps({
   dagGoal: { type: String, default: '' },
   dagActive: { type: Boolean, default: false },
   btwResults: { type: Array, default: () => [] },
+  workspacePath: { type: String, default: '' },
 })
 
 const emit = defineEmits(['close'])
@@ -58,6 +59,10 @@ function onResizeStart(e) {
 
     <div class="rp-body">
       <PlanProgress :nodes="dagNodes" :goal="dagGoal" :active="dagActive" />
+      <div v-if="workspacePath" class="rp-section workspace-info">
+        <div class="rp-section-title">工作区</div>
+        <div class="ws-path" :title="workspacePath">{{ workspacePath }}</div>
+      </div>
       <BtwResults :results="btwResults" />
       <AgentStatus />
     </div>
@@ -113,5 +118,22 @@ function onResizeStart(e) {
 /* Scrollable body */
 .rp-body {
   flex: 1; overflow-y: auto; padding: 16px;
+}
+
+/* Workspace info */
+.rp-section { margin-bottom: 20px; }
+.rp-section-title {
+  font-size: 13px; font-weight: 600; color: var(--text-primary);
+  margin-bottom: 10px;
+}
+.ws-path {
+  font-family: var(--font-mono, 'Cascadia Code', 'JetBrains Mono', monospace);
+  font-size: 11px;
+  color: var(--text-secondary);
+  background: var(--bg-app);
+  padding: 8px 10px;
+  border-radius: 6px;
+  word-break: break-all;
+  border: 1px solid var(--border-light);
 }
 </style>

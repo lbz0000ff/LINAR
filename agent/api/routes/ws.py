@@ -85,9 +85,26 @@ async def ws_endpoint(ws: WebSocket):
 
             if t == "message":
                 text = data.get("data", "")
+                # Build Content Blocks from the `files` array (no more [file:path] markers)
+                raw_files = data.get("files", [])
+                blocks = None
+                if raw_files:
+                    blocks = []
+                    for fp in raw_files:
+                        import os as _os
+                        fp = str(fp).strip()
+                        if fp.startswith(("http://", "https://")):
+                            blocks.append({"type": "image_url", "image_url": {"url": fp, "detail": "high"}})
+                        else:
+                            # Local path → file:// URI
+                            fp = fp.replace("\\", "/")
+                            blocks.append({"type": "image_url", "image_url": {"url": f"file://{fp}", "detail": "high"}})
                 if active_session_id is not None:
                     session = sm.get_or_create(active_session_id)
-                    session.input_queue.put_nowait(text)
+                    if blocks:
+                        session.input_queue.put_nowait({"text": text, "blocks": blocks})
+                    else:
+                        session.input_queue.put_nowait(text)
 
             elif t == "new_session":
                 sid = db.create_session()

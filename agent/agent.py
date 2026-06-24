@@ -8,6 +8,10 @@ import time
 
 from llm import LLM
 from config import load_config
+from content_block import (
+    is_blocks, text_block, image_url_block,
+    has_image_blocks, extract_text, extract_image_urls,
+)
 from logger import get_logger
 from permissions import PermissionManager
 import database as db
@@ -37,6 +41,19 @@ class Agent:
     def __init__(self, tools: dict = None):
         cfg = load_config()
         self.cfg = cfg
+
+        # ── Multimodal support (must be before _build_prompt) ──────
+        self._is_multimodal = cfg.get("llm", {}).get("multimodal", False)
+        self._visual_resolver = None
+        if self._is_multimodal:
+            from visual import VisualResolver
+            self._visual_resolver = VisualResolver(
+                provider=cfg["llm"].get("provider", ""),
+                api_key=cfg["llm"].get("api_key", ""),
+                base_url=cfg["llm"].get("base_url", ""),
+            )
+        self._project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
         api_key = cfg["llm"]["api_key"]
         base_url = cfg["llm"].get("base_url", "https://api.deepseek.com/v1")
         model = cfg["llm"].get("model", "deepseek-v4-flash")
@@ -58,6 +75,8 @@ class Agent:
         self.stop_event = asyncio.Event()
         self._last_prompt_tokens = 0
         self._btw_queue: list[str] = []
+        self._workspace_root: str | None = None
+        self._sent_skill_names: set[str] = set()
         if self.tools:
             for t in self.tools.values():
                 if hasattr(t, 'stop_event'):
@@ -147,21 +166,9 @@ class Agent:
             f"Shell: {_shell} (each command runs in a fresh shell, cd does NOT persist)\n"
             f"Use absolute paths or chain commands with && to keep the same session."
         )
-        # dynamically append registered skills so the LLM knows about them
-        try:
-            from skill import all_skills
-            skills = all_skills()
-            if skills:
-                lines = ["\n## Available skills\n"]
-                for s in skills:
-                    lines.append(f"- /{s.name} — {s.description}")
-                lines.append(
-                    "\n**Rule: if the user's request matches a skill description, "
-                    "call `skill_view` to load its instructions and follow them.**"
-                )
-                parts.append("\n".join(lines))
-        except ImportError:
-            pass
+        # Skill listing is injected dynamically as a system-reminder message
+        # in _build_llm_messages(), available skills are listed there.
+        # Use the `skill` tool to load and execute a skill.
         # dynamically append MCP tools so the LLM knows about them
         try:
             from tool_registry import _init_mcp_servers
@@ -186,7 +193,121 @@ class Agent:
             "The operation continues in the background — "
             "you don't need to poll, just check back when you need the result."
         )
+        # ── multimodal vision instruction ──
+        if self._is_multimodal:
+            parts.append(
+                "\n## Vision\n"
+                "You can directly see images in user messages. "
+                "Images appear as inline content blocks in the message "
+                "(not as text `[file:...]` markers which are removed).\n"
+                "- If an image is already visible in the user message, "
+                "DO NOT call `vision_query` — just describe what you see.\n"
+                "- Only call `vision_query` when the image reference is "
+                "a URL or file path in plain text (not attached as upload).\n"
+                "- When `vision_query` resolves an image, it becomes "
+                "visible to you directly — no additional tool needed."
+            )
         return "\n\n".join(parts) if parts else "You are a helpful assistant."
+
+    # ── Content Block helpers ─────────────────────────────────────
+
+    def _resolve_blocks(self, blocks_or_str: str | list[dict],
+                        resolve_images: bool = True) -> str | list[dict]:
+        """Resolve Content Blocks for LLM consumption.
+
+        - str → returned as-is
+        - *resolve_images=True* (current turn): ``file://`` → base64.
+        - *resolve_images=False* (older history): image_url → ``(image: url)``
+          text note — LLM knows an image was shared without wasted tokens.
+        """
+        if isinstance(blocks_or_str, str):
+            return blocks_or_str
+        if not is_blocks(blocks_or_str):
+            return blocks_or_str
+
+        if not resolve_images:
+            stripped: list[dict] = []
+            for b in blocks_or_str:
+                if b.get("type") == "image_url":
+                    url = (b.get("image_url") or {}).get("url", "")
+                    label = url[7:] if url.startswith("file://") else url
+                    stripped.append(text_block(f"(image: {label})"))
+                    continue
+                stripped.append(b)
+            if not stripped:
+                return ""
+            if len(stripped) == 1 and stripped[0].get("type") == "text":
+                return stripped[0].get("text", "")
+            return stripped
+
+        resolved: list[dict] = []
+        for b in blocks_or_str:
+            if b.get("type") == "image_url":
+                url = (b.get("image_url") or {}).get("url", "")
+                detail = (b.get("image_url") or {}).get("detail", "high")
+                if url.startswith("file://"):
+                    materialised = self._materialise_file_url(url[7:])
+                    if materialised:
+                        resolved.append(image_url_block(materialised, detail))
+                else:
+                    resolved.append(b)
+            else:
+                resolved.append(b)
+        if len(resolved) == 0:
+            return ""
+        if len(resolved) == 1 and resolved[0].get("type") == "text":
+            return resolved[0].get("text", "")
+        return resolved
+
+    def _materialise_file_url(self, path: str) -> str | None:
+        """Convert a local *path* to a base64 ``data:`` URL.
+
+        Tries ``VisualResolver`` first (which may use provider upload APIs).
+        Falls back to plain base64 encoding.
+        """
+        # strip query params if any
+        if "?" in path:
+            path = path.split("?")[0]
+        if self._visual_resolver:
+            return self._visual_resolver.resolve(path)
+        # simple fallback
+        import base64 as _b64
+        ext = os.path.splitext(path)[1].lower()
+        mime_map = {".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".png": "image/png",
+                     ".gif": "image/gif", ".bmp": "image/bmp", ".webp": "image/webp"}
+        try:
+            with open(path, "rb") as f:
+                b64 = _b64.b64encode(f.read()).decode("utf-8")
+            return f"data:{mime_map.get(ext, 'image/png')};base64,{b64}"
+        except Exception:
+            return None
+
+    def _inject_vision_blocks(self, msgs: list[dict]) -> None:
+        """Detect ``content_blocks`` from vision_query tool results and insert
+        a user message with resolved image blocks right after the tool message.
+        """
+        for i, msg in enumerate(msgs):
+            if msg.get("role") != "tool":
+                continue
+            raw = msg.get("content", "")
+            if not isinstance(raw, dict):
+                continue
+            blocks_raw = raw.get("content_blocks")
+            if not blocks_raw or not isinstance(blocks_raw, list):
+                continue
+            prompt = raw.get("prompt", "Describe this image in detail.")
+            message = raw.get("message",
+                              "Image prepared. Please describe what you see.")
+            content: list[dict] = [text_block(prompt)]
+            for b in blocks_raw:
+                if b.get("type") == "image_url":
+                    content.append(b)
+            if len(content) > 1:
+                msgs[i]["content"] = message
+                msgs.insert(i + 1, {"role": "user", "content": content})
+                log.info("Injected %d vision images into user message", len(content) - 1)
+            break
+
     def _format_chat_history(self) -> str:
         """Serialize internal JSON history to text for the LLM prompt."""
         # Anchor: first user message reminds the LLM of the active task,
@@ -194,14 +315,16 @@ class Agent:
         anchor = ""
         for msg in self.chat_history:
             if msg["role"] == "user":
-                anchor = f"\n[Active task: {msg['content'][:160]}]"
+                anchor_text = extract_text(msg["content"]) if is_blocks(msg.get("content")) else str(msg.get("content", ""))
+                anchor = f"\n[Active task: {anchor_text[:160]}]"
                 break
         parts = [f"Chat history:{anchor}"]
         for msg in self.chat_history:
             role = msg["role"]
             conversation_round = msg.get("round")
             if role == "user":
-                parts.append(f"[round {conversation_round}]\nUser: {msg['content']}")
+                user_content = extract_text(msg["content"]) if is_blocks(msg.get("content")) else msg.get("content", "")
+                parts.append(f"[round {conversation_round}]\nUser: {user_content}")
             elif role == "agent":
                 parts.append(f"Agent: {msg['content']}")
                 if msg.get("reasoning"):
@@ -218,6 +341,33 @@ class Agent:
         so the model sees a conversation structure matching its training.
         """
         msgs: list[dict] = []
+
+        # ── skill listing (dynamic, with dedup) ──
+        try:
+            from skill import all_skills
+            current_skills = all_skills()
+            new_skills = [s for s in current_skills if s.name not in self._sent_skill_names]
+            if new_skills:
+                lines = [
+                    "<system-reminder>",
+                    "The following skills are available for use with the Skill tool:",
+                ]
+                for s in new_skills:
+                    desc = s.description or "(no description)"
+                    if s.when_to_use:
+                        desc += f" — {s.when_to_use}"
+                    lines.append(f"- {s.name}: {desc}")
+                lines.append(
+                    "When a skill matches the user's request, "
+                    "invoke the `skill` tool BEFORE generating any other response."
+                )
+                lines.append("</system-reminder>")
+                msgs.append({"role": "system", "content": "\n".join(lines)})
+                for s in new_skills:
+                    self._sent_skill_names.add(s.name)
+        except ImportError:
+            pass
+
         # ── inject resolved promises into context ──
         newly_resolved = [pid for pid in list(self._resolved_since_last_build)
                           if self._promises.get(pid, {}).get("status") == "resolved"
@@ -230,10 +380,15 @@ class Agent:
                 info["_injected"] = True
                 self._resolved_since_last_build.discard(pid)
             msgs.append({"role": "system", "content": "\n\n".join(parts)})
-        for msg in self.chat_history:
+        # Count user messages so we only resolve images for the latest N
+        _user_indices = [j for j, m in enumerate(self.chat_history) if m["role"] == "user"]
+        _resolve_count = _user_indices[-2:] if len(_user_indices) > 2 else _user_indices  # last 2
+        for msg_idx, msg in enumerate(self.chat_history):
             role = msg["role"]
             if role == "user":
-                msgs.append({"role": "user", "content": msg["content"]})
+                _resolve = msg_idx in _resolve_count
+                content = self._resolve_blocks(msg["content"], resolve_images=_resolve) if self._is_multimodal else msg["content"]
+                msgs.append({"role": "user", "content": content})
             elif role == "agent":
                 content = msg.get("content", "")
                 # DeepSeek requires content to be a non-null string when
@@ -242,11 +397,9 @@ class Agent:
                 if msg.get("tool_calls") and not content:
                     content = None
                 entry: dict = {"role": "assistant", "content": content}
-                # DeepSeek reasoning_content: only carry forward when tools were
-                # called (multi-step tool tasks need the reasoning chain);
-                # omit for chat-only rounds — stale reasoning adds noise and
-                # inflates apparent temperature via self-imitation.
-                if msg.get("reasoning") and msg.get("tool_calls"):
+                # reasoning_content is DeepSeek-specific; skip for other providers
+                _provider = (self.cfg.get("llm", {}).get("provider", "") or "").lower()
+                if _provider == "deepseek" and msg.get("reasoning") and msg.get("tool_calls"):
                     entry["reasoning_content"] = msg["reasoning"]
                 if msg.get("tool_calls"):
                     entry["tool_calls"] = msg["tool_calls"]
@@ -292,35 +445,35 @@ class Agent:
             elif role == "meta":
                 msgs.append({"role": "system", "content": msg["content"]})
         # ── safety: validate tool_calls/tool message alignment ──
-        # If an assistant message has N tool_calls but fewer than N tool
-        # messages follow (e.g. due to interrupt or partial compaction),
-        # strip the unmatched tool_calls to prevent API 400 errors.
+        # Match tool_calls to tool messages by tool_call_id.
+        # Strip any tool_calls whose ID has no response (prevent 400 errors).
         i = 0
         while i < len(msgs):
             m = msgs[i]
             if m["role"] == "assistant" and m.get("tool_calls"):
                 tcs = m["tool_calls"]
-                # Count consecutive tool messages after this assistant
+                # Collect IDs from tool messages that immediately follow
+                responded_ids = set()
                 j = i + 1
-                tool_count = 0
                 while j < len(msgs) and msgs[j]["role"] == "tool":
-                    tool_count += 1
+                    tid = msgs[j].get("tool_call_id", "")
+                    if tid:
+                        responded_ids.add(tid)
                     j += 1
-                if tool_count < len(tcs):
-                    # Strip tool_calls that have no matching tool message
-                    remaining = tcs[:tool_count]
-                    m["tool_calls"] = remaining
-                    if not remaining:
+                # Keep only tool_calls whose ID has a response
+                matched = [tc for tc in tcs if tc.get("id", "") in responded_ids]
+                unmatched = [tc for tc in tcs if tc.get("id", "") not in responded_ids]
+                if unmatched:
+                    if matched:
+                        m["tool_calls"] = matched
+                    else:
                         m.pop("tool_calls", None)
-                    # Fold stripped tool names into content so info isn't lost
-                    if tool_count < len(tcs):
-                        stripped = tcs[tool_count:]
-                        names = ", ".join(
-                            tc.get("function", {}).get("name", "?") for tc in stripped
-                        )
-                        suffix = f"\n[Tool calls without results: {names}]"
-                        existing = m.get("content") or ""
-                        m["content"] = existing + suffix if existing else suffix
+                    names = ", ".join(
+                        tc.get("function", {}).get("name", "?") for tc in unmatched
+                    )
+                    suffix = f"\n[Tool calls without results: {names}]"
+                    existing = m.get("content") or ""
+                    m["content"] = existing + suffix if existing else suffix
             i += 1
         # Safety: fold orphaned tool messages — a tool message is orphaned
         # only when there is NO preceding assistant with tool_calls (scanning
@@ -343,6 +496,14 @@ class Agent:
                     msgs.pop(i)
                     continue
             i += 1
+        # ── inject vision_query images ──
+        if self._is_multimodal:
+            self._inject_vision_blocks(msgs)
+        # ── ensure tool contents are strings (dict → str for API compat) ──
+        for m in msgs:
+            if m["role"] == "tool" and isinstance(m.get("content"), dict):
+                c = m["content"]
+                m["content"] = c.get("message", str(c))
         return msgs
     # ── truncation thresholds ──
     _TRUNCATION_FULL = 5000        # 以下：原样返回
@@ -676,15 +837,29 @@ class Agent:
             total - len(self._format_chat_history()),
             len(middle) - len(compacted),
         )
-    async def add_user_message(self, text: str):
-        """Append a user message with a [round N] marker and archive it."""
+    async def add_user_message(self, text: str, blocks: list[dict] | None = None):
+        """Append a user message, optionally with Content Blocks.
+
+        When *blocks* is provided they are combined with *text* into a
+        Content Block array stored in chat_history.  Otherwise *text* is
+        stored as a plain string (backwards compatible).
+        """
         if self.session_id is None:
             self.session_id = db.create_session()
             log.info("Created session #%s", self.session_id)
-        log.info("[session=%s conversation_round=%s] User: %.120s", self.session_id, self._conversation_round + 1, text)
+
+        # Build content: Content Block array or plain string
+        if blocks and has_image_blocks(blocks):
+            content: str | list[dict] = [text_block(text)] if text else []
+            content.extend(blocks)
+        else:
+            content = text
+
+        log.info("[session=%s conversation_round=%s] User: %.120s",
+                 self.session_id, self._conversation_round + 1, text)
         self._conversation_round += 1
         self.chat_history.append({
-            "role": "user", "content": text, "round": self._conversation_round,
+            "role": "user", "content": content, "round": self._conversation_round,
         })
         # Dispatch USER_MESSAGE hook (fire-and-forget for db persistence)
         await self.hooks.dispatch_fire_and_forget(
@@ -735,9 +910,13 @@ class Agent:
                 if tid:
                     entry["tool_call_id"] = tid
             else:
+                raw_content = msg.get("content", "")
+                # Try to restore Content Block arrays from JSON
+                from content_block import blocks_from_json
+                parsed = blocks_from_json(raw_content) if isinstance(raw_content, str) else None
                 entry = {
                     "role": role,
-                    "content": msg.get("content", ""),
+                    "content": parsed if parsed else raw_content,
                     "round": conversation_round,
                 }
                 if role == "agent" and msg.get("reasoning"):
@@ -752,6 +931,18 @@ class Agent:
             self.chat_history.append(entry)
         self._conversation_round = max_round
         self.session_id = session_id
+
+        # ── restore workspace ──
+        ws = sess.get("workspace_path", "") or ""
+        if ws and os.path.isdir(ws):
+            self._workspace_root = ws
+            os.chdir(ws)
+            log.info("Restored workspace: %s", ws)
+        else:
+            self._workspace_root = None
+            # Reset to project root when leaving a workspace
+            os.chdir(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
         return True
     def get_current_session_info(self) -> dict:
         """Return info about the current session."""
@@ -764,6 +955,7 @@ class Agent:
             "marker": sess.get("marker"),
             "created_at": sess.get("created_at", ""),
             "round": self._conversation_round,
+            "workspace_path": sess.get("workspace_path", "") or "",
         }
     def reset_session(self):
         """Start a fresh conversation session"""
@@ -1059,7 +1251,8 @@ class Agent:
                                     _tool_failed = True
                                 elif result.get("exit_code", 0) != 0:
                                     _tool_failed = True
-                                result_str = self._apply_truncation(str(result), tc["name"])
+                                # Preserve dict structure (needed for content_blocks, etc.)
+                                result_str = result
                             elif result is not None:
                                 result_str = self._apply_truncation(str(result), tc["name"])
                             else:
@@ -1078,7 +1271,7 @@ class Agent:
                             result_str = f"Error: {e}"
                             _tool_failed = True
                 is_failure = _tool_failed or (
-                    result_str and (result_str.startswith("Error") or result_str.startswith("["))
+                    isinstance(result_str, str) and result_str and (result_str.startswith("Error") or result_str.startswith("["))
                 )
                 if is_failure:
                     self._tool_failures[tc["name"]] = self._tool_failures.get(tc["name"], 0) + 1

@@ -27,6 +27,9 @@ const COMMANDS = [
   { cmd: '/stop', desc: '停止生成' },
   { cmd: '/steer', desc: '修正 Agent 行为（需参数）', hasArg: true },
   { cmd: '/btw', desc: '侧边查询（需参数）', hasArg: true },
+  { cmd: '/workspace', desc: '显示当前工作区' },
+  { cmd: '/workspace-create', desc: '创建工作区（需路径）', hasArg: true },
+  { cmd: '/workspace-switch', desc: '切换工作区（需路径）', hasArg: true },
   { cmd: '/sessions', desc: '刷新会话列表' },
   { cmd: '/session', desc: '切换会话（需参数）', hasArg: true },
   { cmd: '/exit', desc: '关闭窗口' },
@@ -57,6 +60,13 @@ function handleSlashAction(text) {
   // Skill commands — send as regular message (orchestrator handles skill invocation)
   const skillNames = (props.skills || []).map(s => s.name)
   if (skillNames.includes(cmd.slice(1))) {
+    emit('send', text, [])
+    inputText.value = ''
+    return true
+  }
+
+  // Backend-routed commands — /workspace family (session_manager intercepts)
+  if (cmd === '/workspace' || cmd === '/workspace-create' || cmd === '/workspace-switch') {
     emit('send', text, [])
     inputText.value = ''
     return true

@@ -14,11 +14,12 @@ from tool.basic_tools.tool_cmd import Tool_CmdExecute
 from tool.basic_tools.tool_web import Tool_WebFetch, Tool_WebSearch
 from tool.basic_tools.tool_memory import Tool_Remember, Tool_RecallFact, Tool_RecallTopic, Tool_GetTopicList
 from tool.basic_tools.tool_ask_user import Tool_AskUser
-from tool.basic_tools.tool_skill import Tool_SkillView
-from tool.basic_tools.tool_plan import Tool_PlanAdvance, Tool_PlanStatus
+from tool.basic_tools.tool_skill import Tool_Skill
+from tool.basic_tools.tool_plan import Tool_PlanAdvance, Tool_PlanStatus, Tool_CreatePlan
 from tool.basic_tools.tool_vision import Tool_VisionQuery
 from tool.basic_tools.tool_promise import Tool_ResolvePromise
 from tool.basic_tools.tool_cancel_promise import Tool_CancelPromise
+from tool.basic_tools.tool_workspace import Tool_CreateWorkspace, Tool_SwitchWorkspace
 
 # ── MCP support ──────────────────────────────────────────────
 from config import load_config
@@ -223,12 +224,15 @@ _TOOL_CLASSES = {
     "recall_topic": Tool_RecallTopic,
     "get_topic_list": Tool_GetTopicList,
     "ask_user": Tool_AskUser,
-    "skill_view": Tool_SkillView,
+    "skill": Tool_Skill,
     "plan_advance": Tool_PlanAdvance,
     "plan_status": Tool_PlanStatus,
+    "create_plan": Tool_CreatePlan,
     "vision_query": Tool_VisionQuery,
     "resolve_promise": Tool_ResolvePromise,
     "cancel_promise": Tool_CancelPromise,
+    "create_workspace": Tool_CreateWorkspace,
+    "switch_workspace": Tool_SwitchWorkspace,
 }
 
 # ── toolsets ─────────────────────────────────────────────────
@@ -237,13 +241,20 @@ _TOOLSETS = {
     "file": [
         "read_file", "write_file", "delete_file",
         "delete_dir", "patch_file", "search_files",
+        "create_workspace", "switch_workspace",
     ],
     "shell": ["cmd_execute", "cancel_promise"],
     "web": ["web_fetch", "web_search"],
     "memory": ["remember", "recall_fact", "recall_topic", "get_topic_list"],
-    "interactive": ["ask_user", "skill_view", "resolve_promise"],
-    "plan": ["plan_advance", "plan_status"],
+    "interactive": ["ask_user", "skill", "resolve_promise"],
+    "plan": ["plan_advance", "plan_status", "create_plan"],
     "vision": ["vision_query"],
+    "research": [
+        "web_search", "web_fetch",
+        "read_file", "write_file", "search_files",
+        "create_workspace", "switch_workspace",
+        "create_plan",
+    ],
     "mcp": [],  # placeholder — MCP tools are injected dynamically
 }
 
@@ -272,7 +283,8 @@ class ToolRegistry:
                 for tool_name in _TOOLSETS.get(name, []):
                     if tool_name in _TOOL_CLASSES:
                         selected[tool_name] = _TOOL_CLASSES[tool_name]()
-            if "mcp" in self._enabled_sets:
+            # Enable MCP servers when "mcp" or "research" toolset is selected
+            if "mcp" in self._enabled_sets or "research" in self._enabled_sets:
                 mcp_tools = _init_mcp_servers()
                 selected.update(mcp_tools)
         return selected
@@ -296,12 +308,15 @@ _all_tools = {
     "recall_topic": Tool_RecallTopic(),
     "get_topic_list": Tool_GetTopicList(),
     "ask_user": Tool_AskUser(),
-    "skill_view": Tool_SkillView(),
+    "skill": Tool_Skill(),
     "plan_advance": Tool_PlanAdvance(),
     "plan_status": Tool_PlanStatus(),
+    "create_plan": Tool_CreatePlan(),
     "vision_query": Tool_VisionQuery(),
     "resolve_promise": Tool_ResolvePromise(),
     "cancel_promise": Tool_CancelPromise(),
+    "create_workspace": Tool_CreateWorkspace(),
+    "switch_workspace": Tool_SwitchWorkspace(),
 }
 
 # ── public API ───────────────────────────────────────────────

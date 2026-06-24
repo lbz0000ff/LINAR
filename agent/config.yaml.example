@@ -14,6 +14,9 @@ providers:
   zhipu:
     base_url: "https://open.bigmodel.cn/api/paas/v4"
     api_key: "${ZHIPU_API_KEY}"
+  stepfun:
+    base_url: "https://api.stepfun.com/v1"
+    api_key: "${STEPFUN_API_KEY}"
 
 # Main Model Configuration
 llm:
@@ -22,6 +25,7 @@ llm:
     temperature: 0.7
     max_tokens: 1000000
     top_p: 1.0
+    # multimodal: true  # uncomment when main model is vision-capable (e.g. step-3.7-flash, gpt-4o)
 
 # System Configuration
 max_turns: 0                    # 0 = unlimited; N = max LLM rounds

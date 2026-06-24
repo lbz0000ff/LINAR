@@ -8,6 +8,7 @@ import os
 from config import load_config
 from logger import get_logger
 from tool_registry import ToolRegistry
+from hooks import HookRegistry
 from agent import Agent
 
 log = get_logger(__name__)
@@ -34,7 +35,8 @@ def _make_system_prompt_extra(task: str,
 
 def create_agent(agent_hint: str = "any",
                  predecessor_results: dict[str, str] = None,
-                 stop_event: asyncio.Event | None = None) -> Agent:
+                 stop_event: asyncio.Event | None = None,
+                 workspace_root: str | None = None) -> Agent:
     """Create an Agent instance for a DAG sub-task.
 
     Parameters
@@ -56,7 +58,7 @@ def create_agent(agent_hint: str = "any",
         "code":     ["time", "file", "shell", "interactive"],
         "analysis": ["time", "file", "web", "memory"],
         "shell":    ["time", "shell"],
-        "research": ["time", "web", "memory"],
+        "research": ["web", "file"],
     }
     enabled = hint_to_tools.get(agent_hint,
                                 cfg.get("tools", {}).get("enabled_sets", None))
@@ -77,9 +79,25 @@ def create_agent(agent_hint: str = "any",
     # ── suppress stdout events for sub-agent (would confuse TUI) ──
     agent.emit = lambda event: None
     agent._confirm_callback = None
+    # ── suppress DB persistence for sub-agent (no session_id) ──
+    agent.hooks = HookRegistry()
 
-    # ── set low turn limit for sub-tasks ──
-    agent.max_llm_calls = cfg.get("sub_agent_max_llm_calls", 3)
+    # ── set turn limit for sub-tasks (higher for research) ──
+    agent.max_llm_calls = cfg.get("sub_agent_max_llm_calls", 6)
+
+    # ── inherit parent workspace ──
+    if workspace_root:
+        agent._workspace_root = workspace_root
+        os.chdir(workspace_root)
+
+    # ── Use a minimal prompt for sub-agents (skip full base prompt noise) ──
+    _RESEARCH_PROMPT = (
+        "You are a focused research assistant. Your task is to search the web "
+        "for specific information, extract key findings, and report them clearly. "
+        "Always cite your sources. Be concise and factual. "
+        "Do NOT use memory tools — they are not available.\n\n"
+    )
+    agent.llm.system_prompt = _RESEARCH_PROMPT
 
     return agent
 
@@ -88,7 +106,8 @@ async def run_task(agent: Agent, task: str, agent_hint: str = "any",
                    predecessor_results: dict[str, str] = None) -> str:
     extra = _make_system_prompt_extra(task, agent_hint, predecessor_results)
     agent.llm.system_prompt = agent.llm.system_prompt + "\n\n" + extra
-    agent.add_user_message(task)
+    # ── inject task and run ──
+    await agent.add_user_message(task)
     await agent.process_with_llm()
     for msg in reversed(agent.chat_history):
         if msg.get("role") == "agent":

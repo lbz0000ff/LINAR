@@ -25,7 +25,7 @@ agent/prompt/MEMORY.md
 agent/memory/state/
 agent/tool/mcp_tools/server/comfyui-mcp/
 demo/
-
+workspaces/*
 webui/uploads/*
 webui/design-demo
 
@@ -39,6 +39,7 @@ docs/
 skills/*
 !skills/skill-writer
 !skills/system-guide
+!skills/deep-research
 
 # Upload artifacts
 webui/uploads/
@@ -59,3 +60,4 @@ agent/BACKEND_CHANGES.md
 # Design reference from old JS frontend
 webui-vue/reference/
 webui-vue/src-bak/
+nul

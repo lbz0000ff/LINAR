@@ -93,7 +93,9 @@ class Session:
         self._stop = asyncio.Event()
         self._task = asyncio.create_task(self._run(), name=f"session-{session_id}")
 
-        log.info("Session #%s created with async task", session_id)
+        # Ensure command system is registered before _run starts
+        from commands import get_handler as _gh
+        log.info("Session #%s created with async task (cmd=%s)", session_id, bool(_gh("workspace")))
 
     def resolve_permission(self, action: str):
         if self._perm_future and not self._perm_future.done():
@@ -110,14 +112,76 @@ class Session:
         """Agent async task: reads from input_queue, processes via Orchestrator."""
         while not self._stop.is_set():
             try:
-                text = await asyncio.wait_for(self.input_queue.get(), timeout=0.5)
+                item = await asyncio.wait_for(self.input_queue.get(), timeout=0.5)
             except asyncio.TimeoutError:
                 continue
-            if text is None:
+            if item is None:
                 break
             self.status = "processing"
+            # Accept dicts (text + content blocks) or plain strings
+            text: str
+            blocks: list[dict] | None = None
+            if isinstance(item, dict):
+                text = item.get("text", "")
+                blocks = item.get("blocks")
+            else:
+                text = str(item)
+
+            # ── Slash command dispatch (TUI共用命令系统) ──
+            if text.startswith("/"):
+                cmd_name = text[1:].split(maxsplit=1)[0]
+                cmd_args = text[len(cmd_name) + 1:].strip() if " " in text else ""
+                log.info("WS command dispatch: /%s args=%s", cmd_name, cmd_args)
+                try:
+                    from commands import get_handler
+                    handler = get_handler(cmd_name)
+                    log.info("WS command handler found: %s", handler)
+                    if handler:
+                        self.agent.emit({"type": "command_start", "data": text})
+                        output_lines = []
+                        class _WebConsole:
+                            @staticmethod
+                            def print(*objs, **kwargs):
+                                for o in objs:
+                                    output_lines.append(str(o))
+                        class _WebTerminal:
+                            console = _WebConsole()
+                            @staticmethod
+                            def s(style): return ""
+                            agent = self.agent
+                        handler.execute(cmd_args, _WebTerminal())
+                        result = "\n".join(output_lines)
+                        log.info("WS command result (%d chars): %s", len(result), result[:100])
+                        if result.strip():
+                            self.agent.emit({"type": "system", "data": result})
+                            # Inject into chat_history so LLM sees the result
+                            self.agent.chat_history.append({
+                                "role": "meta",
+                                "content": f"[SYSTEM] {result}",
+                            })
+                            log.info("WS command result emitted as system event")
+                        self.agent.emit({"type": "complete"})
+                        self.status = "idle"
+                        continue
+                except ImportError:
+                    pass
+                # Skill command — orchestator handles skill invocation
+                try:
+                    from skill import get_skill
+                    skill = get_skill(cmd_name)
+                    if skill:
+                        log.info("WS skill dispatch: /%s", cmd_name)
+                        self.status = "processing"
+                        await self.orchestrator.run_skill(skill, cmd_args)
+                        self.agent.emit({"type": "complete"})
+                        self.status = "idle"
+                        continue
+                except ImportError:
+                    pass
+                # Unknown command or import failed — fall through to LLM
+
             try:
-                await self.orchestrator.start(text)
+                await self.orchestrator.start(text, blocks)
             except Exception as e:
                 log.exception("Session #%s error", self.session_id)
                 self.agent.emit({"type": "error", "data": str(e)})
@@ -141,7 +205,7 @@ class SessionManager:
 
     def init_light(self):
         """Fast init: native tools only, no MCP startup."""
-        _agent_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..")
+        _agent_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
         _project_root = os.path.dirname(_agent_dir)
         sys.path.insert(0, _agent_dir)
 
