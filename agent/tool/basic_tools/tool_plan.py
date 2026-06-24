@@ -222,7 +222,28 @@ class Tool_CreatePlan(Tool):
                 "id": node_id, "hint": hint, "description": description,
                 "depends_on": deps_list,
             }})
-            result = await run_agent_task(sub_agent, description, hint, deps)
+            # Run the sub-agent
+            sub_agent.max_llm_calls = 10
+            extra = ""
+            if hint and hint != "any":
+                extra += f"Your role: {hint}\n"
+            if deps:
+                extra += "Predecessor results:\n" + "\n".join(
+                    f"  [{d}] {deps[d][:200]}" for d in deps
+                ) + "\n"
+            await sub_agent.add_user_message(f"{extra}{description}")
+            await sub_agent.process_with_llm()
+            # Collect tool results (sub-agent only outputs tool calls, no text)
+            lines = []
+            for m in sub_agent.chat_history:
+                if m.get("role") == "tool":
+                    r = m.get("result", "")
+                    if isinstance(r, dict):
+                        r = json.dumps(r, ensure_ascii=False)
+                    r = str(r)[:500]
+                    if r.strip():
+                        lines.append(r)
+            result = "\n".join(lines[-8:]) or "[no output]"
             agent.emit({"type": "dag_node_complete", "data": {
                 "id": node_id, "result": result[:200],
             }})

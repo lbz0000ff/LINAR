@@ -38,9 +38,10 @@ def _detect_shell() -> str:
 
 
 class Agent:
-    def __init__(self, tools: dict = None):
+    def __init__(self, tools: dict = None, memory_enabled: bool = True):
         cfg = load_config()
         self.cfg = cfg
+        self._memory_enabled = memory_enabled
 
         # ── Multimodal support (must be before _build_prompt) ──────
         self._is_multimodal = cfg.get("llm", {}).get("multimodal", False)
@@ -124,7 +125,7 @@ class Agent:
     def _build_prompt(self, cfg):
         """Load and join prompt files listed in config."""
         # ── Memory View compilation (session start, one-shot) ──────────
-        if cfg.get("memory", {}).get("enabled", True):
+        if self._memory_enabled and cfg.get("memory", {}).get("enabled", True):
             try:
                 from memory.fact import FactStore
                 from memory.topic import TopicRegistry
