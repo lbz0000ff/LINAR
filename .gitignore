@@ -62,3 +62,11 @@ webui-vue/reference/
 webui-vue/src-bak/
 nul
 eval/results/
+
+# Eval intermediate files
+eval/results/
+eval/deep_research_bench/data/test_data/
+eval/deep_research_bench/results/
+eval/*.md
+eval/research/
+agent/workspaces/

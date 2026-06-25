@@ -1,5 +1,6 @@
 """Plan tools — track progress through decomposed sub-tasks."""
 
+import json
 from typing import Any
 
 from plan import DAGNodeStatus

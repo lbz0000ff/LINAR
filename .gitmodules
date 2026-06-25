@@ -1,0 +1,3 @@
+[submodule "eval/deep_research_bench"]
+	path = eval/deep_research_bench
+	url = https://github.com/Ayanami0730/deep_research_bench.git
