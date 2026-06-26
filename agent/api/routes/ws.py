@@ -125,7 +125,17 @@ async def ws_endpoint(ws: WebSocket):
                 await _send(ws, {"type": "permission_mode", "mode": mode})
 
             elif t == "list_skills":
-                from skill import all_skills
+                # Reload skills from disk on each request so new SKILL.md
+                # files are picked up without a server restart.
+                try:
+                    from skill import load_skills_from_markdown, all_skills
+                    import os
+                    _project_root = os.path.normpath(os.path.join(os.path.dirname(_CONFIG_PATH), ".."))
+                    skills_dir = os.path.join(_project_root, "skills")
+                    if os.path.isdir(skills_dir):
+                        load_skills_from_markdown(skills_dir)
+                except Exception:
+                    pass
                 skills = [{"name": s.name, "desc": s.description} for s in all_skills()]
                 await _send(ws, {"type": "skills", "data": skills})
 
