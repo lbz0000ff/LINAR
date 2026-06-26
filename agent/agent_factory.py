@@ -81,6 +81,7 @@ def create_agent(agent_hint: str = "any",
     agent._confirm_callback = None
     # ── suppress DB persistence for sub-agent (no session_id) ──
     agent.hooks = HookRegistry()
+    agent.session_id = 0  # prevents add_user_message from auto-creating a session
 
     # ── set turn limit for sub-tasks (higher for research) ──
     agent.max_llm_calls = cfg.get("sub_agent_max_llm_calls", 6)

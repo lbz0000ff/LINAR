@@ -29,7 +29,7 @@ mermaid.initialize({ startOnLoad: false })
 const sessions = ref([])
 const messages = ref([])
 const currentSessionId = ref(null)
-const isNewSession = ref(false)
+const isNewSession = ref(true)
 const pendingMsg = ref('')
 const pendingFiles = ref([])
 const isProcessing = ref(false)
@@ -536,7 +536,7 @@ onUnmounted(() => offMessage(handleMessage))
       </header>
       <div id="messages" ref="msgContainer" @scroll="onMsgScroll">
         <!-- 空状态 -->
-        <div v-if="!currentSessionId && !isNewSession && messages.length === 0" class="empty-state">
+        <div v-if="!currentSessionId && messages.length === 0" class="empty-state">
           <div class="empty-icon">
             <svg width="64" height="64" viewBox="0 0 24 24" fill="none" stroke="var(--crimson)" stroke-width="1" stroke-linecap="round" stroke-linejoin="round" opacity="0.6">
               <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>
