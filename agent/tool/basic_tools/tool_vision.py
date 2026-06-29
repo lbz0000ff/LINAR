@@ -1,14 +1,12 @@
-"""Tool that lets the agent analyze images using a vision-capable model.
+"""Tool that describes images via an external vision API.
 
-Behaviour depends on the ``llm.multimodal`` config flag:
+Fallback tool for when the main model is NOT multimodal
+(``llm.multimodal`` is false or absent).  Calls the dedicated
+``vision`` provider (e.g. 智谱 GLM-5V-Turbo) and returns a text
+description.
 
-- **multimodal: true** — validates & resolves image sources (base64 / remote URL),
-  then returns an ``[IMAGE_READY]`` marker.  The resolved URLs are injected
-  directly into the chat messages so the multimodal main model can **see the
-  image itself** — zero additional API cost and zero information loss.
-
-- **multimodal: false / absent** — falls back to the dedicated ``vision``
-  provider (e.g. 智谱 GLM-5V-Turbo) which returns a text description.
+When the main model IS multimodal, use ``Tool_Vision`` from
+``tool_vision_vlm.py`` instead.
 """
 
 from .tool import Tool
@@ -34,19 +32,18 @@ _MIME_MAP = {
 }
 
 
-class Tool_VisionQuery(Tool):
-    name: str = "vision_query"
+class Tool_ImgToText(Tool):
+    name: str = "img_to_text"
     description: str = (
-        "Analyze images using a vision-capable model. "
-        "Use this when you want to examine the content of image files, "
-        "screenshots, photos, diagrams, or any visual data."
+        "Describe image contents via an external vision API. "
+        "Use this when you need a text description of an image — "
+        "it returns a detailed analysis of what the image shows."
     )
     tool_schema: dict = {
-        "name": "vision_query",
+        "name": "img_to_text",
         "description": (
-            "Analyze images using a vision-capable model. "
-            "Use this when you want to examine the content of image files, "
-            "screenshots, photos, diagrams, or any visual data."
+            "Describe image contents via an external vision API. "
+            "Use this when you need a text description of an image."
         ),
         "parameters": {
             "type": "object",
@@ -84,33 +81,28 @@ class Tool_VisionQuery(Tool):
         else:
             return self._execute_fallback(images, prompt, cfg)
 
-    # ── multimodal: encode images → inject via content_blocks ───────
+    # ── multimodal: return image_uri for boundary attachment ───────
 
     def _execute_multimodal(self, images: list[str], prompt: str,
                             cfg: dict) -> dict:
-        """Encode images as base64 ``content_blocks`` for direct injection.
+        """Return ``image_uri`` for the prompt-builder to attach.
 
-        The images are base64-encoded locally (no API call) and returned
-        as ``content_blocks``.  ``agent.py``'s ``_build_llm_messages``
-        detects these blocks and inserts a user message with the images
-        right after the tool result — so the main model sees the image
-        directly without a text-summary bottleneck.
+        The image is base64-encoded (or passed as URL) and returned as
+        ``image_uri``.  ``agent.py``'s ``_build_llm_messages`` reads this
+        from the observation store and attaches the image at the request
+        boundary — no text-summary bottleneck, no message injection.
         """
         max_images = 99
         if len(images) > max_images:
             return {"error": f"Too many images ({len(images)}). Maximum: {max_images}."}
 
-        content_blocks: list[dict] = []
+        image_uri: str | None = None
 
         for path in images:
             path = path.strip()
             if path.startswith(("http://", "https://")):
-                content_blocks.append({
-                    "type": "image_url",
-                    "image_url": {"url": path, "detail": "high"},
-                })
-                continue
-
+                image_uri = path
+                break
             # Local file
             ext = os.path.splitext(path)[1].lower()
             if ext not in _SUPPORTED_EXT:
@@ -132,20 +124,16 @@ class Tool_VisionQuery(Tool):
             except (OSError, PermissionError) as e:
                 return {"error": f"Cannot read {path}: {e}"}
             mime = _MIME_MAP.get(ext, "image/png")
-            content_blocks.append({
-                "type": "image_url",
-                "image_url": {"url": f"data:{mime};base64,{b64}", "detail": "high"},
-            })
+            image_uri = f"data:{mime};base64,{b64}"
+            break  # single image per call
 
-        if not content_blocks:
+        if not image_uri:
             return {"error": "No valid image sources found."}
 
-        log.info("Vision query (multimodal): %d images encoded for injection",
-                 len(content_blocks))
+        log.info("Vision query (multimodal): 1 image URI resolved")
         return {
-            "content_blocks": content_blocks,
-            "prompt": prompt,
-            "message": f"Image{'s' if len(content_blocks) > 1 else ''} encoded. Please describe what you see.",
+            "image_uri": image_uri,
+            "message": "vision_query: image loaded",
         }
 
     # ── non-multimodal: call external vision API ────────────────────

@@ -10,8 +10,9 @@ from llm import LLM
 from config import load_config
 from content_block import (
     is_blocks, text_block, image_url_block,
-    has_image_blocks, extract_text, extract_image_urls,
+    has_image_blocks, extract_text,
 )
+from observation_store import ObservationStore
 from logger import get_logger
 from permissions import PermissionManager
 import database as db
@@ -54,6 +55,7 @@ class Agent:
                 base_url=cfg["llm"].get("base_url", ""),
             )
         self._project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        self.observation_store = ObservationStore()
 
         api_key = cfg["llm"]["api_key"]
         base_url = cfg["llm"].get("base_url", "https://api.deepseek.com/v1")
@@ -283,32 +285,6 @@ class Agent:
         except Exception:
             return None
 
-    def _inject_vision_blocks(self, msgs: list[dict]) -> None:
-        """Detect ``content_blocks`` from vision_query tool results and insert
-        a user message with resolved image blocks right after the tool message.
-        """
-        for i, msg in enumerate(msgs):
-            if msg.get("role") != "tool":
-                continue
-            raw = msg.get("content", "")
-            if not isinstance(raw, dict):
-                continue
-            blocks_raw = raw.get("content_blocks")
-            if not blocks_raw or not isinstance(blocks_raw, list):
-                continue
-            prompt = raw.get("prompt", "Describe this image in detail.")
-            message = raw.get("message",
-                              "Image prepared. Please describe what you see.")
-            content: list[dict] = [text_block(prompt)]
-            for b in blocks_raw:
-                if b.get("type") == "image_url":
-                    content.append(b)
-            if len(content) > 1:
-                msgs[i]["content"] = message
-                msgs.insert(i + 1, {"role": "user", "content": content})
-                log.info("Injected %d vision images into user message", len(content) - 1)
-            break
-
     def _format_chat_history(self) -> str:
         """Serialize internal JSON history to text for the LLM prompt."""
         # Anchor: first user message reminds the LLM of the active task,
@@ -497,9 +473,20 @@ class Agent:
                     msgs.pop(i)
                     continue
             i += 1
-        # ── inject vision_query images ──
-        if self._is_multimodal:
-            self._inject_vision_blocks(msgs)
+        # ── attach images from observation_store at request boundary ──
+        if self._is_multimodal and self.observation_store.has_images():
+            img_uris = self.observation_store.pop_attachable_images()
+            if img_uris:
+                content: list = [{"type": "text", "text": "(image attached)"}]
+                for uri in img_uris:
+                    if uri.startswith("file://"):
+                        resolved = self._materialise_file_url(uri[7:])
+                        if resolved:
+                            content.append({"type": "image_url", "image_url": {"url": resolved, "detail": "high"}})
+                    elif uri:
+                        content.append({"type": "image_url", "image_url": {"url": uri, "detail": "high"}})
+                if len(content) > 1:
+                    msgs.append({"role": "user", "content": content})
         # ── ensure tool contents are strings (dict → str for API compat) ──
         for m in msgs:
             if m["role"] == "tool" and isinstance(m.get("content"), dict):
@@ -851,8 +838,16 @@ class Agent:
 
         # Build content: Content Block array or plain string
         if blocks and has_image_blocks(blocks):
-            content: str | list[dict] = [text_block(text)] if text else []
-            content.extend(blocks)
+            if self._is_multimodal:
+                # Multimodal: store as Content Block array → _resolve_blocks will attach image
+                content: str | list[dict] = [text_block(text)] if text else []
+                content.extend(blocks)
+            else:
+                # Non-multimodal: flatten to text note so the API doesn't receive image_url
+                from content_block import extract_image_urls as _eiu
+                urls = _eiu(blocks)
+                path_note = " ".join(urls)
+                content = f"{text}\n(User attached image: {path_note})" if text else f"(User attached image: {path_note})"
         else:
             content = text
 
@@ -1252,8 +1247,11 @@ class Agent:
                                     _tool_failed = True
                                 elif result.get("exit_code", 0) != 0:
                                     _tool_failed = True
-                                # Preserve dict structure (needed for content_blocks, etc.)
-                                result_str = result
+                                # Extract image_uri for observation_store
+                                if result.get("image_uri"):
+                                    self.observation_store.add_image(result["image_uri"])
+                                # Tool result text: use `message` field, fall back to str(dict)
+                                result_str = result.get("message", str(result))
                             elif result is not None:
                                 result_str = self._apply_truncation(str(result), tc["name"])
                             else:

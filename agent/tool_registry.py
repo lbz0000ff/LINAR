@@ -16,7 +16,8 @@ from tool.basic_tools.tool_memory import Tool_Remember, Tool_RecallFact, Tool_Re
 from tool.basic_tools.tool_ask_user import Tool_AskUser
 from tool.basic_tools.tool_skill import Tool_Skill
 from tool.basic_tools.tool_plan import Tool_PlanAdvance, Tool_PlanStatus, Tool_CreatePlan
-from tool.basic_tools.tool_vision import Tool_VisionQuery
+from tool.basic_tools.tool_vision import Tool_ImgToText
+from tool.basic_tools.tool_vision_vlm import Tool_Vision
 from tool.basic_tools.tool_promise import Tool_ResolvePromise
 from tool.basic_tools.tool_cancel_promise import Tool_CancelPromise
 from tool.basic_tools.tool_workspace import Tool_CreateWorkspace, Tool_SwitchWorkspace
@@ -228,7 +229,8 @@ _TOOL_CLASSES = {
     "plan_advance": Tool_PlanAdvance,
     "plan_status": Tool_PlanStatus,
     "create_plan": Tool_CreatePlan,
-    "vision_query": Tool_VisionQuery,
+    "img_to_text": Tool_ImgToText,
+    # "vision" is added dynamically by _add_multimodal_tools()
     "resolve_promise": Tool_ResolvePromise,
     "cancel_promise": Tool_CancelPromise,
     "create_workspace": Tool_CreateWorkspace,
@@ -248,7 +250,7 @@ _TOOLSETS = {
     "memory": ["remember", "recall_fact", "recall_topic", "get_topic_list"],
     "interactive": ["ask_user", "skill", "resolve_promise"],
     "plan": ["plan_advance", "plan_status", "create_plan"],
-    "vision": ["vision_query"],
+    "vision": ["img_to_text"],
     "research": [
         "web_search", "web_fetch",
         "read_file", "write_file", "search_files",
@@ -287,6 +289,7 @@ class ToolRegistry:
             if "mcp" in self._enabled_sets or "research" in self._enabled_sets:
                 mcp_tools = _init_mcp_servers()
                 selected.update(mcp_tools)
+        _add_vision_tools(selected)
         return selected
 
 
@@ -312,12 +315,25 @@ _all_tools = {
     "plan_advance": Tool_PlanAdvance(),
     "plan_status": Tool_PlanStatus(),
     "create_plan": Tool_CreatePlan(),
-    "vision_query": Tool_VisionQuery(),
+    "img_to_text": Tool_ImgToText(),
     "resolve_promise": Tool_ResolvePromise(),
     "cancel_promise": Tool_CancelPromise(),
     "create_workspace": Tool_CreateWorkspace(),
     "switch_workspace": Tool_SwitchWorkspace(),
 }
+
+# ── helpers for conditional tool registration ─────────────────
+
+def _add_vision_tools(tools: dict) -> None:
+    """Conditionally register ``vision`` / ``img_to_text`` based on config."""
+    cfg = load_config()
+    multimodal = cfg.get("llm", {}).get("multimodal", False)
+    vision_enabled = cfg.get("vision", {}).get("enabled", False)
+
+    if multimodal:
+        tools["vision"] = Tool_Vision()
+    if vision_enabled:
+        tools["img_to_text"] = Tool_ImgToText()
 
 # ── public API ───────────────────────────────────────────────
 
@@ -332,6 +348,7 @@ def get_tools(enabled_sets=None, include_mcp=True):
     if enabled_sets is None:
         all_tools = dict(_all_tools)
         all_tools.update(mcp_tools)
+        _add_vision_tools(all_tools)
         log.info("Loaded %d native + %d MCP tools", len(_all_tools), len(mcp_tools))
         return all_tools
 
@@ -342,6 +359,7 @@ def get_tools(enabled_sets=None, include_mcp=True):
                 selected[tool_name] = _all_tools[tool_name]
     if include_mcp and "mcp" in enabled_sets:
         selected.update(mcp_tools)
+    _add_vision_tools(selected)
     log.info("Loaded %d tools from enabled sets: %s", len(selected), enabled_sets)
     return selected
 

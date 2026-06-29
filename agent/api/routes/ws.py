@@ -85,20 +85,30 @@ async def ws_endpoint(ws: WebSocket):
 
             if t == "message":
                 text = data.get("data", "")
-                # Build Content Blocks from the `files` array (no more [file:path] markers)
                 raw_files = data.get("files", [])
                 blocks = None
+                file_texts = []
                 if raw_files:
-                    blocks = []
+                    import os as _os
+                    _IMG_EXTS = {".jpg", ".jpeg", ".png", ".gif", ".webp", ".bmp"}
                     for fp in raw_files:
-                        import os as _os
                         fp = str(fp).strip()
-                        if fp.startswith(("http://", "https://")):
-                            blocks.append({"type": "image_url", "image_url": {"url": fp, "detail": "high"}})
+                        ext = _os.path.splitext(fp)[1].lower()
+                        if ext in _IMG_EXTS:
+                            if blocks is None:
+                                blocks = []
+                            fp_norm = fp.replace("\\", "/")
+                            blocks.append({"type": "image_url", "image_url": {"url": f"file://{fp_norm}", "detail": "high"}})
                         else:
-                            # Local path → file:// URI
-                            fp = fp.replace("\\", "/")
-                            blocks.append({"type": "image_url", "image_url": {"url": f"file://{fp}", "detail": "high"}})
+                            # Non-image file: read as text and append to message
+                            try:
+                                with open(fp, "r", encoding="utf-8") as fh:
+                                    file_content = fh.read()
+                                file_texts.append(f"\n\n(File from user: {_os.path.basename(fp)})\ncontent:\n{file_content}")
+                            except Exception as e:
+                                file_texts.append(f"\n\n(File from user: {_os.path.basename(fp)}\ncontent extraction failed: {e})")
+                    if file_texts:
+                        text += "".join(file_texts)
                 if active_session_id is not None:
                     session = sm.get_or_create(active_session_id)
                     if blocks:
