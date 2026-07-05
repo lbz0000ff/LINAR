@@ -2,7 +2,7 @@
 
 **LINAR Is Not A Retriever.**
 
-LINAR is a memory-first research agent workspace. It plans, investigates, verifies, and remembers - treating every interaction as part of an ongoing conversation that spans sessions, not isolated Q&A turns.
+LINAR is a research agent workspace with memory. It plans, investigates, verifies, and remembers - treating every interaction as part of an ongoing conversation that spans sessions, not isolated Q&A turns.
 
 Built around a long-term agent persona, LINAR integrates deep research, tool use, and state-oriented memory into a single autonomous workflow.
 
