@@ -212,6 +212,10 @@ class SessionManager:
         cfg = load_config()
         enabled = cfg.get("tools", {}).get("enabled_sets", None)
         self._enabled = enabled
+
+        # Ensure DB tables exist before any API call touches them
+        db.init_db()
+
         # Native tools only — MCP starts later in background
         native = [s for s in (enabled or []) if s != "mcp"]
         self.tools = get_tools(native or None, include_mcp=False)

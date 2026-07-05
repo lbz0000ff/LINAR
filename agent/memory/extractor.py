@@ -37,13 +37,11 @@ _STATE_PATH = os.path.join(
 _DEFAULT_STATE: dict[str, Any] = {
     "last_extraction_round": 0,
     "last_extraction_turn": 0,
-    "consecutive_empty": 0,
     "consecutive_failures": 0,
-    "current_interval": 8,
+    "current_interval": 6,
 }
 
-_MIN_INTERVAL = 8
-_MAX_INTERVAL = 20
+_INTERVAL = 6
 _MAX_WINDOW_ROUNDS = 20
 
 
@@ -73,29 +71,22 @@ def _save_state(state: dict[str, Any]) -> None:
 def should_extract(
     state: dict[str, Any] | None = None,
     current_round: int = 0,
+    extraction_interval: int = _INTERVAL,
 ) -> bool:
     """Return ``True`` if extraction should run now.
 
-    Back-pressure rules:
+    Fixed-interval rules:
 
-    * Skip if fewer than ``current_interval`` rounds have passed.
-    * Force run if ``_MAX_INTERVAL`` rounds have passed regardless.
-    * Stretch the interval when extraction keeps returning nothing.
+    * Run every ``extraction_interval`` rounds regardless of content.
+    * No back-pressure — empty extractions do not stretch the interval
+      or suppress future extractions.
     """
     if state is None:
         state = _load_state()
 
     delta = current_round - state.get("last_extraction_round", 0)
 
-    if delta < state.get("current_interval", _MIN_INTERVAL):
-        return False
-
-    # Safety valve — never skip more than the max interval
-    if delta >= _MAX_INTERVAL:
-        return True
-
-    # Back-pressure: skip if multiple empty extractions in a row
-    if state.get("consecutive_empty", 0) >= 2:
+    if delta < extraction_interval:
         return False
 
     return True
@@ -235,6 +226,7 @@ def try_extract(
     session_id: int,
     current_round: int,
     llm_cfg: dict[str, Any],
+    extraction_interval: int = _INTERVAL,
 ) -> list[Any]:
     """Run one extraction cycle.
 
@@ -245,6 +237,7 @@ def try_extract(
     *session_id* — the current session id.
     *current_round* — the current ``conversation_round``.
     *llm_cfg* — LLM config dict (``base_url``, ``api_key``, ``model``).
+    *extraction_interval* — rounds between extractions (default 6).
 
     Returns the list of newly committed ``Fact`` objects, or an empty
     list if nothing was extracted or on failure (never raises).
@@ -256,7 +249,7 @@ def try_extract(
     state = _load_state()
 
     # ── 1. Scheduling ────────────────────────────────────────
-    if not should_extract(state, current_round):
+    if not should_extract(state, current_round, extraction_interval):
         return []
 
     # ── 2. Build window ──────────────────────────────────────
@@ -287,10 +280,7 @@ def try_extract(
     facts_data = _parse_extraction_response(raw)
     if not facts_data:
         log.debug("Extraction LLM returned no facts")
-        state["consecutive_empty"] = state.get("consecutive_empty", 0) + 1
         state["last_extraction_round"] = current_round
-        interval = state.get("current_interval", _MIN_INTERVAL)
-        state["current_interval"] = min(_MAX_INTERVAL, int(interval * 1.5))
         _save_state(state)
         return []
 
@@ -327,9 +317,8 @@ def try_extract(
     # ── 5. Update state ──────────────────────────────────────
     state["last_extraction_round"] = current_round
     state["last_extraction_turn"] = current_round
-    state["consecutive_empty"] = 0
     state["consecutive_failures"] = 0
-    state["current_interval"] = _MIN_INTERVAL
+    state["current_interval"] = extraction_interval
 
     _save_state(state)
     store.save()

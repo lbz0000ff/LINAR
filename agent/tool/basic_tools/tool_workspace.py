@@ -15,9 +15,9 @@ class Tool_CreateWorkspace(Tool):
         "Create a workspace directory for organizing research outputs, "
         "intermediate files, and session artifacts. "
         "After creation, all file operations default to this directory. "
-        "PREFER using the 'path' parameter to specify exactly where the workspace "
-        "should be created (e.g., 'path=workspaces/VLA'). "
-        "Only use the 'name' parameter without 'path' for quick temporary workspaces."
+        "Use 'path' with a short kebab-case slug (e.g. 'vla-robotics') — "
+        "the tool places it under the configured workspace root automatically. "
+        "Only use the 'name' parameter for quick temporary workspaces."
     )
     tool_schema: dict = {
         "name": "create_workspace",
@@ -28,12 +28,12 @@ class Tool_CreateWorkspace(Tool):
             "properties": {
                 "path": {
                     "type": "string",
-                    "description": "RECOMMENDED. Full path where the workspace should be created (e.g., 'workspaces/VLA'). Creates directory if needed. Use this when you want the workspace in a specific location.",
+                    "description": "RECOMMENDED. A short kebab-case slug (e.g. 'vla-robotics'). Relative paths are placed under the configured workspace root. Absolute paths are used as-is.",
                     "default": "",
                 },
                 "name": {
                     "type": "string",
-                    "description": "Only used when 'path' is empty. Creates an auto-named workspace under workspace/session_{id}/<name>. Best for quick temporary workspaces.",
+                    "description": "Only used when 'path' is empty. Creates an auto-named workspace under workspaces/session_{id}/<name>. Best for quick temporary workspaces.",
                     "default": "",
                 }
             },
@@ -52,11 +52,23 @@ class Tool_CreateWorkspace(Tool):
         if not sid:
             return "Error: no active session."
 
+        # Determine workspace root from config (relative → resolve to project dir)
+        cfg = getattr(agent, "cfg", {})
+        root_rel = cfg.get("workspace", {}).get("root", "workspaces")
+        # Config paths are relative to the agent's project_root
+        project_root = getattr(agent, "_project_root", os.getcwd())
+        workspace_base = os.path.abspath(os.path.join(project_root, root_rel))
+
         if path.strip():
-            ws_dir = os.path.abspath(path.strip())
+            p = path.strip()
+            if os.path.isabs(p):
+                ws_dir = p
+            else:
+                # Relative path → resolve under workspace_base
+                ws_dir = os.path.normpath(os.path.join(workspace_base, p))
         else:
             ws_name = name.strip() or "default"
-            ws_dir = os.path.abspath(os.path.join("workspace", f"session_{sid}", ws_name))
+            ws_dir = os.path.join(workspace_base, f"session_{sid}", ws_name)
         os.makedirs(ws_dir, exist_ok=True)
 
         agent._workspace_root = ws_dir

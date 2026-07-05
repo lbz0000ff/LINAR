@@ -15,6 +15,10 @@ allowed-tools:
   - ask_user
   - vision
   - img_to_text
+  - remember
+  - recall_fact
+  - recall_topic
+  - get_topic_list
 ---
 
 # Deep Research Mode
@@ -117,11 +121,14 @@ Final: Generate report from research_state.json
 
 **Step 1 — Setup**
 
-Check if a workspace is activated. If not, create one:
+Check if a workspace is activated. If not, create a dedicated workspace:
+
 ```
-create_workspace path=<your-workspace-path>
+create_workspace path=<topic-slug>
 ```
-Verify search tools work. If none are available, stop and tell the user.
+
+The `path` is a short kebab-case slug (e.g. `vla-robotics` or `multi-agent-systems`).  
+**Do NOT** prefix it with a directory name like `workspaces/` or `research/` — the tool resolves it under the configured workspace root automatically.
 
 **Step 2 — Research Plan**
 

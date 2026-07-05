@@ -42,10 +42,13 @@ class MemoryExtractor:
             tr = TopicRegistry()
             llm_cfg = cfg.get("aux") or cfg.get("llm", {})
 
+            # Read extraction interval from config (default 6)
+            interval = cfg.get("memory", {}).get("extraction", {}).get("interval", 6)
+
             await asyncio.to_thread(
                 _try_extract,
                 store, tr, messages,
-                session_id, current_round, llm_cfg,
+                session_id, current_round, llm_cfg, interval,
             )
         except Exception as e:
             log.warning("Memory extraction skipped: %s", e)

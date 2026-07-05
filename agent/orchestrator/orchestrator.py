@@ -90,6 +90,9 @@ class Orchestrator:
     async def run_skill(self, skill, user_input: str) -> None:
         """Skill entry — delegates to SkillManager."""
         await self._skill_mgr.run(skill, user_input)
+        # Extract memory facts after skill execution (skills bypass normal
+        # per-round extraction in Orchestrator.start).
+        await self._memory.try_extract()
 
     # ── Internal ─────────────────────────────────────────────
 
