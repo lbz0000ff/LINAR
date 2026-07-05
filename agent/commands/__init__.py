@@ -1,4 +1,4 @@
-"""Command system — pluggable slash-command handlers for the Lily terminal.
+"""Command system — pluggable slash-command handlers for the LINAR terminal.
 
 Usage in ``terminal.py``::
 

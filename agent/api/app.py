@@ -32,7 +32,7 @@ async def lifespan(app: FastAPI):
     sm.shutdown()
 
 
-app = FastAPI(title="EchoLily", version="0.1.0", lifespan=lifespan)
+app = FastAPI(title="LINAR", version="0.1.0", lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,
@@ -57,7 +57,7 @@ app.include_router(upload.router)
 
 _DIST = Path(os.path.join(
     os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
-    "..", "webui-vue", "dist",
+    "..", "gui", "dist",
 ))
 _DIST_EXISTS = _DIST.is_dir()
 

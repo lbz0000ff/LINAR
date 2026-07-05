@@ -1,5 +1,5 @@
 """
-Lily Agent Terminal — Dual-pane TUI with always-active input.
+LINAR Terminal — Dual-pane TUI with always-active input.
 LLM output streams in the upper pane; a fixed input bar at the bottom
 stays active so the user can type messages or /commands at any time.
 Messages typed while the LLM is busy are queued and processed in order.
@@ -53,7 +53,7 @@ from rich.markup import escape as rich_escape
 _AGENT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if _AGENT_DIR not in sys.path:
     sys.path.insert(0, _AGENT_DIR)
-# When loaded via runpy (e.g. lily.py), ``agent`` may already be cached
+# When loaded via runpy (e.g. linar.py), ``agent`` may already be cached
 # as a namespace package.  Delete it so the real ``agent/agent.py``
 # module is imported instead.
 if 'agent' in sys.modules and getattr(sys.modules['agent'], '__file__', None) is None:
@@ -169,8 +169,8 @@ class _CaptureConsole:
     it to prompt_toolkit (style, text) fragments for the TUI."""
     def __init__(self):
         self.buffer = ""
-        self._output_deque = None   # set by LilyTerminal
-        self._invalidate = None     # set by LilyTerminal (app.invalidate)
+        self._output_deque = None   # set by LINARTerminal
+        self._invalidate = None     # set by LINARTerminal (app.invalidate)
     def write(self, text: str):
         self.buffer += text
     def flush(self):
@@ -187,32 +187,26 @@ class _CaptureConsole:
         self.buffer = ""
         return True
 # ── terminal ──────────────────────────────────────────────
-class LilyTerminal:
+class LINARTerminal:
     """Dual-pane TUI: output streams in the upper pane, input bar at
     the bottom stays active so the user can type at any time."""
-    # Logo template: ECHO in "echo" color, original LILY with 3D shadow effect
+    # Logo template: LINAR in off-white with red "I" and 3D shadow
     _logo = [
         # Row 0
-        [("███████", "echo"), (" ", None), ("██████╗", "echo"), (" ", None), ("██╗ ██╗", "echo"), (" ", None), ("██████╗", "echo"),
-         (" ", None),("██╗", "lily"), ("      ", None), ("████", "i"), ("╗", "shadow"), (" ", None),("██╗", "lily"), ("     ", None), ("██╗   ██╗", "lily")                                 ,(" ", None),(" ", None)],
+        [("██╗", "linar"), ("      ", None), ("████", "i"), ("╗", "shadow"), (" ", None),("██╗", "linar"), ("     ", None), ("██╗   ██╗", "linar")                                 ,(" ", None),(" ", None)],
         # Row 1
-        [("██╔════", "echo"), (" ", None), ("██╔═══╝", "echo"), (" ", None), ("██║ ██║", "echo"), (" ", None), ("██╔═██╗", "echo"),
-         (" ", None),("██║", "lily"), ("      ", None), ("╚", "shadow"), ("██", "i"), ("╔╝", "shadow"), (" ", None),("██║", "lily"), ("     ", None), ("╚", "shadow"), ("██╗ ██╔╝", "lily") ,(" ", None),(" ", None)],
+        [("██║", "linar"), ("      ", None), ("╚", "shadow"), ("██", "i"), ("╔╝", "shadow"), (" ", None),("██║", "linar"), ("     ", None), ("╚", "shadow"), ("██╗ ██╔╝", "linar") ,(" ", None),(" ", None)],
         # Row 2
-        [("█████╗ ", "echo"), (" ", None), ("██║    ", "echo"), (" ", None), ("██████║", "echo"), (" ", None), ("██║ ██║", "echo"),
-         (" ", None),("██║", "lily"), ("       ", None), ("██", "i"),("║", "shadow"), ("  ", None),("██║", "lily"), ("      ", None), ("╚████╔╝", "lily"), (" ", None)                      ,(" ", None),(" ", None)],
+        [("██║", "linar"), ("       ", None), ("██", "i"),("║", "shadow"), ("  ", None),("██║", "linar"), ("      ", None), ("╚████╔╝", "linar"), (" ", None)                      ,(" ", None),(" ", None)],
         # Row 3
-        [("██╔══╝ ", "echo"), (" ", None), ("██║    ", "echo"), (" ", None), ("██╔═██║", "echo"), (" ", None), ("██║ ██║", "echo"),
-         (" ", None),("██║", "lily"), ("       ", None), ("██", "i"), ("╚╗", "shadow"), (" ", None),("██║", "lily"), ("       ", None), ("╚██╔╝", "lily"), ("  ", None)                     ,(" ", None),(" ", None)],
+        [("██║", "linar"), ("       ", None), ("██", "i"), ("╚╗", "shadow"), (" ", None),("██║", "linar"), ("       ", None), ("╚██╔╝", "linar"), ("  ", None)                     ,(" ", None),(" ", None)],
         # Row 4
-        [("███████", "echo"), (" ", None), ("╚█████╗", "echo"), (" ", None), ("██║ ██║", "echo"), (" ", None), ("╚████║ ", "echo"),
-         (" ", None),("███████╗", "lily"), (" ", None), ("████", "i"), ("║", "shadow"), (" ", None),("███████╗", "lily"), ("   ", None), ("██║", "lily"), ("   ", None)                     ,(" ", None),(" ", None)],
+        [("███████╗", "linar"), (" ", None), ("████", "i"), ("║", "shadow"), (" ", None),("███████╗", "linar"), ("   ", None), ("██║", "linar"), ("   ", None)                     ,(" ", None),(" ", None)],
         # Row 5
-        [("╚══════", "echo"), (" ", None), (" ╚════╝", "echo"), (" ", None), ("╚═╝ ╚═╝", "echo"), (" ", None), (" ╚════╝", "echo"),
-         (" ", None),("╚══════╝", "lily"), (" ", None), ("╚", "shadow"), ("═══", "shadow"), ("╝", "shadow"), (" ", None),("╚══════╝", "lily"), ("   ", None), ("╚═╝", "lily"), ("   ", None),(" ", None),(" ", None)],
+        [("╚══════╝", "linar"), (" ", None), ("╚", "shadow"), ("═══", "shadow"), ("╝", "shadow"), (" ", None),("╚══════╝", "linar"), ("   ", None), ("╚═╝", "linar"), ("   ", None),(" ", None),(" ", None)],
     ]
     _banner_text = [
-        ("EchoLily Terminal  version {version}", "title"),
+        ("LINAR Terminal  version {version}", "title"),
         ("Type /help for command help", "hint"),
     ]
     def __init__(self, agent: Agent, orchestrator: Orchestrator | None = None) -> None:
@@ -682,7 +676,7 @@ class LilyTerminal:
         if not self._header_printed:
             self._header_printed = True
             self._output_deque.append(("", "\n"))
-            self._output_deque.append(("bold", ">> Lily\n"))
+            self._output_deque.append(("bold", ">> LINAR\n"))
     def _on_event(self, event: dict) -> None:
         etype = event.get("type")
         # ── start ────────────────────────────────────────
@@ -930,7 +924,7 @@ class LilyTerminal:
             elif role == "agent":
                 content = rich_escape(chat["content"])
                 self.console.print(
-                    f"\n[{self.s('header')}]Lily[/{self.s('header')}]"
+                    f"\n[{self.s('header')}]LINAR[/{self.s('header')}]"
                     f"> [grey62]{content}[/grey62]"
                 )
             elif role == "tool":
@@ -1344,7 +1338,7 @@ class LilyTerminal:
                 except Exception:
                     pass
         asyncio.run(_main())
-        log.info("Lily shutdown")
+        log.info("LINAR shutdown")
         goodbye = self._ptk("goodbye") or "fg:red"
         self._render_fragments.append((goodbye, "\nGoodbye!"))
         # Use print since the TUI is shutting down
@@ -1375,7 +1369,7 @@ def main() -> None:
     log_cfg = _cfg.get("logging", {})
     # Per-instance log file so multiple terminals don't interleave
     _log_base = log_cfg.get("file") or os.path.join(
-        os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "..", "logs", "lily.log",
+        os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "..", "logs", "linar.log",
     )
     _log_root, _log_ext = os.path.splitext(_log_base)
     log_file = f"{_log_root}-{_pid}{_log_ext}"
@@ -1386,7 +1380,7 @@ def main() -> None:
         backup_count=log_cfg.get("backup_count", 7),
         console=log_cfg.get("console", True),
     )
-    log.info("Lily v%s starting (pid=%s)", _cfg.get("version", "?"), _pid)
+    log.info("LINAR v%s starting (pid=%s)", _cfg.get("version", "?"), _pid)
     log.debug("Config: %s", _cfg)
     # Per-instance .temp directory so multiple terminals don't fight
     _temp_root = os.path.join(
@@ -1426,7 +1420,7 @@ def main() -> None:
     tools = get_tools(_enabled)
     # Create agent (callbacks wired after cli is created below).
     agent = Agent(tools=tools)
-    cli = LilyTerminal(agent)
+    cli = LINARTerminal(agent)
     # Wire interactive callbacks to cli's inline prompt mechanism.
     # These run from the agent's bg thread and use threading.Event to
     # coordinate with the main event loop.

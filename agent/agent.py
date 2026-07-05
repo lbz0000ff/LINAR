@@ -705,14 +705,14 @@ class Agent:
                 event=hook_event,
                 agent=self,
                 timestamp=time.time(),
-                tool_name=context.get("ECHOLILY_TOOL_NAME", ""),
-                tool_arguments=context.get("ECHOLILY_TOOL_ARGUMENTS", ""),
-                tool_result=context.get("ECHOLILY_TOOL_RESULT", ""),
-                tool_error=context.get("ECHOLILY_TOOL_ERROR", ""),
-                user_input=context.get("ECHOLILY_USER_INPUT", ""),
-                agent_text=context.get("ECHOLILY_AGENT_TEXT", ""),
-                stage=context.get("ECHOLILY_STAGE", ""),
-                previous_stage=context.get("ECHOLILY_PREVIOUS_STAGE", ""),
+                tool_name=context.get("LINAR_TOOL_NAME") or context.get("ECHOLILY_TOOL_NAME", ""),
+                tool_arguments=context.get("LINAR_TOOL_ARGUMENTS") or context.get("ECHOLILY_TOOL_ARGUMENTS", ""),
+                tool_result=context.get("LINAR_TOOL_RESULT") or context.get("ECHOLILY_TOOL_RESULT", ""),
+                tool_error=context.get("LINAR_TOOL_ERROR") or context.get("ECHOLILY_TOOL_ERROR", ""),
+                user_input=context.get("LINAR_USER_INPUT") or context.get("ECHOLILY_USER_INPUT", ""),
+                agent_text=context.get("LINAR_AGENT_TEXT") or context.get("ECHOLILY_AGENT_TEXT", ""),
+                stage=context.get("LINAR_STAGE") or context.get("ECHOLILY_STAGE", ""),
+                previous_stage=context.get("LINAR_PREVIOUS_STAGE") or context.get("ECHOLILY_PREVIOUS_STAGE", ""),
             )
 
             # Dispatch hooks
@@ -744,7 +744,8 @@ class Agent:
                 cmd = [sys.executable, script]
             else:
                 cmd = [script]
-            env = {**context, "ECHOLILY_SKILL_DIR": skill_dir, "ECHOLILY_HOOK_EVENT": event}
+            env = {**context, "LINAR_SKILL_DIR": skill_dir, "LINAR_HOOK_EVENT": event,
+                   "ECHOLILY_SKILL_DIR": skill_dir, "ECHOLILY_HOOK_EVENT": event}
             result = await asyncio.to_thread(
                 subprocess.run, cmd,
                 capture_output=True, text=True, timeout=30,
@@ -1025,7 +1026,7 @@ class Agent:
         # when the same Event is awaited across asyncio.run() calls).
         self.stop_event = asyncio.Event()
         self._interrupted = False
-        if not self._skill_active:
+        if not self._skill_active and not getattr(self, '_custom_system_prompt', False):
             self.llm.system_prompt = self._build_prompt(self.cfg)
         llm_call = 0
         while True:
@@ -1188,9 +1189,20 @@ class Agent:
                 _tool_failed = False
                 if result_str is None:
                     raw_args = tc["arguments"]
-                    args_dict = json.loads(raw_args) if isinstance(raw_args, str) else raw_args
-                    hook_result = await self._run_hook("PreToolUse", {
+                    try:
+                        args_dict = json.loads(raw_args) if isinstance(raw_args, str) else raw_args
+                    except json.JSONDecodeError:
+                        result_str = (
+                            f"Error: Failed to parse arguments for tool "
+                            f"'{tc['name']}': invalid JSON. "
+                            f"Do NOT retry with the same arguments."
+                        )
+                        _tool_failed = True
+                    if result_str is None:
+                        hook_result = await self._run_hook("PreToolUse", {
+                        "LINAR_TOOL_NAME": tc["name"],
                         "ECHOLILY_TOOL_NAME": tc["name"],
+                        "LINAR_TOOL_ARGUMENTS": tc["arguments"],
                         "ECHOLILY_TOOL_ARGUMENTS": tc["arguments"],
                     })
                     if hook_result:
@@ -1320,8 +1332,10 @@ class Agent:
                 })
                 self.emit({"type": "tool_result", "name": tc["name"], "id": tc["id"], "result": result_str})
                 await self._run_hook("PostToolUse", {
-                    "ECHOLILY_TOOL_NAME": tc["name"], "ECHOLILY_TOOL_ARGUMENTS": tc["arguments"],
-                    "ECHOLILY_TOOL_RESULT": result_str,
+                    "LINAR_TOOL_NAME": tc["name"], "ECHOLILY_TOOL_NAME": tc["name"],
+                    "LINAR_TOOL_ARGUMENTS": tc["arguments"], "ECHOLILY_TOOL_ARGUMENTS": tc["arguments"],
+                    "LINAR_TOOL_RESULT": result_str, "ECHOLILY_TOOL_RESULT": result_str,
+                    "LINAR_TOOL_ERROR": result_str if is_failure else "",
                     "ECHOLILY_TOOL_ERROR": result_str if is_failure else "",
                 })
                 # Tool persistence handled by persist_tool_result hook (hooks_builtin.py)

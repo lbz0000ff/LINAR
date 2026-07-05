@@ -36,7 +36,10 @@ def _make_system_prompt_extra(task: str,
 def create_agent(agent_hint: str = "any",
                  predecessor_results: dict[str, str] = None,
                  stop_event: asyncio.Event | None = None,
-                 workspace_root: str | None = None) -> Agent:
+                 workspace_root: str | None = None,
+                 model: str | None = None,
+                 system_prompt: str | None = None,
+                 provider: str | None = None) -> Agent:
     """Create an Agent instance for a DAG sub-task.
 
     Parameters
@@ -45,6 +48,17 @@ def create_agent(agent_hint: str = "any",
         Hint for tool selection and system prompt tuning.
     predecessor_results : dict, optional
         Results from predecessor DAG nodes, keyed by node id.
+    model : str, optional
+        Override the LLM model for this agent.  When ``None`` the
+        model is inherited from the main agent's config.
+    system_prompt : str, optional
+        Custom system prompt.  When set, it replaces the default
+        ``_RESEARCH_PROMPT`` entirely.
+    provider : str, optional
+        Named provider profile from config.yaml ``providers`` section
+        (e.g. ``"stepfun"``, ``"zhipu"``).  When set, the sub-agent's
+        LLM client is re-created with that provider's base_url and
+        api_key.  When ``None`` the main agent's provider is used.
 
     Returns
     -------
@@ -56,9 +70,9 @@ def create_agent(agent_hint: str = "any",
     # ── select tool set based on agent_hint ──
     hint_to_tools = {
         "code":     ["time", "file", "shell", "interactive"],
-        "analysis": ["time", "file", "web", "memory"],
+        "analysis": ["time", "file", "web", "memory", "vision"],
         "shell":    ["time", "shell"],
-        "research": ["web", "file"],
+        "research": ["time","web", "file", "vision"],
     }
     enabled = hint_to_tools.get(agent_hint,
                                 cfg.get("tools", {}).get("enabled_sets", None))
@@ -67,6 +81,25 @@ def create_agent(agent_hint: str = "any",
     tools = registry.get_tools()
 
     agent = Agent(tools=tools)
+
+    # ── override model if specified ──
+    if model:
+        agent.llm.model = model
+        log.info("Sub-agent model override: %s → %s", agent_hint, model)
+
+    # ── override provider if specified ──
+    if provider:
+        provider_cfg = cfg.get("providers", {}).get(provider)
+        if provider_cfg:
+            from openai import AsyncOpenAI
+            agent.llm.client = AsyncOpenAI(
+                base_url=provider_cfg["base_url"],
+                api_key=provider_cfg["api_key"],
+            )
+            log.info("Sub-agent provider override: %s → %s (%s)",
+                     agent_hint, provider, provider_cfg["base_url"])
+        else:
+            log.warning("Sub-agent provider '%s' not found in config.providers", provider)
 
     # ── share parent stop_event so Ctrl+C propagates ──
     if stop_event is not None:
@@ -92,13 +125,19 @@ def create_agent(agent_hint: str = "any",
         os.chdir(workspace_root)
 
     # ── Use a minimal prompt for sub-agents (skip full base prompt noise) ──
-    _RESEARCH_PROMPT = (
-        "You are a focused research assistant. Your task is to search the web "
-        "for specific information, extract key findings, and report them clearly. "
-        "Always cite your sources. Be concise and factual. "
-        "Do NOT use memory tools — they are not available.\n\n"
-    )
-    agent.llm.system_prompt = _RESEARCH_PROMPT
+    # When a predefined subagent template provides its own system_prompt,
+    # use that instead of the generic _RESEARCH_PROMPT.
+    if system_prompt is not None:
+        agent.llm.system_prompt = system_prompt
+        agent._custom_system_prompt = True
+    else:
+        _RESEARCH_PROMPT = (
+            "You are a focused research assistant. Your task is to search the web "
+            "for specific information, extract key findings, and report them clearly. "
+            "Always cite your sources. Be concise and factual. "
+            "Do NOT use memory tools — they are not available.\n\n"
+        )
+        agent.llm.system_prompt = _RESEARCH_PROMPT
 
     return agent
 

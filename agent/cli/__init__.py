@@ -1,1 +1,1 @@
-# Lily Agent CLI package
+# LINAR CLI package

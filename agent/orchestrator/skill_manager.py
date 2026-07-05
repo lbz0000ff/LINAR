@@ -2,7 +2,11 @@
 
 from __future__ import annotations
 
+import logging
+
 from .state_machine import Stage, StateMachine
+
+log = logging.getLogger(__name__)
 
 
 class SkillManager:
@@ -59,6 +63,7 @@ class SkillManager:
             try:
                 await self._agent.process_with_llm()
             except Exception:
+                log.exception("Skill /%s failed", skill.name)
                 await self._sm.transition(Stage.ERROR)
                 skill.on_unload(self._agent)
                 raise

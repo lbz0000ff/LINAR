@@ -65,6 +65,7 @@ async def ws_endpoint(ws: WebSocket):
 
     sub_queue = sm.subscribe()
     active_session_id: int | None = None
+    _pending_mode: str | None = None  # mode set before any session is active
 
     # ── Background task: drain event queue → WS ──
     async def send_events():
@@ -125,13 +126,24 @@ async def ws_endpoint(ws: WebSocket):
                 sid = int(data.get("id", 0))
                 active_session_id = sid
                 sm.get_or_create(sid)
+                # Apply pending permission mode if user set it before
+                # any session was active (e.g. clicked AUTO in empty UI).
+                if _pending_mode is not None:
+                    sess = sm.get(sid)
+                    if sess:
+                        sess.agent.permissions.switch_mode(_pending_mode)
+                    await _send(ws, {"type": "permission_mode", "mode": _pending_mode})
+                    _pending_mode = None
                 await _send(ws, {"type": "session_switched", "session_id": sid})
 
             elif t == "switch_permission_mode":
                 mode = data.get("mode", "safe")
-                session = sm.get(active_session_id) if active_session_id else None
+                session = sm.get(active_session_id) if active_session_id is not None else None
                 if session:
                     session.agent.permissions.switch_mode(mode)
+                    _pending_mode = None
+                else:
+                    _pending_mode = mode  # remember for when session activates
                 await _send(ws, {"type": "permission_mode", "mode": mode})
 
             elif t == "list_skills":
@@ -166,20 +178,20 @@ async def ws_endpoint(ws: WebSocket):
                         await _send(ws, {"type": "steer_ack", "data": msg})
 
             elif t == "stop":
-                session = sm.get(active_session_id) if active_session_id else None
+                session = sm.get(active_session_id) if active_session_id is not None else None
                 if session:
                     session.agent.interrupt()
 
             elif t == "ask_user_response":
                 response = data.get("response", "")
-                session = sm.get(active_session_id) if active_session_id else None
+                session = sm.get(active_session_id) if active_session_id is not None else None
                 if session:
                     session.resolve_ask_user(response)
                 await _send(ws, {"type": "ask_user_response_received"})
 
             elif t == "permission_response":
                 action = data.get("action", "deny_once")
-                session = sm.get(active_session_id) if active_session_id else None
+                session = sm.get(active_session_id) if active_session_id is not None else None
                 if session:
                     session.resolve_permission(action)
 
