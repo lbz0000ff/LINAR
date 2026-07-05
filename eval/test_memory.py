@@ -28,7 +28,7 @@ async def test_fact_topic_filter():
 
     store = FactStore()
     store.commit(Fact(content="User likes Python", topic="preference"))
-    store.commit(Fact(content="EchoLily is an agent", topic="project"))
+    store.commit(Fact(content="LINAR is an agent", topic="project"))
 
     pref_facts = store.get_by_topic("preference")
     assert any(f.content == "User likes Python" for f in pref_facts)

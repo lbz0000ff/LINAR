@@ -1,10 +1,10 @@
-# UI color theme for Lily Terminal
+# UI color theme for LINAR Terminal
 # Colors use Rich markup syntax (e.g. "bold cyan", "red", "grey62", "dim")
 
 banner:
   border: "grey"
   echo: "#f3f1e1"
-  lily: "#e2e1db"
+  linar: "#e2e1db"
   i: "#8c2a2b"
   shadow: "grey"
   title: "yellow"

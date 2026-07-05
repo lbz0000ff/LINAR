@@ -111,9 +111,9 @@ def _check_project_root_conflict(command: str) -> str | None:
     name (case-insensitively but not exactly), which suggests the user may have
     mistakenly specified a duplicate project-name component in the path.
 
-    Example: user asks to create ``lily/test/test5/``, project root is ``Lily``,
-    and LLM resolves to ``mkdir H:\\Lily\\lily\\test\\test5`` — the extra
-    ``lily`` component matches ``Lily`` case-insensitively and is likely wrong.
+    Example: user asks to create ``linar/test/test5/``, project root is ``LINAR``,
+    and LLM resolves to ``mkdir H:\\LINAR\\linar\\test\\test5`` — the extra
+    ``linar`` component matches ``LINAR`` case-insensitively and is likely wrong.
     """
     _td = os.path.dirname(os.path.abspath(__file__))         # agent/basic_tools
     _ad = os.path.dirname(_td)                                # agent

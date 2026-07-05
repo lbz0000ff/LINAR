@@ -1,4 +1,4 @@
-"""Hook configuration loader for EchoLily.
+"""Hook configuration loader for LINAR.
 
 This module provides functions to load hook configuration from YAML
 and register hooks into the HookRegistry.

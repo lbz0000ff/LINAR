@@ -1,10 +1,12 @@
-.claude/
-.vscode/
+
 .temp/
 .agents/
 .reserved/
 .pytest_cache/
 __pycache__/
+.claude/
+.vscode/
+.codex/
 *.pyc
 *.pyo
 *.pyd
@@ -16,6 +18,7 @@ config.yaml
 logs/
 models/*
 reports
+research
 test/*
 agent/memory/chat_history/*
 agent/memory/archived/*
@@ -25,7 +28,8 @@ agent/prompt/MEMORY.md
 agent/memory/state/
 agent/tool/mcp_tools/server/comfyui-mcp/
 demo/
-workspaces/*
+workspaces/
+workspace/
 webui/uploads/*
 webui/design-demo
 
@@ -33,6 +37,7 @@ webui/design-demo
 /*.md
 docs/
 !/README.md
+!/README_CN.md
 !/ARCHITECTURE.md
 
 #Exclude all skills except basic skills
@@ -42,8 +47,7 @@ skills/*
 !skills/deep-research
 
 # Upload artifacts
-webui/uploads/
-webui/reasoning_debug*.txt
+webui/*
 
 # Project-local browsers (Playwright Chromium)
 .browsers/
@@ -58,10 +62,8 @@ webui/reasoning_debug*.txt
 agent/BACKEND_CHANGES.md
 
 # Design reference from old JS frontend
-webui-vue/reference/
-webui-vue/src-bak/
-nul
-eval/results/
+gui/reference/
+gui/src-bak/
 
 # Eval intermediate files
 eval/results/
@@ -70,3 +72,7 @@ eval/deep_research_bench/results/
 eval/*.md
 eval/research/
 agent/workspaces/
+
+# GUI build artifacts
+gui/node_modules/
+gui/dist/

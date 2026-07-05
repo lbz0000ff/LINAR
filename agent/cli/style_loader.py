@@ -1,4 +1,4 @@
-"""Style configuration loader for Lily Terminal.
+"""Style configuration loader for LINAR Terminal.
 
 Reads cli/style.yaml and merges with hardcoded defaults so every
 key is guaranteed to exist even if the YAML file is missing.
@@ -14,7 +14,7 @@ DEFAULTS = {
     "banner": {
         "border": "grey",
         "echo": "cyan",
-        "lily": "grey85",
+        "linar": "grey85",
         "i": "red",
         "shadow": "grey",
         "title": "yellow",

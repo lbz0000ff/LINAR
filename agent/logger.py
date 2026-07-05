@@ -1,10 +1,10 @@
-"""Centralized logging configuration for Lily Agent.
+"""Centralized logging configuration for LINAR Agent.
 
 Provides a ``setup_logging()`` function that configures Python's ``logging``
 module with both file and console handlers.  Call ``setup_logging()`` once
 at startup; use ``get_logger(__name__)`` in every module to get a logger.
 
-Log files are written to ``logs/lily.log`` with daily rotation, keeping
+Log files are written to ``logs/linar.log`` with daily rotation, keeping
 7 days of history.
 
 Quick usage::
@@ -27,7 +27,7 @@ from typing import Optional
 # ---------------------------------------------------------------------------
 
 _LOG_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "logs")
-_LOG_FILE = os.path.join(_LOG_DIR, "lily.log")
+_LOG_FILE = os.path.join(_LOG_DIR, "linar.log")
 
 # ---------------------------------------------------------------------------
 # Module-level state (avoids repeated setup)
@@ -73,7 +73,7 @@ def setup_logging(
     level : str
         One of ``DEBUG``, ``INFO``, ``WARNING``, ``ERROR``, ``CRITICAL``.
     log_file : str or None
-        Path to the log file.  ``None`` → ``logs/lily.log`` under the project
+        Path to the log file.  ``None`` → ``logs/linar.log`` under the project
         root.
     max_bytes : int
         Maximum size of a single log file before rotation.

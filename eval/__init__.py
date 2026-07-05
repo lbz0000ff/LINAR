@@ -1,1 +1,1 @@
-"""EchoLily evaluation framework — benchmark runner for deep research & memory."""
+"""LINAR evaluation framework — benchmark runner for deep research & memory."""

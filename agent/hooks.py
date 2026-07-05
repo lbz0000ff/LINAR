@@ -1,4 +1,4 @@
-"""Hooks system for EchoLily.
+"""Hooks system for LINAR.
 
 This module provides a comprehensive hook system that allows cross-cutting
 concerns (logging, metrics, persistence, etc.) to be registered as event
@@ -44,7 +44,7 @@ log = logger.get_logger(__name__)
 
 
 class HookEvent(Enum):
-    """All hook events supported by EchoLily.
+    """All hook events supported by LINAR.
 
     Events are grouped by lifecycle category. Each event receives a HookContext
     with relevant fields populated.

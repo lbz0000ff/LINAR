@@ -1,7 +1,6 @@
 ---
 name: skill-writer
 description: Create or improve SKILL.md files in the skills/ directory
-allowed-tools: read_file search_files write_file patch_file ask_user cmd_execute
 ---
 
 ## When to use

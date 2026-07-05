@@ -1,12 +1,12 @@
-# Lily Configuration Example
+# LINAR Configuration Example
 # Copy to config.yaml and adjust values for your environment.
 # Environment variables are referenced as ${VAR_NAME}.
 
-project_name: Lily
-version: 0.1.0
-description: An AI agent designed to assist with various tasks.
+project_name: LINAR
+version: 0.3.0
+description: A memory-first research agent workspace.
 
-# API Providers — base_url and api_key are inherited by llm / aux
+# API Providers — base_url and api_key are inherited by llm / aux / vision
 providers:
   deepseek:
     base_url: "https://api.deepseek.com/v1"
@@ -15,8 +15,14 @@ providers:
     base_url: "https://open.bigmodel.cn/api/paas/v4"
     api_key: "${ZHIPU_API_KEY}"
   stepfun:
-    base_url: "https://api.stepfun.com/v1"
+    base_url: "https://api.stepfun.com/step_plan/v1"
     api_key: "${STEPFUN_API_KEY}"
+  ollama:
+    base_url: "http://localhost:11434/v1"
+    api_key: "ollama"
+  lmstudio:
+    base_url: "http://127.0.0.1:1234/v1"
+    api_key: "lmstudio"
 
 # Main Model Configuration
 llm:
@@ -28,17 +34,18 @@ llm:
     # multimodal: true  # uncomment when main model is vision-capable (e.g. step-3.7-flash, gpt-4o)
 
 # System Configuration
-max_turns: 0                    # 0 = unlimited; N = max LLM rounds
+locale: en                      # "zh" | "en" — default UI language
+max_turns: 30                    # 0 = unlimited; N = max LLM rounds
 show_reasoning: full              # "hide" | "full"
 show_tool_calls: detailed       # "hide" | "show_tools" | "detailed"
 
-# Auxiliary Model Configuration (planning, routing, lightweight tasks)
+# Auxiliary Model Configuration
 aux:
     provider: deepseek
     model: "deepseek-v4-flash"
     temperature: 0.3
 
-# Vision Model Configuration (image analysis via vision_query tool)
+# Vision Model Configuration (image analysis via image_to_text tool)
 vision:
     enabled: false
     provider: ""
@@ -81,7 +88,7 @@ web_search:
 # Logging Configuration
 logging:
     level: INFO                # DEBUG | INFO | WARNING | ERROR | CRITICAL
-    file: logs/lily.log        # path relative to project root
+    file: logs/linar.log        # path relative to project root
     max_bytes: 10485760        # 10 MB per file before rotation
     backup_count: 7            # number of rotated files to keep
     console: false              # also emit logs to stderr
@@ -127,17 +134,16 @@ permission_modes:
 
 # MCP Servers (Model Context Protocol)
 mcp_servers:
-  fetch:
-    enabled: true
-    command: python
-    args: ["-m", "mcp_server_fetch"]
+  # fetch:
+  #   enabled: true
+  #   command: python
+  #   args: ["-m", "mcp_server_fetch"]
   # github:
   #   enabled: true
   #   command: npx
   #   args: ["-y", "@modelcontextprotocol/server-github"]
 
 # Memory Configuration (State-Oriented Memory System)
-# See docs/MEMORY_ARCHITECTURE.md for design details.
 memory:
     enabled: true
     extraction:
@@ -160,5 +166,5 @@ prompt:
     files:
         - SOUL.md
         - system_prompt_base.md
-        - USR.md          # Compiled user state view (replaces USER.md)
-        - AGT.md          # Compiled agent state view (replaces MEMORY.md)
+        - USER.md          # Compiled user state view (replaces USER.md)
+        - AGENT.md          # Compiled agent state view (replaces MEMORY.md)

@@ -1,4 +1,4 @@
-"""DeepResearch Bench adapter — runs EchoLily deep research on 100 queries.
+"""DeepResearch Bench adapter — runs LINAR deep research on 100 queries.
 
 Usage:
     python eval/run_deep_research_bench.py --limit 5
@@ -109,7 +109,7 @@ async def main():
         print(f"  Done in {elapsed:.0f}s ({len(article)} chars)")
 
     # Save output
-    out_path = os.path.join(OUTPUT_DIR, "echolily_results.jsonl")
+    out_path = os.path.join(OUTPUT_DIR, "linar_results.jsonl")
     with open(out_path, "w", encoding="utf-8") as f:
         for r in results:
             f.write(json.dumps(r, ensure_ascii=False) + "\n")

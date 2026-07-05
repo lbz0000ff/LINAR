@@ -1,4 +1,4 @@
-"""MCPTool — wraps a remote MCP tool as a Lily Tool."""
+"""MCPTool — wraps a remote MCP tool as a LINAR Tool."""
 from ..basic_tools.tool import Tool
 
 
@@ -6,7 +6,7 @@ class MCPTool(Tool):
     """Delegates execute() to an MCPServer instance."""
 
     def __init__(self, server, name: str, original_name: str, description: str, input_schema: dict):
-        # Convert the JSON Schema into Lily's OpenAI-compatible schema
+        # Convert the JSON Schema into LINAR's OpenAI-compatible schema
         schema = {
             "name": name,
             "description": description,

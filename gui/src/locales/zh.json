@@ -1,0 +1,112 @@
+{
+  "sidebar": {
+    "connected": "已连接",
+    "disconnected": "未连接",
+    "reconnecting": "重连中...",
+    "collapseTooltip": "收起侧边栏",
+    "expandTooltip": "展开侧边栏",
+    "searchPlaceholder": "搜索会话...",
+    "newSession": "新建对话",
+    "session": "会话 #",
+    "settings": "设置",
+    "lightMode": "亮色模式",
+    "darkMode": "深色模式"
+  },
+  "input": {
+    "noMatch": "无匹配指令",
+    "placeholder": "输入消息... ( / 查看指令)",
+    "placeholderDisconnected": "未连接 — 等待 WebSocket..."
+  },
+  "commands": {
+    "help": "显示帮助",
+    "reasoning": "切换思考过程显示",
+    "reset": "重置对话",
+    "stop": "停止生成",
+    "steer": "修正 Agent 行为（需参数）",
+    "btw": "侧边查询（需参数）",
+    "workspace": "显示当前工作区",
+    "workspaceCreate": "创建工作区（需路径）",
+    "workspaceSwitch": "切换工作区（需路径）",
+    "sessions": "刷新会话列表",
+    "session": "切换会话（需参数）",
+    "exit": "关闭窗口",
+    "loadSkill": "加载技能 "
+  },
+  "toolbar": {
+    "attach": "添加附件",
+    "commands": "指令",
+    "stop": "停止"
+  },
+  "settings": {
+    "title": "设置",
+    "close": "关闭",
+    "general": "通用",
+    "model": "模型",
+    "appearance": "外观",
+    "about": "关于",
+    "language": "语言",
+    "showReasoning": "显示思考过程",
+    "showToolDetails": "显示工具调用详情",
+    "autoScroll": "自动滚动到最新",
+    "modelConnection": "模型 / 连接",
+    "modelHint": "在config.yaml中配置模型和供应商以及MCP服务器",
+    "darkMode": "深色模式",
+    "aboutTitle": "关于 LINAR",
+    "aboutHint": "Developed by github.com/lbz0000ff"
+  },
+  "plan": {
+    "title": "任务计划",
+    "statusPending": "等待中",
+    "statusInProgress": "执行中",
+    "statusCompleted": "完成",
+    "statusFailed": "失败",
+    "statusBlocked": "阻塞",
+    "noTasks": "暂无活跃任务",
+    "parallel": "并行 {n}",
+    "waitingNodes": "等待节点分配..."
+  },
+  "artifacts": {
+    "title": "产出文件",
+    "empty": "暂无产出文件"
+  },
+  "btw": {
+    "title": "侧边查询",
+    "empty": "暂无查询"
+  },
+  "agent": {
+    "status": "多 Agent 状态",
+    "comingSoon": "即将推出"
+  },
+  "chat": {
+    "unknown": "未知",
+    "copyCode": "复制代码",
+    "imageLabel": "图片",
+    "processing": "Agent 工作中...",
+    "emptySelect": "选择一个会话开始对话，或创建一个新的",
+    "selectSession": "选择会话",
+    "newSession": "新建对话",
+    "emptyHint": "双击会话标题可以重命名",
+    "reasoning": "思考过程",
+    "toolProcessing": "处理中...",
+    "toolDone": "完成",
+    "args": "参数",
+    "needsApproval": "需要审批",
+    "result": "结果",
+    "customReplyPlaceholder": "输入自定义回复...",
+    "send": "发送",
+    "planCollapse": "收起规划",
+    "planExpand": "展开规划",
+    "scrollToBottom": "滚动到底部"
+  },
+  "panel": {
+    "hide": "隐藏面板",
+    "show": "显示面板",
+    "title": "面板",
+    "close": "关闭面板"
+  },
+  "titlebar": {
+    "minimize": "最小化",
+    "maximize": "最大化",
+    "close": "关闭"
+  }
+}

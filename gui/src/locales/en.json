@@ -1,0 +1,110 @@
+{
+  "sidebar": {
+    "connected": "Connected",
+    "disconnected": "Disconnected",
+    "reconnecting": "Reconnecting...",
+    "collapseTooltip": "Collapse sidebar",
+    "expandTooltip": "Expand sidebar",
+    "searchPlaceholder": "Search sessions...",
+    "newSession": "New Session",
+    "session": "Session #",
+    "settings": "Settings",
+    "lightMode": "Light Mode",
+    "darkMode": "Dark Mode"
+  },
+  "input": {
+    "noMatch": "No matching commands",
+    "placeholder": "Type a message... ( / for commands)",
+    "placeholderDisconnected": "Disconnected — waiting for WebSocket..."
+  },
+  "commands": {
+    "help": "Show help",
+    "reasoning": "Toggle reasoning display",
+    "reset": "Reset conversation",
+    "stop": "Stop generation",
+    "steer": "Correct Agent behavior (arg required)",
+    "btw": "Side query (arg required)",
+    "workspace": "Show current workspace",
+    "workspaceCreate": "Create workspace (path required)",
+    "workspaceSwitch": "Switch workspace (path required)",
+    "sessions": "Refresh session list",
+    "session": "Switch session (arg required)",
+    "exit": "Close window",
+    "loadSkill": "Load skill "
+  },
+  "toolbar": {
+    "attach": "Attach files",
+    "commands": "Commands",
+    "stop": "Stop"
+  },
+  "settings": {
+    "title": "Settings",
+    "close": "Close",
+    "general": "General",
+    "model": "Model",
+    "appearance": "Appearance",
+    "about": "About",
+    "language": "Language",
+    "showReasoning": "Show reasoning steps",
+    "showToolDetails": "Show tool call details",
+    "autoScroll": "Auto-scroll to latest",
+    "modelConnection": "Model / Connection",
+    "modelHint": "Providers, models, MCP servers are configured in agent/config.yaml",
+    "darkMode": "Dark Mode",
+    "aboutTitle": "About LINAR",
+    "aboutHint": "Developed by github.com/lbz0000ff"
+  },
+  "plan": {
+    "title": "Task Plan",
+    "statusPending": "Pending",
+    "statusInProgress": "Running",
+    "statusCompleted": "Done",
+    "statusFailed": "Failed",
+    "statusBlocked": "Blocked",
+    "noTasks": "No active tasks",
+    "parallel": "Parallel {n}",
+    "waitingNodes": "Waiting for nodes..."
+  },
+  "artifacts": {
+    "title": "Artifacts",
+    "empty": "No artifacts yet"
+  },
+  "btw": {
+    "title": "BTW Query",
+    "empty": "No queries"
+  },
+  "agent": {
+    "status": "Agent Status",
+    "comingSoon": "Coming soon"
+  },
+  "panel": {
+    "title": "Panel",
+    "close": "Close panel"
+  },
+  "chat": {
+    "unknown": "Unknown",
+    "copyCode": "Copy code",
+    "imageLabel": "Image",
+    "processing": "Agent working...",
+    "emptySelect": "Select a session to start, or create a new one",
+    "selectSession": "Select Session",
+    "newSession": "New Session",
+    "emptyHint": "Double-click a session title to rename it",
+    "reasoning": "Reasoning",
+    "toolProcessing": "Processing...",
+    "toolDone": "Done",
+    "args": "Arguments",
+    "needsApproval": "Needs approval",
+    "result": "Result",
+    "customReplyPlaceholder": "Type a custom reply...",
+    "send": "Send",
+    "planCollapse": "Collapse plan",
+    "planExpand": "Expand plan",
+    "scrollToBottom": "Scroll to bottom"
+  },
+  "titlebar": {
+    "minimize": "Minimize",
+    "maximize": "Maximize",
+    "close": "Close"
+  }
+}

@@ -1,4 +1,4 @@
-"""EchoLily — FastAPI entry point.
+"""LINAR — FastAPI entry point.
 
 Usage:
     python main.py                          # 127.0.0.1:8080
@@ -27,7 +27,7 @@ from api.app import app
 
 def main():
     import argparse
-    parser = argparse.ArgumentParser(description="EchoLily FastAPI server")
+    parser = argparse.ArgumentParser(description="LINAR FastAPI server")
     parser.add_argument("--host", default="127.0.0.1", help="Bind address")
     parser.add_argument("--port", type=int, default=8080, help="Bind port")
     parser.add_argument("--reload", action="store_true", help="Auto-reload on changes")

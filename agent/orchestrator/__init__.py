@@ -1,4 +1,4 @@
-"""EchoLily orchestrator — component-based FSM."""
+"""LINAR orchestrator — component-based FSM."""
 
 from .state_machine import Stage, stage_label
 from .orchestrator import Orchestrator

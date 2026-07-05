@@ -1,4 +1,4 @@
-"""Built-in hook handlers for EchoLily.
+"""Built-in hook handlers for LINAR.
 
 This module provides default hook implementations for common cross-cutting
 concerns: logging, persistence, metrics, etc.

@@ -24,7 +24,7 @@ from .metrics import ResearchMetrics, extract_node_count
 
 
 class ResearchEvalRunner:
-    """Run a benchmark against EchoLily's deep research system.
+    """Run a benchmark against LINAR's deep research system.
 
     For each task, constructs a ``create_plan`` call with a single
     research sub-task and collects results + metrics.

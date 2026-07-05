@@ -56,7 +56,7 @@ def _get_async_loop() -> asyncio.AbstractEventLoop:
     return _async_loop
 
 
-# ── Hook-compatible tool name → Lily tool name mapping ──
+# ── Hook-compatible tool name → LINAR tool name mapping ──
 _HOOK_TOOL_MAP = {
     "Bash": ["cmd_execute"],
     "Read": ["read_file", "search_files"],
@@ -73,11 +73,11 @@ _HOOK_TOOL_MAP = {
 
 
 def _resolve_tool_name(raw: str) -> list[str]:
-    """Resolve a granular tool name to Lily tool names.
+    """Resolve a granular tool name to LINAR tool names.
 
     ``Bash(python3 *)`` → ``["cmd_execute"]`` (arg pattern ignored for now)
     ``Read`` → ``["read_file", "search_files"]``
-    ``read_file`` → ``["read_file"]`` (pass-through for Lily native names)
+    ``read_file`` → ``["read_file"]`` (pass-through for LINAR native names)
     """
     # Strip parenthesized argument pattern: "Bash(git *)" → "Bash"
     base = raw.split("(")[0] if "(" in raw else raw
@@ -87,7 +87,7 @@ def _resolve_tool_name(raw: str) -> list[str]:
     if base in _HOOK_TOOL_MAP:
         return _HOOK_TOOL_MAP[base]
 
-    # Pass-through: assume it's already a Lily tool name
+    # Pass-through: assume it's already a LINAR tool name
     return [base]
 
 
@@ -188,7 +188,7 @@ class Skill:
         agent.llm.system_prompt = self._saved_prompt + "\n\n" + self.system_prompt
 
         if self.allowed_tools is not None:
-            # Resolve both Claude Code granular names and Lily native names
+            # Resolve both Claude Code granular names and LINAR native names
             # MCP tools (prefixed with mcp_) are always visible, not filtered
             allowed = set(injected.keys())
             for raw in self.allowed_tools:

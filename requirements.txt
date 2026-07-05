@@ -1,0 +1,20 @@
+# Core runtime
+fastapi==0.115.0
+openai==2.38.0
+pydantic==2.13.4
+PyYAML==6.0.3
+python-multipart==0.0.12
+uvicorn[standard]==0.32.0
+
+# CLI / TUI
+prompt_toolkit==3.0.52
+rich==15.0.0
+
+# Web and research tools
+ddgs==9.14.4
+duckduckgo_search==8.1.1
+html2text==2025.4.15
+httpx==0.28.1
+requests==2.34.2
+tavily==1.1.0
+trafilatura==2.0.0

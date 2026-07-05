@@ -77,7 +77,7 @@ class MCPServer:
         await self._send({"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {
             "protocolVersion": "2024-11-05",
             "capabilities": {},
-            "clientInfo": {"name": "lily-agent", "version": "0.1.0"},
+            "clientInfo": {"name": "linar-agent", "version": "0.1.0"},
         }})
         init_resp = await self._recv()
         if init_resp is None:

@@ -1,6 +1,6 @@
 """Finite state machine with explicit transition guards.
 
-Pure Python — no dependencies on agent, hooks, or EchoLily infrastructure.
+Pure Python — no dependencies on agent, hooks, or LINAR infrastructure.
 """
 from __future__ import annotations
 

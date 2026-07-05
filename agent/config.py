@@ -28,7 +28,7 @@ def _resolve_env(value):
 # Schema-like defaults so every caller gets a valid dict
 # ---------------------------------------------------------------------------
 DEFAULTS = {
-    "project_name": "Lily",
+    "project_name": "LINAR",
     "version": "1.0.0",
     "providers": {
         "deepseek": {
@@ -50,7 +50,7 @@ DEFAULTS = {
     "show_tool_calls": "show_tools",  # "hide" | "show_tools" | "detailed"
     "logging": {
         "level": "INFO",
-        "file": "logs/lily.log",
+        "file": "logs/linar.log",
         "max_bytes": 10485760,
         "backup_count": 7,
         "console": True,
