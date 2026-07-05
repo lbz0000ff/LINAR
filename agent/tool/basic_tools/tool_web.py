@@ -373,9 +373,9 @@ def _load_search_config():
     try:
         from config import load_config
         cfg = load_config()
-        return cfg.get("web_search", {"backend": "duckduckgo"})
+        return cfg.get("web_search", {"backend": "tavily"})
     except Exception:
-        return {"backend": "duckduckgo"}
+        return {"backend": "tavily"}
 
 
 def _search_duckduckgo(query: str, max_results: int = 10) -> list[dict]:
@@ -503,7 +503,7 @@ class Tool_WebSearch(Tool):
         max_results = min(max(max_results, 1), 20)
 
         cfg = _load_search_config()
-        backend = cfg.get("backend", "duckduckgo")
+        backend = cfg.get("backend", "tavily")
 
         search_fn = _SEARCH_BACKENDS.get(backend)
         if not search_fn:

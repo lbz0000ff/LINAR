@@ -90,7 +90,7 @@ def create_agent(agent_hint: str = "any",
     # ── override provider if specified ──
     if provider:
         provider_cfg = cfg.get("providers", {}).get(provider)
-        if provider_cfg:
+        if provider_cfg and provider_cfg.get("api_key"):
             from openai import AsyncOpenAI
             agent.llm.client = AsyncOpenAI(
                 base_url=provider_cfg["base_url"],
@@ -99,7 +99,9 @@ def create_agent(agent_hint: str = "any",
             log.info("Sub-agent provider override: %s → %s (%s)",
                      agent_hint, provider, provider_cfg["base_url"])
         else:
-            log.warning("Sub-agent provider '%s' not found in config.providers", provider)
+            reason = "not found in config" if not provider_cfg else "has empty api_key"
+            log.warning("Sub-agent provider '%s' %s — falling back to main model (%s)",
+                        provider, reason, agent.llm.model)
 
     # ── share parent stop_event so Ctrl+C propagates ──
     if stop_event is not None:

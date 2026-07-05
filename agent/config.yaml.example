@@ -8,15 +8,18 @@ description: A memory-first research agent workspace.
 
 # API Providers — base_url and api_key are inherited by llm / aux / vision
 providers:
+  openai:
+    base_url: "https://api.openai.com/v1"
+    api_key: "${OPENAI_API_KEY}"
   deepseek:
     base_url: "https://api.deepseek.com/v1"
     api_key: "${DEEPSEEK_API_KEY}"
   zhipu:
     base_url: "https://open.bigmodel.cn/api/paas/v4"
     api_key: "${ZHIPU_API_KEY}"
-  stepfun:
-    base_url: "https://api.stepfun.com/step_plan/v1"
-    api_key: "${STEPFUN_API_KEY}"
+  openrouter:
+    base_url: "https://openrouter.ai/api/v1"
+    api_key: "${OPENROUTER_API_KEY}"
   ollama:
     base_url: "http://localhost:11434/v1"
     api_key: "ollama"
@@ -35,7 +38,7 @@ llm:
 
 # System Configuration
 locale: en                      # "zh" | "en" — default UI language
-max_turns: 30                    # 0 = unlimited; N = max LLM rounds
+max_turns: 80                    # 0 = unlimited; N = max LLM rounds
 show_reasoning: full              # "hide" | "full"
 show_tool_calls: detailed       # "hide" | "show_tools" | "detailed"
 
@@ -81,9 +84,9 @@ chat_history:
 
 # Web Search Configuration
 web_search:
-    backend: duckduckgo        # duckduckgo | serper | tavily
+    backend: tavily            # duckduckgo | tavily | serper
+    tavily_api_key: "${TAVILY_API_KEY}"
     # serper_api_key: "${SERPER_API_KEY}"
-    # tavily_api_key: "${TAVILY_API_KEY}"
 
 # Logging Configuration
 logging:
@@ -166,5 +169,5 @@ prompt:
     files:
         - SOUL.md
         - system_prompt_base.md
-        - USER.md          # Compiled user state view (replaces USER.md)
-        - AGENT.md          # Compiled agent state view (replaces MEMORY.md)
+        - USER.md          # Compiled user state view
+        - AGENT.md         # Compiled agent state view

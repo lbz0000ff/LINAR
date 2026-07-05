@@ -45,7 +45,8 @@ uv pip install -r requirements.txt
 
 # 配置 API 密钥
 cp agent/config.yaml.example agent/config.yaml
-# 编辑 agent/config.yaml —— 设置 LLM provider、model 和 API key
+# 编辑 agent/config.yaml —— 设置 LLM provider、model 和搜索后端
+# API key 从环境变量读取
 
 # 首次安装 GUI 依赖
 cd gui && npm install && cd ..
@@ -70,6 +71,36 @@ python linar.py --web
 cd gui
 npm run dev
 ```
+
+---
+
+## Deep Research
+
+运行 `\deep-research {query}` 启动一次深度研究任务。
+
+示例：
+
+```
+\deep-research Could you please help me investigate the current situation of the precious metals industry?
+```
+
+LINAR 会在 `workspaces/` 目录下创建对应任务的工作区。研究任务完成后，会将 Markdown 报告写入 `workspaces/{task_name}/report.md`。
+
+---
+
+## 配置
+
+复制示例配置并编辑：
+
+```bash
+cp agent/config.yaml.example agent/config.yaml
+```
+
+在环境变量中设置 API key。完整选项见配置文件。`linar.py` 会做轻量依赖检查，并可在首次运行时从 `requirements.txt` 安装缺失的 Python 依赖。
+
+默认搜索后端是 [Tavily](https://www.tavily.com/)，需要在环境变量中设置 `TAVILY_API_KEY`。你可以在 `agent/config.yaml` 中切换到 DuckDuckGo 或 Serper，也可以通过 MCP 添加搜索服务。
+
+---
 
 ### 环境要求
 
@@ -134,24 +165,12 @@ npm run dev
 
 ---
 
-## 配置
-
-复制示例配置并编辑：
-
-```bash
-cp agent/config.yaml.example agent/config.yaml
-```
-
-在环境变量中设置 API key。完整选项见配置文件。`linar.py` 会做轻量依赖检查，并可在首次运行时从 `requirements.txt` 安装缺失的 Python 依赖。
-
----
-
 ## 项目状态
 
 LINAR 正在积极开发中。核心研究和记忆系统已可运行；API 和内部接口可能仍有变化。
 
 评测成绩：
-- **DeepResearch Bench (RACE)**：48.56
+- [**DeepResearch Bench**](https://github.com/Ayanami0730/deep_research_bench)：48.56
 
 ---
 

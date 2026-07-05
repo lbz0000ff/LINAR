@@ -44,7 +44,8 @@ uv pip install -r requirements.txt
 
 # Configure API keys
 cp agent/config.yaml.example agent/config.yaml
-# Edit agent/config.yaml - set LLM providers, models and API keys.
+# Edit agent/config.yaml - set LLM providers, models, and search backends.
+# API keys are read from environment variables.
 
 # Install GUI dependencies once
 cd gui && npm install && cd ..
@@ -69,6 +70,36 @@ For frontend-only development:
 cd gui
 npm run dev
 ```
+
+---
+
+## Deep Research
+
+Run `\deep-research {query}` to start a deep research task.
+
+Example:
+
+```
+\deep-research Could you please help me investigate the current situation of the precious metals industry?
+```
+
+LINAR creates a task workspace under `workspaces/`. Once the research task is done, it writes a Markdown report to `workspaces/{task_name}/report.md`.
+
+---
+
+## Configuration
+
+Copy the example config and edit:
+
+```bash
+cp agent/config.yaml.example agent/config.yaml
+```
+
+Set API keys in your environment. See the config file for all options. `linar.py` also performs a lightweight dependency check and can install missing Python dependencies from `requirements.txt` on first run.
+
+The default search backend is [Tavily](https://www.tavily.com/), which requires `TAVILY_API_KEY` in your environment. You can switch to DuckDuckGo or Serper, or add MCP search servers, in `agent/config.yaml`.
+
+---
 
 ### Prerequisites
 
@@ -133,24 +164,12 @@ Key components:
 
 ---
 
-## Configuration
-
-Copy the example config and edit:
-
-```bash
-cp agent/config.yaml.example agent/config.yaml
-```
-
-Set API keys in your environment. See the config file for all options. `linar.py` also performs a lightweight dependency check and can install missing Python dependencies from `requirements.txt` on first run.
-
----
-
 ## Project Status
 
 LINAR is in active development. The core research and memory systems are functional; APIs and internal interfaces may still change.
 
 Benchmark scores:
-- **DeepResearch Bench (RACE)**: 48.56
+- [**DeepResearch Bench**](https://github.com/Ayanami0730/deep_research_bench): 48.56
 
 ---
 
