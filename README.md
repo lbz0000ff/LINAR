@@ -21,6 +21,15 @@ Built around a long-term agent persona, LINAR integrates deep research, tool use
 
 ---
 
+## Prerequisites
+
+- Python 3.10+
+- Node.js 18+ with [npm](https://docs.npmjs.com/downloading-and-installing-node-js-and-npm) for the Web UI
+- [uv](https://docs.astral.sh/uv/) for Python environment management
+- API key for at least one LLM provider
+
+---
+
 ## Quick Start
 
 ```bash
@@ -29,7 +38,7 @@ git clone https://github.com/lbz0000ff/linar.git
 cd linar
 ```
 
-Use `uv` to manage the Python virtual environment:
+Use [uv](https://docs.astral.sh/uv/) to manage the Python virtual environment:
 ```bash
 # Create a virtual environment
 uv venv
@@ -47,7 +56,7 @@ cp agent/config.yaml.example agent/config.yaml
 # Edit agent/config.yaml - set LLM providers, models, and search backends.
 # API keys are read from environment variables.
 
-# Install GUI dependencies once
+# Install GUI dependencies once with npm
 cd gui && npm install && cd ..
 
 # Start the Electron GUI
@@ -98,14 +107,6 @@ cp agent/config.yaml.example agent/config.yaml
 Set API keys in your environment. See the config file for all options. `linar.py` also performs a lightweight dependency check and can install missing Python dependencies from `requirements.txt` on first run.
 
 The default search backend is [Tavily](https://www.tavily.com/), which requires `TAVILY_API_KEY` in your environment. You can switch to DuckDuckGo or Serper, or add MCP search servers, in `agent/config.yaml`.
-
----
-
-### Prerequisites
-
-- Python 3.10+
-- Node.js 18+ (for the Web UI)
-- API key for at least one LLM provider
 
 ---
 
