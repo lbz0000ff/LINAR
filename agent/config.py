@@ -43,7 +43,7 @@ DEFAULTS = {
         "max_tokens": 1000000,
         "top_p": 1.0,
     },
-    "max_llm_calls": 5,
+    "max_llm_calls": 80,
     "max_memory_length": 2200,
     "max_user_preferences_length": 500,
     "show_reasoning": "hide",

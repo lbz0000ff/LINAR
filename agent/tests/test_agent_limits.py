@@ -1,0 +1,106 @@
+import asyncio
+import os
+import sys
+from types import SimpleNamespace
+
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
+sys.modules.setdefault(
+    "openai",
+    SimpleNamespace(AsyncOpenAI=lambda *args, **kwargs: SimpleNamespace()),
+)
+
+from agent import Agent
+
+
+class _NoopTool:
+    name = "noop"
+
+    def execute(self):
+        return "ok"
+
+
+class _FakeLLM:
+    model = "fake"
+
+    def __init__(self):
+        self.system_prompt = ""
+
+    async def _stream(self):
+        yield SimpleNamespace(
+            choices=[
+                SimpleNamespace(
+                    delta=SimpleNamespace(
+                        content=None,
+                        reasoning_content=None,
+                        tool_calls=[
+                            SimpleNamespace(
+                                index=0,
+                                id="call-1",
+                                function=SimpleNamespace(name="noop", arguments="{}"),
+                            )
+                        ],
+                    )
+                )
+            ]
+        )
+
+    def stream_response_messages(self, _messages):
+        return self._stream()
+
+
+def test_agent_uses_max_turns_config(monkeypatch):
+    monkeypatch.setattr(
+        "agent.load_config",
+        lambda: {
+            "llm": {"api_key": "", "base_url": "", "model": "fake"},
+            "max_turns": 80,
+            "chat_history": {},
+            "permissions": {"default": "allow"},
+            "permission_modes": {},
+        },
+    )
+
+    agent = Agent(tools={}, memory_enabled=False)
+
+    assert agent.max_llm_calls == 80
+
+
+def test_agent_keeps_legacy_max_llm_calls_config(monkeypatch):
+    monkeypatch.setattr(
+        "agent.load_config",
+        lambda: {
+            "llm": {"api_key": "", "base_url": "", "model": "fake"},
+            "max_llm_calls": 12,
+            "chat_history": {},
+            "permissions": {"default": "allow"},
+            "permission_modes": {},
+        },
+    )
+
+    agent = Agent(tools={}, memory_enabled=False)
+
+    assert agent.max_llm_calls == 12
+
+
+def test_llm_limit_adds_explicit_meta_message(monkeypatch):
+    monkeypatch.setattr(
+        "agent.load_config",
+        lambda: {
+            "llm": {"api_key": "", "base_url": "", "model": "fake"},
+            "max_turns": 1,
+            "chat_history": {},
+            "permissions": {"default": "allow"},
+            "permission_modes": {},
+        },
+    )
+    agent = Agent(tools={"noop": _NoopTool()}, memory_enabled=False)
+    agent.llm = _FakeLLM()
+    agent.emit = lambda _event: None
+
+    asyncio.run(agent.process_with_llm())
+
+    assert any(
+        msg.get("role") == "meta"
+        and "LLM call limit reached" in msg.get("content", "")
+        for msg in agent.chat_history
+    )

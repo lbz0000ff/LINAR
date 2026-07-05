@@ -93,7 +93,7 @@ class Agent:
             for t in self.tools.values():
                 if hasattr(t, 'agent_ref'):
                     t.agent_ref = self
-        self.max_llm_calls = cfg.get("max_llm_calls", 5)
+        self.max_llm_calls = cfg.get("max_turns", cfg.get("max_llm_calls", 80))
         self.chat_cfg = cfg.get("chat_history", {})
         log.info("Agent initialized (model=%s, max_llm_calls=%s)", self.llm.model, self.max_llm_calls)
         self.max_history_chars = self.chat_cfg.get("max_chars", 10000)
@@ -1040,6 +1040,24 @@ class Agent:
                 break
             llm_call += 1
             if self.max_llm_calls > 0 and llm_call > self.max_llm_calls:
+                notice = (
+                    f"[SYSTEM] LLM call limit reached ({self.max_llm_calls}). "
+                    "Stopping this turn before another model call. Increase "
+                    "`max_turns` in agent/config.yaml if the task needs more "
+                    "tool/LLM rounds."
+                )
+                self.chat_history.append({
+                    "role": "meta",
+                    "content": notice,
+                    "round": self._conversation_round,
+                })
+                log.warning(
+                    "[session=%s round=%s] %s",
+                    self.session_id,
+                    self._conversation_round,
+                    notice,
+                )
+                self.emit({"type": "token", "data": notice})
                 break
             llm_messages = self._build_llm_messages()
 
