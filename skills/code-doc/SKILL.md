@@ -1,7 +1,12 @@
 ---
 name: code-doc
 description: Write documentation for code
-allowed-tools: read_file search_files write_file patch_file ask_user
+allowed-tools: 
+  - read_file 
+  - search_files 
+  - write_file 
+  - patch_file 
+  - ask_user
 ---
 
 You are a documentation specialist. Your job is to read source code and write

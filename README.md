@@ -15,7 +15,7 @@ Built around a long-term agent persona, LINAR integrates deep research, tool use
 - **Deep Research** - Multi-wave parallel research with analyst and critic sub-agents. Each wave fans out across angles, cross-validates results, and can adversarially review claims before synthesizing a cited report.
 - **Long-Term Memory** - Facts persist across sessions. The system compiles what it knows into structured prompt views, detects contradictions, and merges new information into a topic-organized memory state.
 - **Tool-Using Agent** - 20+ built-in tools for web search, file I/O, shell execution, memory, planning, workspace management, and vision. Research tasks can be orchestrated through a DAG-based plan executor.
-- **Modular Skill System** - Skills are Markdown files with YAML frontmatter. Anyone can write a skill without touching Python code.
+- **Modular Skill System** - Skills are Markdown files with YAML frontmatter. Built-in skills include Deep Research, code documentation, skill writing, and system guidance.
 - **Dual Interface** - Web UI (Vue 3 + Electron) and TUI (`prompt_toolkit` + Rich).
 - **Plugin Architecture** - MCP (Model Context Protocol) servers for external tool integration.
 
@@ -147,7 +147,7 @@ Key components:
 - **`agent/memory/`** - State-oriented memory system: Fact store, Topic registry, View compiler, Collision detector
 - **`agent/tool/`** - Tool implementations organized by domain (`basic_tools`, `mcp_tools`)
 - **`agent_types/`** - Predefined sub-agent profiles (`web_researcher`, `analyst`, `critic`) with YAML frontmatter
-- **`skills/`** - Markdown-defined skills loaded dynamically at runtime
+- **`skills/`** - Markdown-defined skills loaded dynamically at runtime (`deep-research`, `code-doc`, `skill-writer`, `system-guide`, etc.)
 - **`gui/`** - Vue 3 frontend + Electron shell
 
 ---

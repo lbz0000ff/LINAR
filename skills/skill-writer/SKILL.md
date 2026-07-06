@@ -1,6 +1,6 @@
 ---
 name: skill-writer
-description: Create or improve SKILL.md files in the skills/ directory
+description: Guide LINAR in creating or improving SKILL.md files in the skills/ directory
 ---
 
 ## When to use
@@ -10,6 +10,7 @@ Trigger when the user asks you to:
 - Convert a downloaded skill (e.g. from OpenClaw forum)
 - Improve or fix an existing skill
 - Explain how skills work
+- Help LINAR extend its own skill set
 
 ## Skill directory structure
 
@@ -22,6 +23,14 @@ skills/<skill-name>/
 ```
 
 Bundled Python scripts are automatically registered as `<skill_name>_<script_name>` tools. The script should expose an `execute(command, args)` function or `handle_<command>(args)` handlers.
+
+## Current LINAR skill behavior
+
+- Skills are discovered from `skills/*/SKILL.md`.
+- Available skills are dynamically announced in `_build_llm_messages()` as a system-reminder.
+- The model invokes the generic `skill` tool with the skill name; do not rely on the deprecated `skill_view` flow.
+- Loading a skill appends its instructions to the base prompt, preserving LINAR's identity, memory, and safety constraints.
+- `allowed-tools` filters the visible tool set for the active skill. Omit it when the skill should inherit all tools.
 
 ## Frontmatter fields
 
@@ -50,11 +59,13 @@ Bundled Python scripts are automatically registered as `<skill_name>_<script_nam
 | `web_fetch` | HTTP GET (text only) |
 | `web_search` | Search the web |
 | `ask_user` | Ask the user |
-| `skill_view` | View another skill's content |
+| `skill` | Load another skill by name |
+| `create_plan` | Create and execute a DAG plan |
+| `workspace` | Create or switch task workspaces |
 
 ## How to write a good system prompt
 
-The skill prompt **replaces** the main prompt entirely — it must be self-contained.
+The skill prompt is appended to LINAR's base prompt, but it still must be self-contained enough to guide the task without assuming hidden context.
 
 Include these sections in order:
 
@@ -116,5 +127,5 @@ The converted SKILL.md should:
 - **No trigger conditions** — agent can't decide when to use it
 - **Vague steps** — be concrete
 - **Overly broad allowed-tools** — grant only what's needed
-- **Assuming outside context** — skill prompt replaces main prompt
+- **Assuming outside context** — skill instructions are appended to the base prompt, but should still be clear and self-contained
 - **Ignoring bundled scripts** — if `skill.json` has `skillFile`, the script is auto-loaded as a tool

@@ -161,8 +161,11 @@ class Agent:
         _agent_dir = os.path.dirname(os.path.abspath(__file__))
         _project_root = os.path.dirname(_agent_dir)
         _shell = _detect_shell()
+        from datetime import datetime
+        _now = datetime.now().strftime("%Y/%m/%d - %H:%M")
         parts.append(
             f"\n## Runtime context\n"
+            f"Current time: {_now}\n"
             f"Platform: {_platform}\n"
             f"Working directory: {_cwd}\n"
             f"Project root: {_project_root}\n"
