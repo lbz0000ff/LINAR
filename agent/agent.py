@@ -16,7 +16,7 @@ from observation_store import ObservationStore
 from logger import get_logger
 from permissions import PermissionManager
 import database as db
-from skill import get_skill
+from skill import get_skill, activate_skill_for_agent
 from hooks import HookRegistry, HookContext, HookEvent, _LEGACY_HOOK_EVENT
 
 log = get_logger(__name__)
@@ -322,17 +322,23 @@ class Agent:
         """
         msgs: list[dict] = []
 
-        # ── skill listing (dynamic, with dedup) ──
+        # ── skill listing (dynamic, every request) ──
+        # This reminder is not persisted in chat_history, so it must be
+        # rebuilt every turn. Otherwise the model forgets available skills
+        # after the first request built for a session.
         try:
             from skill import all_skills
             current_skills = all_skills()
-            new_skills = [s for s in current_skills if s.name not in self._sent_skill_names]
-            if new_skills:
+            visible_skills = [
+                s for s in current_skills
+                if not getattr(s, "disable_model_invocation", False)
+            ]
+            if visible_skills:
                 lines = [
                     "<system-reminder>",
                     "The following skills are available for use with the Skill tool:",
                 ]
-                for s in new_skills:
+                for s in visible_skills:
                     desc = s.description or "(no description)"
                     if s.when_to_use:
                         desc += f" — {s.when_to_use}"
@@ -341,10 +347,13 @@ class Agent:
                     "When a skill matches the user's request, "
                     "invoke the `skill` tool BEFORE generating any other response."
                 )
+                lines.append(
+                    "For investigation, research, multi-source verification, "
+                    "literature review, or report-generation requests, prefer "
+                    "`skill` with `deep-research` when it is listed."
+                )
                 lines.append("</system-reminder>")
                 msgs.append({"role": "system", "content": "\n".join(lines)})
-                for s in new_skills:
-                    self._sent_skill_names.add(s.name)
         except ImportError:
             pass
 
@@ -943,6 +952,26 @@ class Agent:
             # Reset to project root when leaving a workspace
             os.chdir(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+        # ── restore active skill runtime ──
+        active_skill_name = sess.get("active_skill", "") or ""
+        if active_skill_name:
+            skill = get_skill(active_skill_name)
+            if skill:
+                activate_skill_for_agent(
+                    self,
+                    skill,
+                    args=sess.get("active_skill_args", "") or "",
+                    inject_instructions=False,
+                    persist=False,
+                    checkpoint=False,
+                    emit=False,
+                )
+                log.info("Restored active skill: %s", active_skill_name)
+            else:
+                log.warning("Active skill '%s' not found for session #%s", active_skill_name, session_id)
+        elif self._active_skill and hasattr(self._active_skill, "detach_runtime"):
+            self._active_skill.detach_runtime(self)
+
         return True
     def get_current_session_info(self) -> dict:
         """Return info about the current session."""
@@ -956,6 +985,8 @@ class Agent:
             "created_at": sess.get("created_at", ""),
             "round": self._conversation_round,
             "workspace_path": sess.get("workspace_path", "") or "",
+            "active_skill": sess.get("active_skill", "") or "",
+            "active_skill_args": sess.get("active_skill_args", "") or "",
         }
     def reset_session(self):
         """Start a fresh conversation session"""

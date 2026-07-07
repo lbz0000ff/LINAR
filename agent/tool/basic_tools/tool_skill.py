@@ -39,36 +39,8 @@ class Tool_Skill(Tool):
             return "Error: no agent reference."
 
         name = skill.lstrip("/")
-        from skill import get_skill
+        from skill import get_skill, activate_skill_for_agent
         skill_obj = get_skill(name)
         if skill_obj is None:
-            return f"Skill '{skill}' not found. Use `skill_view` (if available) to see the list."
-        # Inject skill content as a user message so the LLM sees it next turn
-        content = skill_obj.system_prompt
-        if not content:
-            return f"Skill '{skill}' loaded but has no instructions."
-        header = f"[SYSTEM] Skill /{skill_obj.name} is now active."
-        if args:
-            header += f" Args: {args}"
-        agent.chat_history.append({"role": "meta", "content": header})
-        agent.chat_history.append({"role": "user", "content": content})
-        # Persist to DB so injected messages survive restart/session switch
-        try:
-            import database as db
-            db.save_message(
-                session_id=agent.session_id,
-                role="meta",
-                content=header,
-                conversation_round=agent._conversation_round,
-            )
-            db.save_message(
-                session_id=agent.session_id,
-                role="user",
-                content=content,
-                conversation_round=agent._conversation_round,
-            )
-        except Exception:
-            pass
-        return (f"Skill '/{skill_obj.name}' loaded. "
-                f"Its instructions have been injected above. "
-                f"Follow them to complete the task.")
+            return f"Skill '{skill}' not found. Use the `skill` tool with a name from the available skills list."
+        return activate_skill_for_agent(agent, skill_obj, args=args)

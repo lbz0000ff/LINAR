@@ -72,6 +72,9 @@ async def ws_endpoint(ws: WebSocket):
         while True:
             try:
                 event = await sub_queue.get()
+                event_sid = event.get("session_id")
+                if event_sid is not None and event_sid != active_session_id:
+                    continue
                 await _send(ws, event)
             except Exception:
                 break
@@ -125,22 +128,44 @@ async def ws_endpoint(ws: WebSocket):
             elif t == "switch_session":
                 sid = int(data.get("id", 0))
                 active_session_id = sid
-                sm.get_or_create(sid)
+                session = sm.get_or_create(sid)
                 # Apply pending permission mode if user set it before
                 # any session was active (e.g. clicked AUTO in empty UI).
                 if _pending_mode is not None:
-                    sess = sm.get(sid)
-                    if sess:
-                        sess.agent.permissions.switch_mode(_pending_mode)
+                    sm.switch_permission_mode(_pending_mode)
                     await _send(ws, {"type": "permission_mode", "mode": _pending_mode})
                     _pending_mode = None
                 await _send(ws, {"type": "session_switched", "session_id": sid})
+                info = session.agent.get_current_session_info()
+                workspace_path = info.get("workspace_path") or ""
+                active_skill = info.get("active_skill") or ""
+                await _send(ws, {
+                    "type": "session_context_restored",
+                    "session_id": sid,
+                    "data": info,
+                })
+                if workspace_path:
+                    await _send(ws, {
+                        "type": "workspace_updated",
+                        "session_id": sid,
+                        "data": {"path": workspace_path},
+                    })
+                if active_skill:
+                    await _send(ws, {
+                        "type": "skill_loaded",
+                        "session_id": sid,
+                        "data": {
+                            "name": active_skill,
+                            "desc": "",
+                            "args": info.get("active_skill_args") or "",
+                        },
+                    })
 
             elif t == "switch_permission_mode":
                 mode = data.get("mode", "safe")
                 session = sm.get(active_session_id) if active_session_id is not None else None
                 if session:
-                    session.agent.permissions.switch_mode(mode)
+                    sm.switch_permission_mode(mode)
                     _pending_mode = None
                 else:
                     _pending_mode = mode  # remember for when session activates
@@ -191,9 +216,9 @@ async def ws_endpoint(ws: WebSocket):
 
             elif t == "permission_response":
                 action = data.get("action", "deny_once")
-                session = sm.get(active_session_id) if active_session_id is not None else None
-                if session:
-                    session.resolve_permission(action)
+                target_session_id = data.get("session_id", active_session_id)
+                if target_session_id is not None:
+                    sm.resolve_permission_for_session(int(target_session_id), action)
 
             elif t == "list_sessions":
                 sessions = db.get_recent_sessions(50)
@@ -206,7 +231,7 @@ async def ws_endpoint(ws: WebSocket):
                 title = sess.get("title", f"Session #{sid}") if sess else ""
                 await _send(ws, {
                     "type": "session_msgs", "session_id": sid,
-                    "title": title, "data": msgs,
+                    "title": title, "data": msgs, "session": sess or {},
                 })
 
             elif t == "rename_session":

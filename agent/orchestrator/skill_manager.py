@@ -42,20 +42,12 @@ class SkillManager:
 
     async def _run_normal(self, skill, user_input: str) -> None:
         await self._sm.transition(Stage.SKILL_LOAD)
-        skill.on_load(self._agent)
+        from skill import activate_skill_for_agent
+        activate_skill_for_agent(self._agent, skill, args=user_input, emit=True)
         await self._hooks.skill_load(
             skill.name,
             description=getattr(skill, "description", ""),
         )
-
-        self._agent.chat_history.append({
-            "role": "meta",
-            "content": (
-                f"[SYSTEM] Skill /{skill.name} is now active. "
-                f"Follow the skill's instructions directly. "
-                f"Do NOT call skill_view — you are already in the skill context."
-            ),
-        })
 
         if user_input.strip():
             await self._agent.add_user_message(user_input)
@@ -65,18 +57,9 @@ class SkillManager:
             except Exception:
                 log.exception("Skill /%s failed", skill.name)
                 await self._sm.transition(Stage.ERROR)
-                skill.on_unload(self._agent)
                 raise
-
-        else:
-            self._agent.emit({
-                "type": "skill_loaded",
-                "data": {"name": skill.name, "desc": skill.description},
-            })
-
-        await self._sm.transition(Stage.SKILL_UNLOAD)
-        await self._hooks.skill_unload(skill.name)
-        skill.on_unload(self._agent)
+            await self._sm.transition(Stage.SKILL_UNLOAD)
+            await self._hooks.skill_unload(skill.name)
 
         await self._sm.transition(Stage.COMPLETE)
         await self._sm.transition(Stage.IDLE)

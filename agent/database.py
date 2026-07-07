@@ -104,6 +104,16 @@ def init_db():
     except sqlite3.OperationalError:
         pass  # already exists
 
+    # ── migration: add active skill checkpoint columns to sessions ──
+    try:
+        conn.execute("ALTER TABLE sessions ADD COLUMN active_skill TEXT DEFAULT ''")
+    except sqlite3.OperationalError:
+        pass  # already exists
+    try:
+        conn.execute("ALTER TABLE sessions ADD COLUMN active_skill_args TEXT DEFAULT ''")
+    except sqlite3.OperationalError:
+        pass  # already exists
+
     log.info("Database initialized at %s", _DB_PATH)
 
 
@@ -157,6 +167,16 @@ def update_session_workspace(session_id: int, path: str):
     conn.execute(
         "UPDATE sessions SET workspace_path = ?, updated_at = datetime('now', 'localtime') WHERE id = ?",
         (path, session_id),
+    )
+    conn.commit()
+
+
+def update_session_active_skill(session_id: int, skill_name: str, args: str = ""):
+    """Save active skill for session recovery."""
+    conn = _get_connection()
+    conn.execute(
+        "UPDATE sessions SET active_skill = ?, active_skill_args = ?, updated_at = datetime('now', 'localtime') WHERE id = ?",
+        (skill_name, args, session_id),
     )
     conn.commit()
 
@@ -227,7 +247,7 @@ def get_session_by_id(session_id: int):
     """Return a single session dict or None."""
     conn = _get_connection()
     row = conn.execute(
-        "SELECT id, title, marker, created_at, updated_at, workspace_path FROM sessions WHERE id = ?",
+        "SELECT id, title, marker, created_at, updated_at, workspace_path, active_skill, active_skill_args FROM sessions WHERE id = ?",
         (session_id,),
     ).fetchone()
     return dict(row) if row else None

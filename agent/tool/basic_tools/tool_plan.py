@@ -449,8 +449,16 @@ class Tool_CreatePlan(Tool):
                 "agent": agent_type,
             }})
 
-            # Run the sub-agent
-            sub_agent.max_llm_calls = 10
+            # Run the sub-agent. Research-style predefined agents usually
+            # need more tool/result/follow-up turns than generic subtasks.
+            cfg = getattr(agent, "cfg", {}) or {}
+            default_limit = cfg.get("sub_agent_max_llm_calls", 20)
+            if agent_type:
+                default_limit = cfg.get(
+                    "research_sub_agent_max_llm_calls",
+                    max(default_limit, 40),
+                )
+            sub_agent.max_llm_calls = default_limit
             await sub_agent.add_user_message(user_msg)
             await sub_agent.process_with_llm()
 

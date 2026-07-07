@@ -39,6 +39,8 @@ llm:
 # System Configuration
 locale: en                      # "zh" | "en" — default UI language
 max_turns: 80                    # 0 = unlimited; N = max LLM rounds
+sub_agent_max_llm_calls: 20       # generic create_plan sub-task rounds
+research_sub_agent_max_llm_calls: 40  # deep-research DAG sub-task rounds
 show_reasoning: full              # "hide" | "full"
 show_tool_calls: detailed       # "hide" | "show_tools" | "detailed"
 
@@ -169,5 +171,5 @@ prompt:
     files:
         - SOUL.md
         - system_prompt_base.md
-        - USER.md          # Compiled user state view
-        - AGENT.md         # Compiled agent state view
+        - USR.md          # Compiled user state view
+        - AGT.md         # Compiled agent state view

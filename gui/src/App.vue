@@ -75,42 +75,58 @@ watch(messages, () => {
 
 // ── WS 消息分发 ──
 function handleMessage(event) {
-  const t = event.type
-  if (t === 'sessions' && event.data) loadSessions(event.data)
-  else if (t === 'session_msgs' && event.data) {
+  const type = event.type
+  const scopedTypes = new Set([
+    'token', 'reasoning_token', 'tool_call', 'tool_result', 'error',
+    'done', 'complete', 'usage', 'skill_loaded', 'permission_request',
+    'promise_resolved', 'plan_start', 'plan', 'plan_nodes',
+    'plan_execute', 'dag_node_start', 'dag_node_complete',
+    'plan_complete', 'plan_error', 'system', 'btw_result',
+    'workspace_updated', 'ask_user_request', 'session_context_restored'
+  ])
+  if (
+    event.session_id != null &&
+    currentSessionId.value != null &&
+    scopedTypes.has(type) &&
+    Number(event.session_id) !== Number(currentSessionId.value)
+  ) return
+  if (type === 'sessions' && event.data) loadSessions(event.data)
+  else if (type === 'session_msgs' && event.data) {
     messages.value = convertDbMessages(event.data).map(m => ({ ...m, collapsed: true }))
     if (event.title) chatTitle.value = event.title
+    applySessionContext(event.session || {})
     postRender()
   }
-  else if (t === 'new_session_created') {
+  else if (type === 'new_session_created') {
     if (isNewSession.value) { currentSessionId.value = event.session_id; isNewSession.value = false }
     send('list_sessions', {})
     send('switch_session', { id: event.session_id })
     if (pendingMsg.value) { send('message', { data: pendingMsg.value, files: pendingFiles.value }); pendingMsg.value = ''; pendingFiles.value = [] }
   }
-  else if (t === 'token') handleToken(event.data || '')
-  else if (t === 'reasoning_token') handleReasoning(event.data || '')
-  else if (t === 'tool_call') handleToolCall(event)
-  else if (t === 'tool_result') handleToolResult(event)
-  else if (t === 'error') addMessage({ role: 'system', text: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display:inline;vertical-align:-3px"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg> ' + (event.data || '') })
-  else if (t === 'done') { /* streaming done, wait for complete */ }
-  else if (t === 'complete') { currentSkill.value = null; handleComplete() }
-  else if (t === 'usage') { usage.value = event.data }
-  else if (t === 'skill_loaded') { currentSkill.value = event.data?.name || null; addMessage({ role: 'notification', text: t('chat.skillLoaded', { name: event.data?.name || '' }) }) }
-  else if (t === 'permission_request') handlePermission(event)
-  else if (t === 'promise_resolved') addMessage({ role: 'notification', text: t('chat.asyncDone', { id: event.data?.id || '' }) })
-  else if (t === 'plan_start') { planText.value = ''; addMessage({ role: 'plan', _text: '', _open: true }); dagNodes.value = {}; dagActive.value = true; dagGoal.value = ''; showRightPanel.value = true }
-  else if (t === 'plan') { const last = messages.value[messages.value.length - 1]; if (last?.role === 'plan') { last._text += (event.data || ''); messages.value = [...messages.value] }; dagGoal.value = (event.data || '') }
-  else if (t === 'plan_nodes') { const nodes = event.data || []; const m = {}; nodes.forEach(n => { m[n.id] = { id: n.id, description: n.description, depends_on: n.depends_on || [], hint: n.hint, status: n.status || 'PENDING', result: '' } }); dagNodes.value = m }
-  else if (t === 'plan_execute') { /* DAG execution begins — nodes will follow */ }
-  else if (t === 'dag_node_start') { const d = event.data; dagNodes.value = { ...dagNodes.value, [d.id]: { id: d.id, description: d.description, hint: d.hint, depends_on: d.depends_on || [], status: 'IN_PROGRESS', result: '' } } }
-  else if (t === 'dag_node_complete') { const d = event.data; dagNodes.value = { ...dagNodes.value, [d.id]: { ...(dagNodes.value[d.id] || {}), status: 'COMPLETED', result: d.result } } }
-  else if (t === 'plan_complete') { const last = messages.value[messages.value.length - 1]; if (last?.role === 'plan') { last._open = false; messages.value = [...messages.value] }; dagActive.value = false }
-  else if (t === 'plan_error') { dagActive.value = false }
-  else if (t === 'skills') skillsList.value = event.data || []
-  else if (t === 'system') { addMessage({ role: 'system', text: event.data || '' }) }
-  else if (t === 'btw_result') { const d = event.data; btwResults.value = [{ question: d.question, answer: d.answer, ts: Date.now() }, ...btwResults.value]; showRightPanel.value = true }
-  else if (t === 'workspace_updated') {
+  else if (type === 'token') handleToken(event.data || '')
+  else if (type === 'reasoning_token') handleReasoning(event.data || '')
+  else if (type === 'tool_call') handleToolCall(event)
+  else if (type === 'tool_result') handleToolResult(event)
+  else if (type === 'error') addMessage({ role: 'system', text: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display:inline;vertical-align:-3px"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg> ' + (event.data || '') })
+  else if (type === 'done') { /* streaming done, wait for complete */ }
+  else if (type === 'complete') { handleComplete() }
+  else if (type === 'usage') { usage.value = event.data }
+  else if (type === 'skill_loaded') { currentSkill.value = event.data?.name || null; addMessage({ role: 'notification', text: t('chat.skillLoaded', { name: event.data?.name || '' }) }) }
+  else if (type === 'permission_request') handlePermission(event)
+  else if (type === 'promise_resolved') addMessage({ role: 'notification', text: t('chat.asyncDone', { id: event.data?.id || '' }) })
+  else if (type === 'plan_start') { planText.value = ''; addMessage({ role: 'plan', _text: '', _open: true }); dagNodes.value = {}; dagActive.value = true; dagGoal.value = ''; showRightPanel.value = true }
+  else if (type === 'plan') { const last = messages.value[messages.value.length - 1]; if (last?.role === 'plan') { last._text += (event.data || ''); messages.value = [...messages.value] }; dagGoal.value = (event.data || '') }
+  else if (type === 'plan_nodes') { const nodes = event.data || []; const m = {}; nodes.forEach(n => { m[n.id] = { id: n.id, description: n.description, depends_on: n.depends_on || [], hint: n.hint, status: n.status || 'PENDING', result: '' } }); dagNodes.value = m }
+  else if (type === 'plan_execute') { /* DAG execution begins — nodes will follow */ }
+  else if (type === 'dag_node_start') { const d = event.data; dagNodes.value = { ...dagNodes.value, [d.id]: { id: d.id, description: d.description, hint: d.hint, depends_on: d.depends_on || [], status: 'IN_PROGRESS', result: '' } } }
+  else if (type === 'dag_node_complete') { const d = event.data; dagNodes.value = { ...dagNodes.value, [d.id]: { ...(dagNodes.value[d.id] || {}), status: 'COMPLETED', result: d.result } } }
+  else if (type === 'plan_complete') { const last = messages.value[messages.value.length - 1]; if (last?.role === 'plan') { last._open = false; messages.value = [...messages.value] }; dagActive.value = false }
+  else if (type === 'plan_error') { dagActive.value = false }
+  else if (type === 'skills') skillsList.value = event.data || []
+  else if (type === 'system') { addMessage({ role: 'system', text: event.data || '' }) }
+  else if (type === 'btw_result') { const d = event.data; btwResults.value = [{ question: d.question, answer: d.answer, ts: Date.now() }, ...btwResults.value]; showRightPanel.value = true }
+  else if (type === 'session_context_restored') applySessionContext(event.data || {})
+  else if (type === 'workspace_updated') {
     const p = event.data?.path || ''
     workspacePath.value = p
     showRightPanel.value = true
@@ -121,7 +137,13 @@ function handleMessage(event) {
       workspaceAssets.value = []
     }
   }
-  else if (t === 'config_json') handleConfig(event.data || {})
+  else if (type === 'config_json') handleConfig(event.data || {})
+}
+
+function applySessionContext(session) {
+  workspacePath.value = session.workspace_path || ''
+  currentSkill.value = session.active_skill || null
+  if (!workspacePath.value) workspaceAssets.value = []
 }
 
 function convertDbMessages(dbMsgs) {
@@ -291,6 +313,9 @@ function switchSession(id) {
   messages.value = []
   chatTitle.value = sessions.value.find(s => s.id === id)?.title || t('chat.sessionLabel', { id })
   usage.value = null
+  currentSkill.value = null
+  workspacePath.value = ''
+  workspaceAssets.value = []
   send('switch_session', { id })
   send('get_session', { id })
 }
@@ -298,6 +323,9 @@ function newSession() {
   if (isProcessing.value) return
   currentSessionId.value = null; isNewSession.value = true
   messages.value = []; chatTitle.value = t('sidebar.newSession')
+  currentSkill.value = null
+  workspacePath.value = ''
+  workspaceAssets.value = []
 }
 function deleteSession(id) {
   send('delete_session', { id })
@@ -401,7 +429,10 @@ function handlePermission(event) {
   for (let i = messages.value.length - 1; i >= 0; i--) {
     const m = messages.value[i]
     if (m.role === 'tool' && m.tool_name === event.tool_name && m.status === 'running') {
-      m.needsApproval = true; messages.value = [...messages.value]; return
+      m.needsApproval = true
+      m.permissionSessionId = event.session_id ?? currentSessionId.value
+      messages.value = [...messages.value]
+      return
     }
   }
 }
@@ -415,7 +446,10 @@ function approveTool(idx, action) {
     : '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" style="display:inline;vertical-align:-2px"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg> ' + t('chat.permissionDenied')
   m._isApproved = isAllowed
   messages.value = [...messages.value]
-  send('permission_response', { action })
+  send('permission_response', {
+    action,
+    session_id: m.permissionSessionId ?? currentSessionId.value,
+  })
 }
 
 // ── ask_user 回答 ──

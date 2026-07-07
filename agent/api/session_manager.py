@@ -34,7 +34,9 @@ class Session:
 
         self.agent = Agent(tools=tools)
         self.agent.session_id = session_id
-        self.agent.emit = lambda e: broadcast_fn(e)
+        self.agent.emit = lambda e: SessionManager._emit_session_event(
+            broadcast_fn, self, e
+        )
 
         # Permission / ask_user — resolved via asyncio.Future from the WS handler
         self._perm_future: asyncio.Future | None = None
@@ -43,7 +45,7 @@ class Session:
         async def _on_confirm(tool_name: str, arguments: dict | str) -> bool | None:
             if tool_name == "ask_user":
                 return True
-            broadcast_fn({
+            SessionManager._emit_session_event(broadcast_fn, self, {
                 "type": "permission_request",
                 "tool_name": tool_name,
                 "arguments": arguments,
@@ -66,7 +68,7 @@ class Session:
                 self._perm_future = None
 
         async def _on_ask_user(prompt: str, password: bool = False, choices: list | None = None) -> str:
-            broadcast_fn({
+            SessionManager._emit_session_event(broadcast_fn, self, {
                 "type": "ask_user_request",
                 "prompt": prompt,
                 "choices": choices or [],
@@ -202,6 +204,7 @@ class SessionManager:
         self._sessions: dict[int, Session] = {}
         self._broadcast_queues: list[asyncio.Queue] = []
         self._session_lock = asyncio.Lock()
+        self.permission_mode = "safe"
 
     def init_light(self):
         """Fast init: native tools only, no MCP startup."""
@@ -262,12 +265,38 @@ class SessionManager:
         if q in self._broadcast_queues:
             self._broadcast_queues.remove(q)
 
+    @staticmethod
+    def _emit_session_event(broadcast_fn, session, event: dict):
+        """Broadcast an event with the originating session id attached."""
+        payload = dict(event)
+        payload.setdefault("session_id", session.session_id)
+        broadcast_fn(payload)
+
+    def apply_permission_mode(self, session) -> None:
+        """Apply the manager's current permission mode to a session."""
+        session.agent.permissions.switch_mode(self.permission_mode)
+
+    def switch_permission_mode(self, mode: str) -> None:
+        """Switch permission mode globally for existing and future sessions."""
+        self.permission_mode = mode
+        for session in self._sessions.values():
+            self.apply_permission_mode(session)
+
+    def resolve_permission_for_session(self, session_id: int, action: str) -> bool:
+        """Resolve a permission prompt for its originating session."""
+        session = self.get(session_id)
+        if session is None:
+            return False
+        session.resolve_permission(action)
+        return True
+
     def get_or_create(self, session_id: int) -> Session:
         if session_id not in self._sessions:
             self._sessions[session_id] = Session(
                 session_id, self.tools,
                 broadcast_fn=self._broadcast_event,
             )
+            self.apply_permission_mode(self._sessions[session_id])
         return self._sessions[session_id]
 
     def get(self, session_id: int) -> Session | None:

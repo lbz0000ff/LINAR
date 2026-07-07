@@ -1,8 +1,7 @@
 """Skill system — pluggable LLM-driven capabilities.
 
-A ``Skill`` is a named capability that replaces the agent's system prompt
-and tool set while it runs.  The agent's original state is saved on entry
-and restored on exit.
+A ``Skill`` is a named capability whose instructions can be injected into the
+conversation and whose bundled scripts can be registered as tools.
 
 Supports the Claude Code SKILL.md format with bundled scripts and
 ``skill.json`` metadata (OpenClaw marketplace format).
@@ -36,11 +35,14 @@ import sys
 import json
 import asyncio
 import importlib.util
+import logging
 from typing import Any
 
 import threading
 
 import yaml
+
+log = logging.getLogger(__name__)
 
 # Persistent event loop for async script tools.  Module-level singletons
 # (e.g. aiohttp ClientSession) retain loop affinity, so we keep one loop
@@ -127,17 +129,8 @@ class Skill:
     config_schema: dict | None = None        # from skill.json configSchema
     skill_dir: str = ""                      # absolute path to skill directory
 
-    def on_load(self, agent) -> None:
-        """Called when the skill gains control.
-
-        Saves the agent's current state, swaps in the skill's prompt
-        and tool set, and registers any bundled script tools.
-        """
-        self._saved_prompt = agent.llm.system_prompt
-        self._saved_tools = dict(agent.tools)  # shallow copy
-        agent._active_skill = self
-
-        # ── register bundled script tools ──
+    def _build_script_tools(self, agent) -> dict[str, Any]:
+        """Create script-backed tools bundled with this skill."""
         injected = {}
         if self.skill_file:
             script_tool = SkillScriptTool(
@@ -153,25 +146,66 @@ class Skill:
         if self.scripts_dir and os.path.isdir(self.scripts_dir):
             for fname in sorted(os.listdir(self.scripts_dir)):
                 if fname.endswith(".py"):
-                    st = SkillScriptTool(
-                        name=f"{self.name}_{fname[:-3]}",
+                    tool_name = f"{self.name}_{fname[:-3]}"
+                    injected[tool_name] = SkillScriptTool(
+                        name=tool_name,
                         description=f"Execute bundled script: {fname}",
                         script_path=os.path.join(self.scripts_dir, fname),
                         skill_dir=self.skill_dir,
                         shell=self.shell,
                         agent_ref=agent,
                     )
-                    injected[f"{self.name}_{fname[:-3]}"] = st
                 elif fname.endswith((".sh", ".ps1")):
-                    st = SkillScriptTool(
-                        name=f"{self.name}_{fname.rsplit('.', 1)[0]}",
+                    base = fname.rsplit(".", 1)[0]
+                    tool_name = f"{self.name}_{base}"
+                    injected[tool_name] = SkillScriptTool(
+                        name=tool_name,
                         description=f"Execute bundled script: {fname}",
                         script_path=os.path.join(self.scripts_dir, fname),
                         skill_dir=self.skill_dir,
                         shell=self.shell,
                         agent_ref=agent,
                     )
-                    injected[f"{self.name}_{fname.rsplit('.', 1)[0]}"] = st
+        return injected
+
+    def attach_runtime(self, agent) -> list[str]:
+        """Attach this skill's runtime tools without changing prompts/tools globally."""
+        current = getattr(agent, "_active_skill", None)
+        if current is not None and current is not self and hasattr(current, "detach_runtime"):
+            current.detach_runtime(agent)
+
+        injected = self._build_script_tools(agent)
+        if injected:
+            agent.tools = {**agent.tools, **injected}
+            agent.llm.tools = agent.tools
+        agent._active_skill = self
+        agent._skill_active = False
+        agent._active_skill_tool_names = set(injected.keys())
+        return list(injected.keys())
+
+    def detach_runtime(self, agent) -> None:
+        """Detach script tools previously attached by this skill."""
+        tool_names = set(getattr(agent, "_active_skill_tool_names", set()) or set())
+        if tool_names:
+            agent.tools = {k: v for k, v in agent.tools.items() if k not in tool_names}
+            agent.llm.tools = agent.tools
+        if getattr(agent, "_active_skill", None) is self:
+            agent._active_skill = None
+        agent._skill_active = False
+        agent._active_skill_tool_names = set()
+
+    def on_load(self, agent) -> None:
+        """Called when the skill gains control.
+
+        Saves the agent's current state, swaps in the skill's prompt
+        and tool set, and registers any bundled script tools.
+        """
+        self._saved_prompt = agent.llm.system_prompt
+        self._saved_tools = dict(agent.tools)  # shallow copy
+        agent._active_skill = self
+
+        # ── register bundled script tools ──
+        injected = self._build_script_tools(agent)
 
         # Merge injected tools before filtering
         if injected:
@@ -599,6 +633,72 @@ def _split_frontmatter(text: str) -> tuple[str | None, str]:
             body = stripped[end + 3:].strip()
             return (fm if fm else None, body)
     return (None, stripped.strip())
+
+
+def activate_skill_for_agent(
+    agent,
+    skill: Skill,
+    args: str = "",
+    *,
+    inject_instructions: bool = True,
+    persist: bool = True,
+    checkpoint: bool = True,
+    emit: bool = True,
+) -> str:
+    """Activate a skill as session context using the generic Skill semantics.
+
+    The skill instructions are injected as conversation messages, while bundled
+    scripts are attached as tools.  This intentionally does not modify the base
+    system prompt or filter the agent's existing tools.
+    """
+    skill.attach_runtime(agent)
+
+    header = f"[SYSTEM] Skill /{skill.name} is now active."
+    if args:
+        header += f" Args: {args}"
+
+    if inject_instructions:
+        content = skill.system_prompt
+        if not content:
+            return f"Skill '{skill.name}' loaded but has no instructions."
+        agent.chat_history.append({"role": "meta", "content": header})
+        agent.chat_history.append({"role": "user", "content": content})
+
+        if persist:
+            try:
+                import database as db
+                db.save_message(
+                    session_id=agent.session_id,
+                    role="meta",
+                    content=header,
+                    conversation_round=agent._conversation_round,
+                )
+                db.save_message(
+                    session_id=agent.session_id,
+                    role="user",
+                    content=content,
+                    conversation_round=agent._conversation_round,
+                )
+            except Exception:
+                log.warning("Failed to persist skill '%s' messages", skill.name, exc_info=True)
+
+    if checkpoint:
+        try:
+            import database as db
+            db.update_session_active_skill(agent.session_id, skill.name, args)
+        except Exception:
+            log.warning("Failed to checkpoint active skill '%s'", skill.name, exc_info=True)
+
+    if emit:
+        agent.emit({
+            "type": "skill_loaded",
+            "data": {"name": skill.name, "desc": skill.description, "args": args},
+        })
+
+    return (
+        f"Skill '/{skill.name}' loaded. Its instructions have been injected "
+        "above. Follow them to complete the task."
+    )
 
 
 # ---------------------------------------------------------------------------

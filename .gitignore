@@ -16,6 +16,7 @@ api_key.txt
 config.yaml
 .env
 logs/
+tmp/
 models/*
 reports
 research

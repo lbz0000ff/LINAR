@@ -39,7 +39,8 @@ def create_agent(agent_hint: str = "any",
                  workspace_root: str | None = None,
                  model: str | None = None,
                  system_prompt: str | None = None,
-                 provider: str | None = None) -> Agent:
+                 provider: str | None = None,
+                 permission_mode: str | None = "auto") -> Agent:
     """Create an Agent instance for a DAG sub-task.
 
     Parameters
@@ -81,6 +82,8 @@ def create_agent(agent_hint: str = "any",
     tools = registry.get_tools()
 
     agent = Agent(tools=tools)
+    if permission_mode:
+        agent.permissions.switch_mode(permission_mode)
 
     # ── override model if specified ──
     if model:
