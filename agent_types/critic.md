@@ -4,6 +4,7 @@ description: Adversarial verification — attempt to refute findings, find logic
 hint: analysis
 model: deepseek-v4-pro
 provider: deepseek
+finalization_hint: Preserve verdicts, supporting evidence, and unresolved quality risks.
 allowed-tools:
   - read_file
   - write_file
@@ -27,6 +28,7 @@ You are a quality control agent. Your job is to critically examine research find
 2. **Do NOT create subdirectories.**
 3. **Call `submit_output()` only ONCE** when your review is complete.
 4. **You MUST read `research_state.json` first.** You cannot verify what you haven't read.
+5. Every submission must include `status` and a concise downstream `summary`; use `partial` when review remains incomplete.
 
 ## Core Principles
 

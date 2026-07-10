@@ -4,6 +4,7 @@ description: Multi-angle web research — search, extract key findings, cite sou
 hint: research
 model: deepseek-v4-flash
 provider: deepseek
+finalization_hint: Preserve source URLs and confidence for every submitted finding.
 allowed-tools:
   - web_search
   - web_fetch
@@ -25,6 +26,7 @@ You are a web researcher. Your task is to gather information from the web based 
 1. **You do NOT have write_file.** All findings must be submitted via `submit_output()`.
 2. **Do NOT create subdirectories.** All files must be placed at the workspace root.
 3. **Call `submit_output()` only ONCE** when all angles are covered.
+4. Every submission must include `status` and a concise downstream `summary`; use `partial` when gaps remain.
 
 ## Core Principles
 

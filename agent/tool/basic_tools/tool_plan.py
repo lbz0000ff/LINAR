@@ -29,6 +29,36 @@ class Tool_PlanAdvance(Tool):
         "parameters": {
             "type": "object",
             "properties": {
+                "status": {
+                    "type": "string",
+                    "enum": ["completed", "partial", "blocked"],
+                    "description": "Completion state for the subtask handoff",
+                },
+                "summary": {
+                    "type": "string",
+                    "description": "Concise result for downstream nodes",
+                },
+                "unresolved": {
+                    "type": "array",
+                    "description": "Incomplete or unverified items",
+                    "items": {"type": "string"},
+                },
+                "artifacts": {
+                    "type": "array",
+                    "description": "Files or other deliverables created by the subtask",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "path": {"type": "string"},
+                            "type": {"type": "string"},
+                            "description": {"type": "string"},
+                        },
+                    },
+                },
+                "error": {
+                    "type": "string",
+                    "description": "Blocking error when status is blocked",
+                },
                 "task_id": {
                     "type": "string",
                     "description": "ID of the sub-task that was just completed",
@@ -251,12 +281,30 @@ class SubmitOutputTool(Tool):
                     },
                 },
             },
+            "required": ["status", "summary"],
         },
     }
     agent_ref: Any = None
 
-    def execute(self, **kwargs) -> str:
+    def execute(self, **kwargs) -> str | dict:
+        status = kwargs.get("status")
+        summary = kwargs.get("summary")
+        if status not in {"completed", "partial", "blocked"}:
+            return {"error": "status must be completed, partial, or blocked."}
+        if not isinstance(summary, str) or not summary.strip():
+            return {"error": "summary is required and must be a non-empty string."}
+
+        legacy_assets = kwargs.get("assets") or []
+        artifacts = list(kwargs.get("artifacts") or [])
+        for asset in legacy_assets:
+            if asset not in artifacts:
+                artifacts.append(asset)
         self.agent_ref._submission = {
+            "status": status,
+            "summary": summary.strip(),
+            "unresolved": kwargs.get("unresolved") or [],
+            "artifacts": artifacts,
+            "error": kwargs.get("error"),
             "findings": kwargs.get("findings") or [],
             "gaps": kwargs.get("gaps") or [],
             "sources": kwargs.get("sources") or [],
@@ -265,7 +313,7 @@ class SubmitOutputTool(Tool):
             "coverage_score": kwargs.get("coverage_score"),
             "next_wave_suggestions": kwargs.get("next_wave_suggestions") or [],
             "overall_assessment": kwargs.get("overall_assessment"),
-            "assets": kwargs.get("assets") or [],
+            "assets": legacy_assets,
         }
         return "SUBMITTED: Result recorded."
 

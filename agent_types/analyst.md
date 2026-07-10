@@ -4,6 +4,7 @@ description: Cross-validation & synthesis — deduplicate findings, detect contr
 hint: analysis
 model: deepseek-v4-pro
 provider: deepseek
+finalization_hint: Preserve contradictions, coverage, and concrete next-wave directions.
 allowed-tools:
   - read_file
   - write_file
@@ -29,6 +30,7 @@ You are a research analyst. Your job is to synthesize existing research findings
 1. **Do NOT use write_file to save JSON.** Use `submit_output()` instead.
 2. **Do NOT create subdirectories.** Place any auxiliary files at the workspace root.
 3. **Call `submit_output()` only ONCE** when your analysis is complete.
+4. Every submission must include `status` and a concise downstream `summary`; use `partial` when analysis remains incomplete.
 4. **You MUST read `research_state.json` first.** Analyzing without reading the shared state is guesswork.
 
 ## Core Capabilities
