@@ -12,6 +12,7 @@ import InputArea from './components/InputArea.vue'
 import SettingsPage from './components/SettingsPage.vue'
 import TitleBar from './components/TitleBar.vue'
 import RightPanel from './components/RightPanel.vue'
+import { applyDagNodeComplete, applyDagNodeStart, applySubagentEvent } from './utils/subagentTrace.js'
 import { useI18n } from 'vue-i18n'
 
 const { t } = useI18n()
@@ -81,6 +82,7 @@ function handleMessage(event) {
     'done', 'complete', 'usage', 'skill_loaded', 'permission_request',
     'promise_resolved', 'plan_start', 'plan', 'plan_nodes',
     'plan_execute', 'dag_node_start', 'dag_node_complete',
+    'subagent_event',
     'plan_complete', 'plan_error', 'system', 'btw_result',
     'workspace_updated', 'ask_user_request', 'session_context_restored'
   ])
@@ -118,8 +120,9 @@ function handleMessage(event) {
   else if (type === 'plan') { const last = messages.value[messages.value.length - 1]; if (last?.role === 'plan') { last._text += (event.data || ''); messages.value = [...messages.value] }; dagGoal.value = (event.data || '') }
   else if (type === 'plan_nodes') { const nodes = event.data || []; const m = {}; nodes.forEach(n => { m[n.id] = { id: n.id, description: n.description, depends_on: n.depends_on || [], hint: n.hint, status: n.status || 'PENDING', result: '' } }); dagNodes.value = m }
   else if (type === 'plan_execute') { /* DAG execution begins — nodes will follow */ }
-  else if (type === 'dag_node_start') { const d = event.data; dagNodes.value = { ...dagNodes.value, [d.id]: { id: d.id, description: d.description, hint: d.hint, depends_on: d.depends_on || [], status: 'IN_PROGRESS', result: '' } } }
-  else if (type === 'dag_node_complete') { const d = event.data; dagNodes.value = { ...dagNodes.value, [d.id]: { ...(dagNodes.value[d.id] || {}), status: 'COMPLETED', result: d.result } } }
+  else if (type === 'dag_node_start') { dagNodes.value = applyDagNodeStart(dagNodes.value, event.data || {}) }
+  else if (type === 'subagent_event') { dagNodes.value = applySubagentEvent(dagNodes.value, event.data || {}) }
+  else if (type === 'dag_node_complete') { dagNodes.value = applyDagNodeComplete(dagNodes.value, event.data || {}) }
   else if (type === 'plan_complete') { const last = messages.value[messages.value.length - 1]; if (last?.role === 'plan') { last._open = false; messages.value = [...messages.value] }; dagActive.value = false }
   else if (type === 'plan_error') { dagActive.value = false }
   else if (type === 'skills') skillsList.value = event.data || []
