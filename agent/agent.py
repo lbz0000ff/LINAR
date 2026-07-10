@@ -94,6 +94,11 @@ class Agent:
                 if hasattr(t, 'agent_ref'):
                     t.agent_ref = self
         self.max_llm_calls = cfg.get("max_turns", cfg.get("max_llm_calls", 80))
+        self.submission_required = False
+        self.submission_reserve = 2
+        self.wrap_up_calls = 2
+        self.finalization_hint = ""
+        self.budget_state = "ACTIVE"
         self.chat_cfg = cfg.get("chat_history", {})
         log.info("Agent initialized (model=%s, max_llm_calls=%s)", self.llm.model, self.max_llm_calls)
         self.max_history_chars = self.chat_cfg.get("max_chars", 10000)
@@ -1055,15 +1060,16 @@ class Agent:
         print(json.dumps(event, ensure_ascii=False), flush=True)
 
     async def process_with_llm(self):
-        # Fresh Event bound to this event loop (Python 3.10's
-        # _LoopBoundMixin raises "bound to a different event loop"
-        # when the same Event is awaited across asyncio.run() calls).
-        self.stop_event = asyncio.Event()
         self._interrupted = False
         if not self._skill_active and not getattr(self, '_custom_system_prompt', False):
             self.llm.system_prompt = self._build_prompt(self.cfg)
         llm_call = 0
+        wrap_up_emitted = False
+        submit_only_emitted = False
         while True:
+            if self.submission_required and getattr(self, "_submission", None) is not None:
+                self.budget_state = "SUBMITTED"
+                break
             if self.stop_event.is_set():
                 self._interrupted = True
                 self.chat_history.append({
@@ -1072,6 +1078,59 @@ class Agent:
                     'round': self._conversation_round,
                 })
                 break
+
+            remaining_calls = (
+                self.max_llm_calls - llm_call
+                if self.max_llm_calls > 0
+                else None
+            )
+            if self.submission_required and remaining_calls is not None:
+                if remaining_calls <= self.submission_reserve and not submit_only_emitted:
+                    self.budget_state = "SUBMIT_ONLY"
+                    submit_only_emitted = True
+                    prompt = (
+                        "The remaining execution budget is reserved for handoff.\n\n"
+                        "Do not start new work and do not call any tool except submit_output. "
+                        "Call submit_output now using the best validated results currently available.\n\n"
+                        "If the task is incomplete, submit it with status=\"partial\" and explicitly "
+                        "list the unresolved items. If progress is blocked, use status=\"blocked\" "
+                        "and explain the blocking condition.\n\n"
+                        "Do not merely describe what you would submit. You must call submit_output."
+                    )
+                    if self.finalization_hint:
+                        prompt += f"\n\nRole-specific handoff hint: {self.finalization_hint}"
+                    self.chat_history.append({"role": "meta", "content": prompt})
+                    submit_tool = self.tools.get("submit_output")
+                    self.llm.tools = {"submit_output": submit_tool} if submit_tool else {}
+                    self.emit({"type": "budget_state", "data": {
+                        "state": self.budget_state,
+                        "remaining_calls": remaining_calls,
+                        "reserved_calls": self.submission_reserve,
+                    }})
+                elif (
+                    remaining_calls <= self.submission_reserve + self.wrap_up_calls
+                    and not wrap_up_emitted
+                ):
+                    self.budget_state = "WRAP_UP"
+                    wrap_up_emitted = True
+                    prompt = (
+                        "You are approaching the execution budget for this subtask.\n\n"
+                        "Stop starting new branches of work. Finish only work that is already in "
+                        "progress, consolidate the valid results you have obtained, identify anything "
+                        "that remains unresolved, and prepare a structured handoff.\n\n"
+                        "A partial but accurate result is acceptable. Do not discard completed work "
+                        "because the full task could not be finished.\n\n"
+                        f"You have {remaining_calls} model calls remaining, including "
+                        f"{self.submission_reserve} calls reserved for submission."
+                    )
+                    if self.finalization_hint:
+                        prompt += f"\n\nRole-specific handoff hint: {self.finalization_hint}"
+                    self.chat_history.append({"role": "meta", "content": prompt})
+                    self.emit({"type": "budget_state", "data": {
+                        "state": self.budget_state,
+                        "remaining_calls": remaining_calls,
+                        "reserved_calls": self.submission_reserve,
+                    }})
             llm_call += 1
             if self.max_llm_calls > 0 and llm_call > self.max_llm_calls:
                 notice = (

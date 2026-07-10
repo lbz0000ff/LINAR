@@ -105,6 +105,11 @@ class SubagentTraceRelay:
     def snapshot_metrics(self) -> dict[str, Any]:
         return dict(self._metrics)
 
+    def record_submission(self, submission: dict[str, Any]) -> None:
+        """Update metrics after Tool_CreatePlan receives structured output."""
+        self._metrics["findings_submitted"] = len(submission.get("findings") or [])
+        self._metrics["sources_submitted"] = len(submission.get("sources") or [])
+
     def _normalize(self, event_type: str, event: dict) -> dict[str, Any]:
         if event_type == "start":
             self._metrics["llm_calls"] += 1

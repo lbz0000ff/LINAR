@@ -78,3 +78,16 @@ def test_relay_summarizes_tools_redacts_secrets_and_bounds_preview():
     assert relay.snapshot_metrics()["tool_calls"] == 2
     assert relay.snapshot_metrics()["search_calls"] == 1
     assert relay.snapshot_metrics()["fetch_calls"] == 1
+
+
+def test_relay_records_structured_submission_counts():
+    relay = SubagentTraceRelay(lambda _event: None, "node-a", "researcher")
+
+    relay.record_submission({
+        "findings": [{"text": "one"}, {"text": "two"}],
+        "sources": ["https://one.example", "https://two.example"],
+    })
+
+    metrics = relay.snapshot_metrics()
+    assert metrics["findings_submitted"] == 2
+    assert metrics["sources_submitted"] == 2

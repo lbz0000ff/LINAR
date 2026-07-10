@@ -76,6 +76,9 @@ def test_create_plan_uses_configured_sub_agent_llm_limit(monkeypatch):
     assert "DAG Execution Complete" in result
     assert len(created) == 1
     assert created[0].max_llm_calls == 27
+    assert created[0].submission_required is True
+    assert created[0].submission_reserve == 2
+    assert created[0].wrap_up_calls == 2
 
 
 def test_create_plan_forwards_node_scoped_subagent_events(monkeypatch):
@@ -105,6 +108,7 @@ def test_create_plan_forwards_node_scoped_subagent_events(monkeypatch):
         assert sequences == [1, 2, 3]
 
     completed = [event["data"] for event in parent.events if event["type"] == "dag_node_complete"]
-    assert {event["status"] for event in completed} == {"COMPLETED"}
+    assert {event["status"] for event in completed} == {"CHECKPOINTED"}
     assert all(event["metrics"]["search_calls"] == 1 for event in completed)
-    assert all(event["stop_reason"] == "completed" for event in completed)
+    assert all(event["stop_reason"] == "submission_missing" for event in completed)
+    assert all('"status": "checkpointed"' in event["result"] for event in completed)

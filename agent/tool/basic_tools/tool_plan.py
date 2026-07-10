@@ -420,6 +420,7 @@ class Tool_CreatePlan(Tool):
             meta = _sub_meta.get(node_id, {})
             agent_type = meta.get("agent")
             params = meta.get("params") or {}
+            defn = None
 
             # ── Resolve model: params.model > subagent definition > inherit ──
             sub_model = None
@@ -462,6 +463,10 @@ class Tool_CreatePlan(Tool):
                     user_msg += "\n\nPredecessor results:\n" + "\n".join(
                         f"  [{d}] {deps[d][:200]}" for d in deps
                     )
+                user_msg += (
+                    "\n\nCall submit_output once when the subtask is done. Include "
+                    "status, a concise summary, unresolved items, and any artifacts."
+                )
 
             sub_agent = create_agent(
                 agent_hint=hint, predecessor_results=deps,
@@ -477,6 +482,12 @@ class Tool_CreatePlan(Tool):
             submit_tool.agent_ref = sub_agent
             sub_agent.tools["submit_output"] = submit_tool
             sub_agent.llm.tools["submit_output"] = submit_tool
+            sub_agent.submission_required = True
+            sub_agent.submission_reserve = 2
+            sub_agent.wrap_up_calls = 2
+            sub_agent.finalization_hint = (
+                str(defn.get("finalization_hint") or "") if defn else ""
+            )
 
             # ── Apply allowed-tools filter if subagent defines one ──
             # submit_output is injected BEFORE the filter, so it survives
@@ -525,8 +536,13 @@ class Tool_CreatePlan(Tool):
             parsed: dict | None = None
             result: str | None = None
             submission = getattr(sub_agent, "_submission", None)
+            if isinstance(submission, dict):
+                trace_relay.record_submission(submission)
 
-            if agent_type and submission is not None:
+            if submission is None:
+                checkpoint = self._build_checkpoint(sub_agent, node_id)
+                result = json.dumps(checkpoint, ensure_ascii=False)
+            elif agent_type:
                 # Structured submission (via submit_output tool)
                 if isinstance(submission, dict):
                     result = json.dumps(submission, ensure_ascii=False)
@@ -538,26 +554,19 @@ class Tool_CreatePlan(Tool):
                     parsed = self._try_parse_json(result) if result else None
                     if parsed and workspace_root:
                         self._write_research_state(workspace_root, node_id, parsed)
-            elif agent_type:
-                result = self._collect_agent_output(sub_agent, agent_type)
-                parsed = self._try_parse_json(result) if result else None
-                if parsed and workspace_root:
-                    self._write_research_state(workspace_root, node_id, parsed)
             else:
-                # legacy path — no agent_type
-                if submission is not None:
-                    result = json.dumps(submission, ensure_ascii=False) if isinstance(submission, dict) else str(submission)
-                else:
-                    result = self._collect_agent_output(sub_agent, None)
+                result = json.dumps(submission, ensure_ascii=False) if isinstance(submission, dict) else str(submission)
 
             if result is None:
                 result = "[no output]"
 
+            terminal_status = "COMPLETED" if submission is not None else "CHECKPOINTED"
+            stop_reason = "completed" if submission is not None else "submission_missing"
             agent.emit({"type": "dag_node_complete", "data": {
                 "id": node_id,
                 "result": result[:200],
-                "status": "COMPLETED",
-                "stop_reason": "completed",
+                "status": terminal_status,
+                "stop_reason": stop_reason,
                 "duration_ms": round((time.perf_counter() - node_started) * 1000),
                 "metrics": trace_relay.snapshot_metrics(),
             }})
@@ -658,6 +667,27 @@ class Tool_CreatePlan(Tool):
                 if r.strip():
                     lines.append(r)
         return "\n".join(lines[-8:]) or "[no output]"
+
+    @staticmethod
+    def _build_checkpoint(sub_agent: Any, node_id: str) -> dict[str, Any]:
+        """Build a bounded, non-authoritative handoff after submission failure."""
+        recent_results: list[dict[str, str]] = []
+        for message in getattr(sub_agent, "chat_history", [])[-20:]:
+            if message.get("role") != "tool":
+                continue
+            recent_results.append({
+                "tool": str(message.get("name") or ""),
+                "preview": str(message.get("result") or "")[:500],
+            })
+        return {
+            "status": "checkpointed",
+            "node_id": node_id,
+            "summary": "Subagent ended without a structured submission.",
+            "unresolved": ["Structured submission was not produced."],
+            "artifacts": [],
+            "stop_reason": "submission_missing",
+            "recent_tool_results": recent_results[-8:],
+        }
 
     @staticmethod
     def _try_parse_json(text: str) -> dict | None:
