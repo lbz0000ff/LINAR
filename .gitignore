@@ -55,6 +55,7 @@ webui/*
 
 # Playwright MCP runtime data
 .playwright-mcp/
+.superpowers/
 
 # Python virtual environment
 .venv/
