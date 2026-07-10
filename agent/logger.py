@@ -19,6 +19,7 @@ Quick usage::
 import logging
 import logging.handlers
 import os
+import re
 import sys
 from typing import Optional
 
@@ -35,6 +36,30 @@ _LOG_FILE = os.path.join(_LOG_DIR, "linar.log")
 
 _initialized = False
 _console_handler: logging.Handler | None = None
+
+_SECRET_PATTERNS = [
+    re.compile(r"(?i)(authorization\s*[:=]\s*bearer\s+)([^\s,;\"']+)"),
+    re.compile(r"(?i)(bearer\s+)([A-Za-z0-9._~+/=-]{12,})"),
+    re.compile(r"(?i)((?:api[_-]?key|token|secret|password)\s*[:=]\s*)([^\s,;\"']+)"),
+    re.compile(r"(?i)((?:api[_-]?key|token|secret|password)['\"]?\s*:\s*['\"])([^'\"]+)"),
+]
+
+
+def redact_sensitive(text: object) -> str:
+    """Return *text* with common credentials replaced by a placeholder."""
+    redacted = str(text)
+    for pattern in _SECRET_PATTERNS:
+        redacted = pattern.sub(lambda match: match.group(1) + "[REDACTED]", redacted)
+    return redacted
+
+
+class SecretRedactionFilter(logging.Filter):
+    """Best-effort log filter for API keys and bearer tokens."""
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        record.msg = redact_sensitive(record.getMessage())
+        record.args = ()
+        return True
 
 
 def set_console_logging(enable: bool) -> bool:
@@ -100,6 +125,7 @@ def setup_logging(
         "[%(asctime)s] %(levelname)-7s %(name)s:%(lineno)d — %(message)s",
         datefmt="%Y-%m-%d %H:%M:%S",
     )
+    redaction_filter = SecretRedactionFilter()
 
     # ── file handler (rotating) ──────────────────────────────────
     log_path = log_file or _LOG_FILE
@@ -109,6 +135,7 @@ def setup_logging(
     )
     fh.setLevel(_level)
     fh.setFormatter(fmt)
+    fh.addFilter(redaction_filter)
     root.addHandler(fh)
 
     # ── console handler (stderr) ─────────────────────────────────
@@ -116,6 +143,7 @@ def setup_logging(
         _console_handler = logging.StreamHandler(sys.stderr)
         _console_handler.setLevel(_level)
         _console_handler.setFormatter(fmt)
+        _console_handler.addFilter(redaction_filter)
         root.addHandler(_console_handler)
 
     _initialized = True
