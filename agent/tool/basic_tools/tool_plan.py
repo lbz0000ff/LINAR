@@ -3,6 +3,7 @@
 import asyncio
 import json
 import os
+import time
 from typing import Any
 
 from plan import DAGNodeStatus
@@ -442,11 +443,18 @@ class Tool_CreatePlan(Tool):
                     sub_agent.tools = filtered
                     sub_agent.llm.tools = filtered
 
+            from orchestrator.subagent_trace import SubagentTraceRelay
+
+            trace_relay = SubagentTraceRelay(agent.emit, node_id, agent_type)
+            sub_agent.emit = trace_relay
+            node_started = time.perf_counter()
+
             deps_list = node.depends_on if node else []
             agent.emit({"type": "dag_node_start", "data": {
                 "id": node_id, "hint": hint, "description": description,
                 "depends_on": deps_list,
                 "agent": agent_type,
+                "metrics": trace_relay.snapshot_metrics(),
             }})
 
             # Run the sub-agent. Research-style predefined agents usually
@@ -498,7 +506,12 @@ class Tool_CreatePlan(Tool):
                 result = "[no output]"
 
             agent.emit({"type": "dag_node_complete", "data": {
-                "id": node_id, "result": result[:200],
+                "id": node_id,
+                "result": result[:200],
+                "status": "COMPLETED",
+                "stop_reason": "completed",
+                "duration_ms": round((time.perf_counter() - node_started) * 1000),
+                "metrics": trace_relay.snapshot_metrics(),
             }})
             agent_results[node_id] = result
             return result
