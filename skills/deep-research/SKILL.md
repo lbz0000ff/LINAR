@@ -76,7 +76,7 @@ You have three predefined subagent types. **All research tasks MUST use the `age
 }
 ```
 
-**Important**: do NOT set `agent_hint` when `agent` is set. The `description` field is still required (used as fallback display text). The `depends_on` list must reference the exact `id` values of predecessor sub-tasks.
+**Important**: do NOT set `agent_hint` when `agent` is set. For predefined agents, the DAG description defaults to `params.task_description`; use the optional top-level `description` only when a shorter GUI label is useful. The `depends_on` list must reference the exact `id` values of predecessor sub-tasks.
 
 ---
 

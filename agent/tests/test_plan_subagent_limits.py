@@ -260,6 +260,61 @@ def test_predefined_subagent_prompt_includes_current_date(monkeypatch):
     assert f"Current date: {date.today().isoformat()}" in created_kwargs[0]["system_prompt"]
 
 
+def test_create_plan_derives_predefined_node_description_from_task_params(monkeypatch):
+    created = []
+
+    def fake_create_agent(**_kwargs):
+        sub_agent = _FakeSubAgent()
+        created.append(sub_agent)
+        return sub_agent
+
+    monkeypatch.setattr("agent_factory.create_agent", fake_create_agent)
+    tool = Tool_CreatePlan()
+    parent = _FakeParentAgent()
+    tool.agent_ref = parent
+
+    result = asyncio.run(tool.execute(
+        goal="research",
+        sub_tasks=[{
+            "id": "angle_one",
+            "agent": "web_researcher",
+            "params": {
+                "task_description": "Research the first angle",
+                "angles": ["first"],
+            },
+            "depends_on": [],
+        }],
+    ))
+
+    assert "DAG Execution Complete" in result
+    started = [event["data"] for event in parent.events if event["type"] == "dag_node_start"]
+    assert started[0]["description"] == "Research the first angle"
+    assert "Research the first angle" in created[0].chat_history[0]["content"]
+
+
+def test_create_plan_returns_clear_error_when_node_has_no_description():
+    tool = Tool_CreatePlan()
+    tool.agent_ref = _FakeParentAgent()
+
+    result = asyncio.run(tool.execute(
+        goal="invalid",
+        sub_tasks=[{"id": "missing_text", "depends_on": []}],
+    ))
+
+    assert result == (
+        "Error: sub-task 'missing_text' requires description or "
+        "params.task_description."
+    )
+
+
+def test_create_plan_schema_does_not_require_duplicate_description():
+    required = Tool_CreatePlan().tool_schema["parameters"]["properties"][
+        "sub_tasks"
+    ]["items"]["required"]
+
+    assert required == ["id"]
+
+
 def test_research_state_caps_researcher_submission_and_assigns_stable_ids(tmp_path):
     findings = [
         {"text": f"Claim {index}", "source": f"https://example.com/{index}"}

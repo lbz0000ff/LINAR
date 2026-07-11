@@ -388,7 +388,13 @@ class Tool_CreatePlan(Tool):
                         "type": "object",
                         "properties": {
                             "id": {"type": "string", "description": "Unique task ID"},
-                            "description": {"type": "string", "description": "What this sub-task does"},
+                            "description": {
+                                "type": "string",
+                                "description": (
+                                    "Optional short DAG/GUI label. Defaults to "
+                                    "params.task_description for predefined agents."
+                                ),
+                            },
                             "depends_on": {
                                 "type": "array",
                                 "items": {"type": "string"},
@@ -407,7 +413,7 @@ class Tool_CreatePlan(Tool):
                                 "description": "Task parameters filled into the subagent's prompt template (e.g. task_description, angles). Only used when agent is set.",
                             },
                         },
-                        "required": ["id", "description"],
+                        "required": ["id"],
                     },
                 },
             },
@@ -433,15 +439,23 @@ class Tool_CreatePlan(Tool):
         plan = DAGPlan(goal=goal)
         _sub_meta: dict[str, dict] = {}   # node_id → extra fields
         for st in sub_tasks:
+            params = st.get("params") or {}
+            description = st.get("description") or params.get("task_description")
+            if not isinstance(description, str) or not description.strip():
+                return (
+                    f"Error: sub-task '{st.get('id', '<unknown>')}' requires "
+                    "description or params.task_description."
+                )
+            description = description.strip()
             plan.add_node(DAGNode(
-                id=st["id"], description=st["description"],
+                id=st["id"], description=description,
                 agent_hint=st.get("agent_hint", "any"),
                 depends_on=st.get("depends_on", []),
             ))
             # Stash agent/params for _run_node
             _sub_meta[st["id"]] = {
                 "agent": st.get("agent"),
-                "params": st.get("params"),
+                "params": params,
             }
 
         agent.emit({"type": "plan_start"})
