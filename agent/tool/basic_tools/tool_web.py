@@ -1,25 +1,25 @@
 from .tool import Tool
+import asyncio
+import hashlib
 import json
 import os
 import re
 import ipaddress
 import concurrent.futures
+from dataclasses import dataclass
+from datetime import datetime
+from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
 
 # ---------------------------------------------------------------------------
 # Configuration
 # ---------------------------------------------------------------------------
-DEFAULT_MAX_SIZE = 1024 * 1024       # 1 MB
-ABSOLUTE_MAX_SIZE = 5 * 1024 * 1024  # 5 MB hard cap
 DEFAULT_TIMEOUT = 30                 # seconds
-
-# Common text-based content types we accept
-TEXT_TYPES_PREFIXES = (
-    "text/", "application/json", "application/xml", "application/xhtml",
-    "application/javascript", "application/x-yaml", "application/x-sh",
-    "application/ld+json",
-)
+DEFAULT_MAX_CHARS = 30000
+ABSOLUTE_MAX_CHARS = 200000
+DEFAULT_ARTIFACT_DIR = "web_fetch"
+DEFAULT_BROWSER_CHANNEL = "chromium"
 
 # ---------------------------------------------------------------------------
 # SSRF Protection
@@ -81,149 +81,46 @@ def _check_ssrf(url_str):
     return (parsed, resolved)
 
 
-# ---------------------------------------------------------------------------
-# HTML to text conversion — trafilatura → html2text → stdlib fallback
-# ---------------------------------------------------------------------------
-def _html_to_text(html_content):
-    """Convert HTML to clean text using trafilatura (best), html2text, or stdlib."""
-    # Level 1: trafilatura — excellent article extraction
+@dataclass
+class _FetchedMarkdown:
+    markdown: str
+    title: str | None = None
+    status_code: int | None = None
+
+
+def _load_web_fetch_config() -> dict:
+    """Load web_fetch config from config.yaml, with safe defaults."""
     try:
-        import trafilatura
-        text = trafilatura.extract(
-            html_content,
-            include_links=True,
-            include_images=False,
-            include_tables=True,
-            output_format="markdown",
-            favor_precision=True,
-        )
-        if text and len(text.strip()) > 50:
-            return text.strip()
+        from config import load_config
+        cfg = load_config()
+        return cfg.get("web_fetch", {})
     except Exception:
-        pass
-
-    # Level 2: html2text — full HTML → Markdown
-    try:
-        import html2text
-        h = html2text.HTML2Text()
-        h.body_width = 0          # no line wrapping
-        h.ignore_links = False
-        h.ignore_images = True
-        h.ignore_emphasis = False
-        h.skip_internal_links = True
-        text = h.handle(html_content)
-        if text and len(text.strip()) > 0:
-            return text.strip()
-    except Exception:
-        pass
-
-    # Level 3: stdlib strip-tags regex fallback
-    text = re.sub(r"<[^>]+>", " ", html_content)
-    text = re.sub(r"\s+", " ", text)
-    return text.strip()[:10000]
+        return {}
 
 
-def _extract_title(html_content):
-    """Extract <title> from HTML (uses trafilatura if available, else regex)."""
-    try:
-        import trafilatura
-        meta = trafilatura.bare_extraction(
-            html_content,
-            include_links=False,
-            include_images=False,
-            include_tables=False,
-            favor_precision=True,
-            output_format="python",
-        )
-        if meta and meta.get("title"):
-            return meta["title"].strip()
-    except Exception:
-        pass
-    m = re.search(r"<title[^>]*>(.*?)</title>", html_content, re.IGNORECASE | re.DOTALL)
-    return m.group(1).strip() if m else None
+def _coerce_markdown(markdown: Any) -> str:
+    """Normalize Crawl4AI markdown objects across versions."""
+    if markdown is None:
+        return ""
+    if isinstance(markdown, str):
+        return markdown.strip()
+    for attr in ("fit_markdown", "raw_markdown", "markdown"):
+        value = getattr(markdown, attr, None)
+        if value:
+            return str(value).strip()
+    return str(markdown).strip()
 
 
-# ---------------------------------------------------------------------------
-# HTTP fetch with fallback chain
-# ---------------------------------------------------------------------------
-def _fetch_url(url_str, max_size, timeout):
-    """Fetch a URL and return (status, headers_dict, content_bytes) or raise."""
-    # Try httpx first, then requests, then urllib
-    try:
-        return _fetch_httpx(url_str, max_size, timeout)
-    except ImportError:
-        pass
-
-    try:
-        return _fetch_requests(url_str, max_size, timeout)
-    except ImportError:
-        pass
-
-    return _fetch_urllib(url_str, max_size, timeout)
+def _slug_from_url(url: str) -> str:
+    parsed = urlparse(url)
+    host = parsed.hostname or "page"
+    path = parsed.path.strip("/").replace("/", "-") or "index"
+    slug = re.sub(r"[^A-Za-z0-9._-]+", "-", f"{host}-{path}").strip("-")
+    return slug[:80] or "page"
 
 
-def _fetch_httpx(url_str, max_size, timeout):
-    import httpx
-    with httpx.Client(
-        follow_redirects=True,
-        timeout=httpx.Timeout(timeout),
-    ) as client:
-        resp = client.get(url_str, headers=_headers())
-        resp.raise_for_status()
-        content = resp.content[:max_size]
-        return resp.status_code, dict(resp.headers), content
-
-
-def _fetch_requests(url_str, max_size, timeout):
-    import requests
-    resp = requests.get(
-        url_str,
-        headers=_headers(),
-        timeout=timeout,
-        allow_redirects=True,
-        stream=True,
-    )
-    resp.raise_for_status()
-    # Stream to respect max_size
-    chunks = []
-    total = 0
-    for chunk in resp.iter_content(chunk_size=65536):
-        chunks.append(chunk)
-        total += len(chunk)
-        if total >= max_size:
-            break
-    content = b"".join(chunks)[:max_size]
-    return resp.status_code, dict(resp.headers), content
-
-
-def _fetch_urllib(url_str, max_size, timeout):
-    import urllib.request
-    req = urllib.request.Request(url_str, headers=_headers())
-    resp = urllib.request.urlopen(req, timeout=timeout)
-    content = resp.read(max_size)
-    return resp.status, dict(resp.headers), content
-
-
-def _headers():
-    return {
-        "User-Agent": (
-            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-            "AppleWebKit/537.36 (KHTML, like Gecko) "
-            "Chrome/125.0.0.0 Safari/537.36"
-        ),
-        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-        "Accept-Language": "en-US,en;q=0.5",
-    }
-
-
-# ---------------------------------------------------------------------------
-# Content-type helpers
-# ---------------------------------------------------------------------------
-def _is_text_content(content_type):
-    if not content_type:
-        return True  # assume text if no content-type header
-    ct = content_type.lower().split(";")[0].strip()
-    return ct.startswith(TEXT_TYPES_PREFIXES)
+def _line_count(text: str) -> int:
+    return text.count("\n") + (1 if text else 0)
 
 
 # ---------------------------------------------------------------------------
@@ -231,14 +128,14 @@ def _is_text_content(content_type):
 # ---------------------------------------------------------------------------
 class Tool_WebFetch(Tool):
     name: str = "web_fetch"
-    description: str = "Fetch content from a URL and return it as readable text."
+    description: str = "Fetch a URL with Crawl4AI and return readable markdown."
     stop_event: Any = None
+    agent_ref: Any = None
     tool_schema: dict = {
         "name": "web_fetch",
-        "description": "Fetches a URL and returns its content as plain text. "
-                       "HTML pages are automatically converted to text. "
-                       "Binary content (images, audio, video) is rejected. "
-                       "Internal/private IP addresses are blocked for security.",
+        "description": "Fetches a URL with Crawl4AI and returns clean markdown. "
+                       "Full markdown is saved to the filesystem when the output "
+                       "is too long, and the response tells you which file to read.",
         "parameters": {
             "type": "object",
             "properties": {
@@ -246,10 +143,10 @@ class Tool_WebFetch(Tool):
                     "type": "string",
                     "description": "The URL to fetch (must include http:// or https://)."
                 },
-                "max_size": {
+                "max_chars": {
                     "type": "integer",
-                    "description": f"Maximum response size in bytes. Default {DEFAULT_MAX_SIZE}, "
-                                   f"capped at {ABSOLUTE_MAX_SIZE}."
+                    "description": f"Maximum markdown preview length. Default {DEFAULT_MAX_CHARS}, "
+                                   f"capped at {ABSOLUTE_MAX_CHARS}. Full content is saved to a file."
                 },
                 "timeout": {
                     "type": "integer",
@@ -262,106 +159,122 @@ class Tool_WebFetch(Tool):
 
     def execute(self, *args, **kwargs):
         url = kwargs.get("url")
-        max_size = kwargs.get("max_size", DEFAULT_MAX_SIZE)
+        cfg = self._effective_config()
+        max_chars = kwargs.get("max_chars", cfg["max_chars"])
         timeout = kwargs.get("timeout", DEFAULT_TIMEOUT)
 
-        # ── validate URL & SSRF check ──
         checked = _check_ssrf(url)
         if isinstance(checked, dict):
             return checked
-        parsed, resolved_ip = checked
+        _parsed, resolved_ip = checked
 
-        # ── clamp size ──
-        max_size = min(max_size, ABSOLUTE_MAX_SIZE)
-
-        # ── fetch ──
         try:
-            status, headers, content = _fetch_url(url, max_size, timeout)
-        except ImportError as e:
-            return {"error": f"No HTTP library available: {e}. Install httpx or requests."}
+            fetched = asyncio.run(self._crawl_markdown(url, timeout))
+        except ImportError:
+            return {
+                "error": "web_fetch requires crawl4ai. Install dependencies and run crawl4ai-setup."
+            }
         except Exception as e:
-            msg = str(e)
-            # Clean up common verbose error messages
-            if hasattr(e, "response") and e.response is not None:
-                status_code = e.response.status_code
-                msg = f"HTTP {status_code}: {e.response.reason_phrase}"
-                if status_code == 404:
-                    msg += f" — The URL '{url}' was not found."
-                elif status_code == 403:
-                    msg += " — Access forbidden."
-                elif status_code == 429:
-                    msg += " — Rate limited. Try again later."
-            return {"error": f"Failed to fetch URL: {msg}"}
+            return {"error": f"Failed to fetch URL with Crawl4AI: {e}"}
 
-        # ── check HTTP status ──
-        if status >= 400:
-            return {
-                "error": f"HTTP {status} error for {url}.",
-                "status_code": status,
-            }
+        body = fetched.markdown.strip()
+        if not body:
+            return {"error": f"Crawl4AI returned no markdown for {url}."}
 
-        # ── check content type ──
-        content_type = headers.get("Content-Type") or headers.get("content-type", "")
-        if content_type and not _is_text_content(content_type):
-            return {
-                "error": f"Unsupported content type: '{content_type}'. "
-                         f"Only text-based content (HTML, JSON, XML, etc.) is supported.",
-                "content_type": content_type,
-                "status_code": status,
-            }
+        max_chars = min(max(int(max_chars), 1), ABSOLUTE_MAX_CHARS)
+        content_file = self._save_markdown(url, body, cfg["artifact_dir"])
+        truncated = len(body) > max_chars
+        preview = body[:max_chars] if truncated else body
 
-        # ── decode ──
-        # Try charset from Content-Type, then BOM, then fallback to utf-8
-        charset = None
-        if content_type:
-            m = re.search(r"charset=([\w-]+)", content_type, re.IGNORECASE)
-            if m:
-                charset = m.group(1)
+        message = (
+            f"web_fetch saved full markdown to {content_file}. "
+            f"Returned {len(preview):,} of {len(body):,} chars. "
+            f"Use read_file(\"{content_file}\") to read more."
+        )
 
-        if not charset:
-            # Check for BOM
-            if content[:3] == b"\xef\xbb\xbf":
-                charset = "utf-8-sig"
-            elif content[:2] == b"\xff\xfe":
-                charset = "utf-16-le"
-            elif content[:2] == b"\xfe\xff":
-                charset = "utf-16-be"
-
-        if charset:
-            try:
-                text = content.decode(charset, errors="replace")
-            except LookupError:
-                text = content.decode("utf-8", errors="replace")
-        else:
-            text = content.decode("utf-8", errors="replace")
-
-        # ── convert HTML to text ──
-        is_html = "html" in content_type.lower() if content_type else False
-        title = None
-        if is_html:
-            title = _extract_title(text)
-            body = _html_to_text(text)
-        else:
-            body = text.strip()
-
-        # ── build result ──
-        result = {
+        return {
             "url": url,
-            "status_code": status,
-            "content_type": content_type,
-            "content": body,
+            "status_code": fetched.status_code,
+            "title": fetched.title,
+            "content_type": "text/markdown",
+            "content": preview,
             "content_length": len(body),
+            "content_file": content_file,
             "resolved_ip": resolved_ip,
+            "backend": "crawl4ai",
+            "truncated": truncated,
+            "message": message,
+            "lines": _line_count(body),
         }
 
-        if title:
-            result["title"] = title
+    def _effective_config(self) -> dict:
+        cfg = _load_web_fetch_config()
+        agent_cfg = getattr(getattr(self, "agent_ref", None), "cfg", {})
+        if isinstance(agent_cfg, dict):
+            cfg = {**cfg, **(agent_cfg.get("web_fetch") or {})}
+        return {
+            "max_chars": int(cfg.get("max_chars", DEFAULT_MAX_CHARS)),
+            "artifact_dir": str(cfg.get("artifact_dir", DEFAULT_ARTIFACT_DIR)),
+            "browser_channel": str(cfg.get("browser_channel", DEFAULT_BROWSER_CHANNEL)),
+            "respect_robots_txt": bool(cfg.get("respect_robots_txt", True)),
+        }
 
-        # Warn if content was truncated
-        if len(content) >= max_size:
-            result["truncated"] = True
+    async def _crawl_markdown(self, url: str, timeout: int) -> _FetchedMarkdown:
+        os.environ.setdefault("CRAWL4_AI_BASE_DIRECTORY", str(self._crawl4ai_base_dir()))
+        from crawl4ai import AsyncWebCrawler, BrowserConfig, CacheMode, CrawlerRunConfig
 
-        return result
+        cfg = self._effective_config()
+        browser_channel = cfg["browser_channel"]
+        browser_config = BrowserConfig(
+            browser_type="chromium",
+            channel=browser_channel,
+            chrome_channel=browser_channel,
+            headless=True,
+            verbose=False,
+        )
+        run_config = CrawlerRunConfig(
+            cache_mode=CacheMode.BYPASS,
+            check_robots_txt=cfg["respect_robots_txt"],
+        )
+        async with AsyncWebCrawler(config=browser_config) as crawler:
+            result = await asyncio.wait_for(
+                crawler.arun(url=url, config=run_config),
+                timeout=timeout,
+            )
+
+        if getattr(result, "success", True) is False:
+            error = getattr(result, "error_message", "") or "crawl failed"
+            raise RuntimeError(error)
+
+        metadata = getattr(result, "metadata", None) or {}
+        title = metadata.get("title") or getattr(result, "title", None)
+        return _FetchedMarkdown(
+            markdown=_coerce_markdown(getattr(result, "markdown", "")),
+            title=title,
+            status_code=getattr(result, "status_code", None),
+        )
+
+    def _crawl4ai_base_dir(self) -> Path:
+        agent = getattr(self, "agent_ref", None)
+        project_root = getattr(agent, "_project_root", None)
+        if project_root:
+            return Path(project_root) / ".temp" / "crawl4ai"
+        return Path(__file__).resolve().parents[2] / ".temp" / "crawl4ai"
+
+    def _save_markdown(self, url: str, markdown: str, artifact_dir: str) -> str:
+        agent = getattr(self, "agent_ref", None)
+        workspace_root = getattr(agent, "_workspace_root", None)
+        if workspace_root:
+            base_dir = Path(workspace_root) / artifact_dir
+        else:
+            base_dir = Path(__file__).resolve().parents[2] / ".temp" / artifact_dir
+        base_dir.mkdir(parents=True, exist_ok=True)
+
+        digest = hashlib.md5(url.encode("utf-8")).hexdigest()[:8]
+        stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+        path = base_dir / f"{stamp}-{_slug_from_url(url)}-{digest}.md"
+        path.write_text(markdown, encoding="utf-8")
+        return str(path)
 
 
 # ---------------------------------------------------------------------------
