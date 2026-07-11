@@ -54,7 +54,8 @@ def test_relay_summarizes_tools_redacts_secrets_and_bounds_preview():
         "type": "tool_result",
         "name": "web_fetch",
         "id": "fetch-1",
-        "result": {
+        "result": "web_fetch saved full markdown to web_fetch/example.md",
+        "raw_result": {
             "url": "https://example.com",
             "status_code": 200,
             "content_length": 5000,
@@ -91,3 +92,31 @@ def test_relay_records_structured_submission_counts():
     metrics = relay.snapshot_metrics()
     assert metrics["findings_submitted"] == 2
     assert metrics["sources_submitted"] == 2
+
+
+def test_relay_redacts_common_header_and_oauth_secret_keys():
+    emitted = []
+    relay = SubagentTraceRelay(emitted.append, "node-a", "researcher")
+
+    relay({
+        "type": "tool_call",
+        "name": "mcp_call",
+        "id": "secret-1",
+        "arguments": '{"x-api-key":"sk-live-1234567890","client_secret":"oauth-secret-value","access_token":"access-token-value"}',
+    })
+
+    text = str(emitted)
+    assert "sk-live-1234567890" not in text
+    assert "oauth-secret-value" not in text
+    assert "access-token-value" not in text
+    assert text.count("[REDACTED]") >= 3
+
+
+def test_relay_redacts_bare_api_key_tool_results():
+    emitted = []
+    relay = SubagentTraceRelay(emitted.append, "node-a", "researcher")
+
+    relay({"type": "tool_result", "name": "mcp_call", "id": "bare", "result": "sk-live-1234567890"})
+
+    assert "sk-live-1234567890" not in str(emitted)
+    assert "[REDACTED]" in str(emitted)

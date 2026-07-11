@@ -1,9 +1,11 @@
 """Plan tools — track progress through decomposed sub-tasks."""
 
 import asyncio
+import copy
 import json
 import os
 import time
+from datetime import date
 from typing import Any
 
 from plan import DAGNodeStatus
@@ -29,36 +31,6 @@ class Tool_PlanAdvance(Tool):
         "parameters": {
             "type": "object",
             "properties": {
-                "status": {
-                    "type": "string",
-                    "enum": ["completed", "partial", "blocked"],
-                    "description": "Completion state for the subtask handoff",
-                },
-                "summary": {
-                    "type": "string",
-                    "description": "Concise result for downstream nodes",
-                },
-                "unresolved": {
-                    "type": "array",
-                    "description": "Incomplete or unverified items",
-                    "items": {"type": "string"},
-                },
-                "artifacts": {
-                    "type": "array",
-                    "description": "Files or other deliverables created by the subtask",
-                    "items": {
-                        "type": "object",
-                        "properties": {
-                            "path": {"type": "string"},
-                            "type": {"type": "string"},
-                            "description": {"type": "string"},
-                        },
-                    },
-                },
-                "error": {
-                    "type": "string",
-                    "description": "Blocking error when status is blocked",
-                },
                 "task_id": {
                     "type": "string",
                     "description": "ID of the sub-task that was just completed",
@@ -186,6 +158,36 @@ class SubmitOutputTool(Tool):
         "parameters": {
             "type": "object",
             "properties": {
+                "status": {
+                    "type": "string",
+                    "enum": ["completed", "partial", "blocked"],
+                    "description": "Completion state for the subtask handoff",
+                },
+                "summary": {
+                    "type": "string",
+                    "description": "Concise result for downstream nodes",
+                },
+                "unresolved": {
+                    "type": "array",
+                    "description": "Incomplete or unverified items",
+                    "items": {"type": "string"},
+                },
+                "artifacts": {
+                    "type": "array",
+                    "description": "Files or other deliverables created by the subtask",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "path": {"type": "string"},
+                            "type": {"type": "string"},
+                            "description": {"type": "string"},
+                        },
+                    },
+                },
+                "error": {
+                    "type": "string",
+                    "description": "Blocking error when status is blocked",
+                },
                 "findings": {
                     "type": "array",
                     "description": "Research findings (for web_researcher)",
@@ -284,7 +286,49 @@ class SubmitOutputTool(Tool):
             "required": ["status", "summary"],
         },
     }
+    agent_type: str | None = None
     agent_ref: Any = None
+
+    _COMMON_FIELDS = {"status", "summary", "unresolved", "artifacts", "error"}
+    _ROLE_FIELDS = {
+        "web_researcher": {"findings", "gaps"},
+        "analyst": {
+            "contradictions", "critical_gaps", "coverage_score",
+            "next_wave_suggestions", "key_evidence_ids", "remove_evidence_ids",
+        },
+        "critic": {
+            "verdicts", "critical_gaps", "overall_assessment",
+            "remove_evidence_ids",
+        },
+    }
+    _EXTRA_FIELD_SCHEMAS = {
+        "critical_gaps": {
+            "type": "array",
+            "description": "Only evidence gaps that materially affect the final answer",
+            "items": {"type": "string"},
+        },
+        "key_evidence_ids": {
+            "type": "array",
+            "description": "Evidence IDs selected as the compact working set",
+            "items": {"type": "string"},
+        },
+        "remove_evidence_ids": {
+            "type": "array",
+            "description": "Obsolete or superseded evidence IDs to remove from the working set",
+            "items": {"type": "string"},
+        },
+    }
+
+    def model_post_init(self, __context: Any) -> None:
+        """Expose only the handoff fields relevant to this subagent role."""
+        schema = copy.deepcopy(type(self).model_fields["tool_schema"].default)
+        properties = schema["parameters"]["properties"]
+        properties.update(copy.deepcopy(self._EXTRA_FIELD_SCHEMAS))
+        allowed = self._COMMON_FIELDS | self._ROLE_FIELDS.get(self.agent_type, set())
+        schema["parameters"]["properties"] = {
+            key: value for key, value in properties.items() if key in allowed
+        }
+        self.tool_schema = schema
 
     def execute(self, **kwargs) -> str | dict:
         status = kwargs.get("status")
@@ -299,22 +343,21 @@ class SubmitOutputTool(Tool):
         for asset in legacy_assets:
             if asset not in artifacts:
                 artifacts.append(asset)
-        self.agent_ref._submission = {
+        submission = {
             "status": status,
             "summary": summary.strip(),
             "unresolved": kwargs.get("unresolved") or [],
             "artifacts": artifacts,
             "error": kwargs.get("error"),
-            "findings": kwargs.get("findings") or [],
-            "gaps": kwargs.get("gaps") or [],
-            "sources": kwargs.get("sources") or [],
-            "contradictions": kwargs.get("contradictions") or [],
-            "verdicts": kwargs.get("verdicts") or [],
-            "coverage_score": kwargs.get("coverage_score"),
-            "next_wave_suggestions": kwargs.get("next_wave_suggestions") or [],
-            "overall_assessment": kwargs.get("overall_assessment"),
-            "assets": legacy_assets,
         }
+        allowed = self._ROLE_FIELDS.get(self.agent_type, set())
+        for key in allowed:
+            if key in kwargs:
+                submission[key] = kwargs[key]
+        # Keep accepting the old assets alias without advertising it to models.
+        if legacy_assets:
+            submission["assets"] = artifacts
+        self.agent_ref._submission = submission
         return "SUBMITTED: Result recorded."
 
 
@@ -439,6 +482,7 @@ class Tool_CreatePlan(Tool):
 
                 # Build system prompt from template
                 rendered = render_prompt(defn, params)
+                rendered = f"{rendered}\n\nCurrent date: {date.today().isoformat()}"
                 sub_model = defn.get("model")
                 sub_provider = defn.get("provider")
 
@@ -450,7 +494,7 @@ class Tool_CreatePlan(Tool):
                 )
                 if deps:
                     user_msg += "\n\n## Predecessor Results\n" + "\n".join(
-                        f"  [{d}] {deps[d][:300]}" for d in deps
+                        f"  [{d}] {self._format_predecessor_context(deps[d])}" for d in deps
                     )
             else:
                 # ── Legacy path: free-form description ──
@@ -461,7 +505,7 @@ class Tool_CreatePlan(Tool):
                     user_msg = f"Your role: {hint}\n{description}"
                 if deps:
                     user_msg += "\n\nPredecessor results:\n" + "\n".join(
-                        f"  [{d}] {deps[d][:200]}" for d in deps
+                        f"  [{d}] {self._format_predecessor_context(deps[d])}" for d in deps
                     )
                 user_msg += (
                     "\n\nCall submit_output once when the subtask is done. Include "
@@ -478,11 +522,26 @@ class Tool_CreatePlan(Tool):
             )
 
             # ── Inject submit_output tool (all DAG sub-tasks) ──
-            submit_tool = SubmitOutputTool()
+            submit_tool = SubmitOutputTool(agent_type=agent_type)
             submit_tool.agent_ref = sub_agent
             sub_agent.tools["submit_output"] = submit_tool
             sub_agent.llm.tools["submit_output"] = submit_tool
-            sub_agent.submission_required = True
+            if agent_type in {"analyst", "critic"}:
+                from orchestrator.research_state_access import (
+                    ResearchStateFileGuard,
+                    ResearchStateReader,
+                )
+
+                state_reader = ResearchStateReader(
+                    workspace_root=workspace_root or os.getcwd(),
+                    agent_type=agent_type,
+                )
+                sub_agent.tools[state_reader.name] = state_reader
+                if "read_file" in sub_agent.tools:
+                    sub_agent.tools["read_file"] = ResearchStateFileGuard(
+                        sub_agent.tools["read_file"],
+                    )
+            sub_agent.trace_raw_tool_results = True
             sub_agent.submission_reserve = 2
             sub_agent.wrap_up_calls = 2
             sub_agent.finalization_hint = (
@@ -497,10 +556,34 @@ class Tool_CreatePlan(Tool):
                 if at is not None:
                     filtered = {}
                     for k, v in sub_agent.tools.items():
-                        if k.startswith("mcp_") or k in at:
+                        if (k.startswith("mcp_") and agent_type != "analyst") or k in at:
                             filtered[k] = v
                     sub_agent.tools = filtered
                     sub_agent.llm.tools = filtered
+
+            cfg = getattr(agent, "cfg", {}) or {}
+            if agent_type == "web_researcher":
+                from orchestrator.research_tool_budget import ResearchToolBudget
+
+                research_limits = {
+                    "web_search": cfg.get("research_sub_agent_max_web_search_calls", 10),
+                    "web_fetch": cfg.get("research_sub_agent_max_web_fetch_calls", 15),
+                }
+                for tool_name, limit in research_limits.items():
+                    if tool_name in sub_agent.tools:
+                        sub_agent.tools[tool_name] = ResearchToolBudget(
+                            sub_agent.tools[tool_name], limit,
+                        )
+                sub_agent.llm.tools = sub_agent.tools
+                user_msg += (
+                    "\n\n## Retrieval Budget\n"
+                    f"- web_search: {research_limits['web_search']} calls maximum\n"
+                    f"- web_fetch: {research_limits['web_fetch']} calls maximum\n"
+                    "These are hard limits. Stop expanding retrieval before they are exhausted "
+                    "and reserve time to synthesize and call submit_output."
+                )
+
+            sub_agent.submission_required = "submit_output" in sub_agent.tools
 
             from orchestrator.subagent_trace import SubagentTraceRelay
 
@@ -508,17 +591,7 @@ class Tool_CreatePlan(Tool):
             sub_agent.emit = trace_relay
             node_started = time.perf_counter()
 
-            deps_list = node.depends_on if node else []
-            agent.emit({"type": "dag_node_start", "data": {
-                "id": node_id, "hint": hint, "description": description,
-                "depends_on": deps_list,
-                "agent": agent_type,
-                "metrics": trace_relay.snapshot_metrics(),
-            }})
-
-            # Run the sub-agent. Research-style predefined agents usually
-            # need more tool/result/follow-up turns than generic subtasks.
-            cfg = getattr(agent, "cfg", {}) or {}
+            # Research-style predefined agents usually need more rounds.
             default_limit = cfg.get("sub_agent_max_llm_calls", 20)
             if agent_type:
                 default_limit = cfg.get(
@@ -526,8 +599,33 @@ class Tool_CreatePlan(Tool):
                     max(default_limit, 40),
                 )
             sub_agent.max_llm_calls = default_limit
+
+            deps_list = node.depends_on if node else []
+            agent.emit({"type": "dag_node_start", "data": {
+                "id": node_id, "hint": hint, "description": description,
+                "depends_on": deps_list,
+                "agent": agent_type,
+                "metrics": trace_relay.snapshot_metrics(),
+                "max_llm_calls": default_limit,
+                "submission_reserve": sub_agent.submission_reserve,
+                "wrap_up_calls": sub_agent.wrap_up_calls,
+                "started_at": time.time(),
+            }})
             await sub_agent.add_user_message(user_msg)
-            await sub_agent.process_with_llm()
+            try:
+                await sub_agent.process_with_llm()
+            except Exception as exc:
+                from logger import redact_sensitive
+                error = redact_sensitive(exc)
+                agent.emit({"type": "dag_node_complete", "data": {
+                    "id": node_id,
+                    "result": error[:200],
+                    "status": "FAILED",
+                    "stop_reason": "exception",
+                    "duration_ms": round((time.perf_counter() - node_started) * 1000),
+                    "metrics": trace_relay.snapshot_metrics(),
+                }})
+                raise RuntimeError(error) from exc
 
             # ── Collect results (three-tier fallback) ──
             #   1. submit_output tool → _submission
@@ -536,6 +634,7 @@ class Tool_CreatePlan(Tool):
             parsed: dict | None = None
             result: str | None = None
             submission = getattr(sub_agent, "_submission", None)
+            interrupted = bool(getattr(sub_agent, "_interrupted", False))
             if isinstance(submission, dict):
                 trace_relay.record_submission(submission)
 
@@ -547,21 +646,32 @@ class Tool_CreatePlan(Tool):
                 if isinstance(submission, dict):
                     result = json.dumps(submission, ensure_ascii=False)
                     if workspace_root:
-                        self._write_research_state(workspace_root, node_id, submission)
+                        self._write_research_state(
+                            workspace_root, node_id, submission, agent_type=agent_type,
+                        )
                 else:
                     # String fallback (e.g. legacy subagent used submit_output with string)
                     result = str(submission)
                     parsed = self._try_parse_json(result) if result else None
                     if parsed and workspace_root:
-                        self._write_research_state(workspace_root, node_id, parsed)
+                        self._write_research_state(
+                            workspace_root, node_id, parsed, agent_type=agent_type,
+                        )
             else:
                 result = json.dumps(submission, ensure_ascii=False) if isinstance(submission, dict) else str(submission)
 
             if result is None:
                 result = "[no output]"
 
-            terminal_status = "COMPLETED" if submission is not None else "CHECKPOINTED"
-            stop_reason = "completed" if submission is not None else "submission_missing"
+            if submission is not None:
+                terminal_status = "SUBMITTED"
+                stop_reason = "completed"
+            elif interrupted:
+                terminal_status = "STOPPED"
+                stop_reason = "interrupted"
+            else:
+                terminal_status = "CHECKPOINTED"
+                stop_reason = "submission_missing"
             agent.emit({"type": "dag_node_complete", "data": {
                 "id": node_id,
                 "result": result[:200],
@@ -570,6 +680,8 @@ class Tool_CreatePlan(Tool):
                 "duration_ms": round((time.perf_counter() - node_started) * 1000),
                 "metrics": trace_relay.snapshot_metrics(),
             }})
+            if submission is None:
+                raise RuntimeError(result)
             agent_results[node_id] = result
             return result
 
@@ -669,22 +781,51 @@ class Tool_CreatePlan(Tool):
         return "\n".join(lines[-8:]) or "[no output]"
 
     @staticmethod
+    def _format_predecessor_context(result: str) -> str:
+        """Preserve the generic handoff envelope without large role extensions."""
+        try:
+            parsed = json.loads(result)
+        except (json.JSONDecodeError, TypeError):
+            return str(result)[:4000]
+        if not isinstance(parsed, dict) or "status" not in parsed:
+            return str(result)[:4000]
+        generic_keys = ("status", "summary", "unresolved", "artifacts", "error")
+        generic = {key: parsed.get(key) for key in generic_keys if key in parsed}
+        return json.dumps(generic, ensure_ascii=False)
+
+    @staticmethod
     def _build_checkpoint(sub_agent: Any, node_id: str) -> dict[str, Any]:
         """Build a bounded, non-authoritative handoff after submission failure."""
+        from logger import redact_sensitive
+
         recent_results: list[dict[str, str]] = []
+        artifacts: list[dict[str, str]] = []
+        last_agent_output = ""
         for message in getattr(sub_agent, "chat_history", [])[-20:]:
+            if message.get("role") == "agent" and message.get("content"):
+                last_agent_output = redact_sensitive(message.get("content"))[:2000]
             if message.get("role") != "tool":
                 continue
+            try:
+                arguments = json.loads(message.get("arguments") or "{}")
+            except (json.JSONDecodeError, TypeError):
+                arguments = {}
+            path = arguments.get("file_path") or arguments.get("path")
+            if path:
+                artifact = {"path": redact_sensitive(path), "type": "file"}
+                if artifact not in artifacts:
+                    artifacts.append(artifact)
             recent_results.append({
                 "tool": str(message.get("name") or ""),
-                "preview": str(message.get("result") or "")[:500],
+                "preview": redact_sensitive(message.get("result") or "")[:500],
             })
         return {
             "status": "checkpointed",
             "node_id": node_id,
             "summary": "Subagent ended without a structured submission.",
             "unresolved": ["Structured submission was not produced."],
-            "artifacts": [],
+            "artifacts": artifacts,
+            "last_agent_output": last_agent_output,
             "stop_reason": "submission_missing",
             "recent_tool_results": recent_results[-8:],
         }
@@ -716,65 +857,132 @@ class Tool_CreatePlan(Tool):
             return None
 
     @staticmethod
-    def _write_research_state(workspace_root: str, node_id: str,
-                              parsed: dict) -> None:
-        """Append structured findings to ``research_state.json``."""
-        import os
-
+    def _write_research_state(
+        workspace_root: str,
+        node_id: str,
+        parsed: dict,
+        agent_type: str | None = None,
+    ) -> None:
+        """Update the compact, mutable Deep Research working set."""
         state_path = os.path.join(workspace_root, "research_state.json")
-        state: dict = {"findings": [], "contradictions": [], "gaps": [],
-                        "sources": [], "assets": [], "meta": {}}
+        state: dict = {
+            "evidence": {},
+            "synthesis": {
+                "summary": "",
+                "key_evidence_ids": [],
+                "contradictions": [],
+                "critical_gaps": [],
+                "candidate_gaps": [],
+                "next_wave_suggestions": [],
+            },
+            "assets": [],
+            "meta": {"revision": 0, "last_analyzed_revision": 0},
+        }
 
         if os.path.isfile(state_path):
             try:
                 with open(state_path, "r", encoding="utf-8") as f:
                     existing = json.load(f)
-                state.update(existing)
+                if "evidence" in existing:
+                    state.update(existing)
+                    state["synthesis"] = {
+                        **state["synthesis"], **existing.get("synthesis", {}),
+                    }
+                    state["meta"] = {**state["meta"], **existing.get("meta", {})}
+                else:
+                    # One-time migration from the former append-only layout.
+                    for index, finding in enumerate(existing.get("findings", []), 1):
+                        if not isinstance(finding, dict):
+                            continue
+                        legacy_node = finding.get("node") or "legacy"
+                        evidence_id = f"{legacy_node}:e{index:02d}"
+                        state["evidence"][evidence_id] = {
+                            **finding, "id": evidence_id, "revision": 0,
+                        }
+                    state["synthesis"].update({
+                        "contradictions": existing.get("contradictions", []),
+                        "candidate_gaps": existing.get("gaps", []),
+                    })
+                    legacy_meta = existing.get("meta", {})
+                    for key in (
+                        "coverage_score", "next_wave_suggestions",
+                        "overall_assessment", "critical_gaps", "verdicts",
+                    ):
+                        if key in legacy_meta:
+                            state["synthesis"][key] = legacy_meta[key]
+                    state["assets"] = existing.get("assets", [])
             except (OSError, json.JSONDecodeError):
                 pass
 
-        # Merge findings (dedup by text + source)
-        existing = {(f.get("text", ""), f.get("source", ""))
-                     for f in state["findings"]}
-        for f in parsed.get("findings", []):
-            if isinstance(f, dict):
-                key = (f.get("text", ""), f.get("source", ""))
-                if key not in existing:
-                    existing.add(key)
-                    f.setdefault("node", node_id)
-                    state["findings"].append(f)
+        evidence = state.setdefault("evidence", {})
+        synthesis = state.setdefault("synthesis", {})
+        meta = state.setdefault("meta", {})
+        revision = int(meta.get("revision", 0))
 
-        # Merge contradictions
-        for c in parsed.get("contradictions", []):
-            if isinstance(c, dict):
-                state["contradictions"].append(c)
+        if agent_type == "web_researcher":
+            revision += 1
+            prefix = f"{node_id}:e"
+            for evidence_id in [key for key in evidence if key.startswith(prefix)]:
+                del evidence[evidence_id]
+            for index, finding in enumerate(parsed.get("findings", [])[:12], 1):
+                if not isinstance(finding, dict):
+                    continue
+                evidence_id = f"{node_id}:e{index:02d}"
+                evidence[evidence_id] = {
+                    **finding,
+                    "id": evidence_id,
+                    "node": node_id,
+                    "revision": revision,
+                }
+            candidate_gaps = synthesis.setdefault("candidate_gaps", [])
+            for gap in parsed.get("gaps", [])[:3]:
+                text = gap if isinstance(gap, str) else gap.get("description", "")
+                if text and text not in candidate_gaps:
+                    candidate_gaps.append(text)
 
-        # Merge gaps
-        for g in parsed.get("gaps", []):
-            if isinstance(g, str):
-                state["gaps"].append(g)
-            elif isinstance(g, dict):
-                state["gaps"].append(g.get("description", str(g)))
+        elif agent_type in {"analyst", "critic"}:
+            removed = False
+            for evidence_id in parsed.get("remove_evidence_ids", []):
+                if evidence.pop(evidence_id, None) is not None:
+                    removed = True
+            if removed:
+                revision += 1
 
-        # Merge sources
-        for s in parsed.get("sources", []):
-            if s not in state["sources"]:
-                state["sources"].append(s)
+            synthesis["summary"] = parsed.get("summary", synthesis.get("summary", ""))
+            role_fields = {
+                "analyst": (
+                    "contradictions", "critical_gaps", "coverage_score",
+                    "next_wave_suggestions", "key_evidence_ids",
+                ),
+                "critic": (
+                    "verdicts", "critical_gaps", "overall_assessment",
+                ),
+            }
+            for key in role_fields[agent_type]:
+                if key in parsed:
+                    synthesis[key] = parsed[key]
+            if agent_type == "analyst":
+                synthesis["key_evidence"] = [
+                    evidence[evidence_id]
+                    for evidence_id in synthesis.get("key_evidence_ids", [])
+                    if evidence_id in evidence
+                ]
+                synthesis["candidate_gaps"] = []
+                meta["last_analyzed_revision"] = revision
 
-        # Merge assets (auxiliary files: diagrams, screenshots, charts)
-        state.setdefault("assets", [])
-        for a in parsed.get("assets", []):
-            if isinstance(a, dict) and a not in state["assets"]:
-                a.setdefault("node", node_id)
-                state["assets"].append(a)
+        meta["revision"] = revision
 
-        # Merge non-list top-level keys as meta
-        for key in ("coverage_score", "next_wave_suggestions",
-                     "overall_assessment", "critical_gaps", "verdicts",
-                     "merged_findings"):
-            if key in parsed and key not in ("findings", "contradictions",
-                                               "gaps", "sources"):
-                state["meta"][key] = parsed[key]
+        for artifact in parsed.get("artifacts", []):
+            if isinstance(artifact, dict) and artifact not in state["assets"]:
+                state["assets"].append({**artifact, "node": node_id})
+
+        # Keep the compact downstream view first for bounded line-based reads.
+        state = {
+            "synthesis": synthesis,
+            "evidence": evidence,
+            "assets": state.get("assets", []),
+            "meta": meta,
+        }
 
         try:
             with open(state_path, "w", encoding="utf-8") as f:

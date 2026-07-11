@@ -41,6 +41,8 @@ locale: en                      # "zh" | "en" — default UI language
 max_turns: 80                    # 0 = unlimited; N = max LLM rounds
 sub_agent_max_llm_calls: 20       # generic create_plan sub-task rounds
 research_sub_agent_max_llm_calls: 40  # deep-research DAG sub-task rounds
+research_sub_agent_max_web_search_calls: 10  # hard per-web-researcher search budget
+research_sub_agent_max_web_fetch_calls: 15   # hard per-web-researcher fetch budget
 show_reasoning: full              # "hide" | "full"
 show_tool_calls: detailed       # "hide" | "show_tools" | "detailed"
 

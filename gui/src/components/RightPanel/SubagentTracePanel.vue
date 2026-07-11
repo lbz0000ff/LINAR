@@ -16,10 +16,15 @@ watch(tracedNodes, nodes => {
   else if (!nodes.some(node => node.id === selectedId.value)) selectedId.value = nodes[0].id
 }, { immediate: true })
 
+function eventKey(sequence) {
+  return `${selectedNode.value?.id || ''}:${sequence}`
+}
+
 function toggleEvent(sequence) {
+  const key = eventKey(sequence)
   const next = new Set(expanded.value)
-  if (next.has(sequence)) next.delete(sequence)
-  else next.add(sequence)
+  if (next.has(key)) next.delete(key)
+  else next.add(key)
   expanded.value = next
 }
 
@@ -73,7 +78,7 @@ function formatDuration(durationMs) {
           </span>
           <span class="trace-node-meta">
             {{ node.agentType || node.hint || 'subagent' }}
-            · LLM {{ node.metrics?.llm_calls || 0 }}
+            · LLM {{ node.metrics?.llm_calls || 0 }}/{{ node.maxLlmCalls || '?' }}
             · search {{ node.metrics?.search_calls || 0 }}
             · fetch {{ node.metrics?.fetch_calls || 0 }}
           </span>
@@ -109,9 +114,9 @@ function formatDuration(durationMs) {
               <span class="trace-action">{{ eventTitle(event) }}</span>
               <span class="trace-summary">{{ eventSummary(event) }}</span>
               <span class="trace-duration">{{ formatDuration(event.duration_ms) }}</span>
-              <span>{{ expanded.has(event.sequence) ? '▾' : '›' }}</span>
+              <span>{{ expanded.has(eventKey(event.sequence)) ? '▾' : '›' }}</span>
             </button>
-            <pre v-if="expanded.has(event.sequence)" class="trace-event-detail">{{ JSON.stringify(event.detail || {}, null, 2) }}</pre>
+            <pre v-if="expanded.has(eventKey(event.sequence))" class="trace-event-detail">{{ JSON.stringify(event.detail || {}, null, 2) }}</pre>
           </article>
         </div>
       </div>
@@ -138,7 +143,7 @@ function formatDuration(durationMs) {
 .trace-detail { min-width: 0; border-left: 1px solid var(--border-light); padding-left: 10px; }
 .trace-warning { color: oklch(60% 0.13 80); background: oklch(60% 0.13 80 / 0.08); border-radius: 5px; padding: 5px 7px; margin: 7px 0; font-size: 10px; }
 .trace-events { display: flex; flex-direction: column; gap: 6px; margin-top: 10px; max-height: 360px; overflow-y: auto; }
-.trace-event { border-left: 2px solid var(--border-light); background: var(--bg-glass); border-radius: 4px; overflow: hidden; }
+.trace-event { flex: 0 0 auto; border-left: 2px solid var(--border-light); background: var(--bg-glass); border-radius: 4px; overflow: hidden; }
 .trace-event[data-status="error"] { border-left-color: var(--crimson); }
 .trace-event[data-status="running"] { border-left-color: oklch(55% 0.12 240); }
 .trace-event-summary { width: 100%; display: grid; grid-template-columns: auto auto minmax(0, 1fr) auto auto; gap: 6px; align-items: center; border: 0; background: transparent; color: var(--text-secondary); text-align: left; padding: 6px; cursor: pointer; font-size: 10px; }

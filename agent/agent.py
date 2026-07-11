@@ -76,6 +76,7 @@ class Agent:
         self._reasoning_only_retries = 0
         self._cmd_history: list[str] = []
         self.stop_event = asyncio.Event()
+        self._owns_stop_event = True
         self._last_prompt_tokens = 0
         self._btw_queue: list[str] = []
         self._workspace_root: str | None = None
@@ -1060,6 +1061,8 @@ class Agent:
         print(json.dumps(event, ensure_ascii=False), flush=True)
 
     async def process_with_llm(self):
+        if self._owns_stop_event:
+            self.stop_event.clear()
         self._interrupted = False
         if not self._skill_active and not getattr(self, '_custom_system_prompt', False):
             self.llm.system_prompt = self._build_prompt(self.cfg)
@@ -1133,6 +1136,14 @@ class Agent:
                     }})
             llm_call += 1
             if self.max_llm_calls > 0 and llm_call > self.max_llm_calls:
+                if self.submission_required:
+                    self.budget_state = "CHECKPOINTED"
+                    self.emit({"type": "budget_state", "data": {
+                        "state": self.budget_state,
+                        "remaining_calls": 0,
+                        "reserved_calls": self.submission_reserve,
+                    }})
+                    break
                 notice = (
                     f"[SYSTEM] LLM call limit reached ({self.max_llm_calls}). "
                     "Stopping this turn before another model call. Increase "
@@ -1296,8 +1307,10 @@ class Agent:
                         'round': self._conversation_round,
                     })
                     break
+                result = None
                 result_str = await self._check_permission(tc["name"], tc["arguments"])
                 _tool_failed = False
+                hook_result = None
                 if result_str is None:
                     raw_args = tc["arguments"]
                     try:
@@ -1339,7 +1352,8 @@ class Agent:
                             # Ensure stop_event is clear before each tool
                             # execution.  The event is recreated at the top
                             # of process_with_llm so this is defensive.
-                            self.stop_event.clear()
+                            if self._owns_stop_event:
+                                self.stop_event.clear()
                             # Some tools (e.g. MCPTool) expose an async
                             # execute() — handle both sync and async.
                             if asyncio.iscoroutinefunction(tool_obj.execute):
@@ -1441,7 +1455,19 @@ class Agent:
                     "name": tc["name"], "arguments": tc["arguments"],
                     "result": result_str, "round": self._conversation_round,
                 })
-                self.emit({"type": "tool_result", "name": tc["name"], "id": tc["id"], "result": result_str})
+                tool_event = {
+                    "type": "tool_result",
+                    "name": tc["name"],
+                    "id": tc["id"],
+                    "result": result_str,
+                }
+                if getattr(self, "trace_raw_tool_results", False):
+                    tool_event["raw_result"] = (
+                        getattr(self, "_submission", None)
+                        if tc["name"] == "submit_output"
+                        else result
+                    )
+                self.emit(tool_event)
                 await self._run_hook("PostToolUse", {
                     "LINAR_TOOL_NAME": tc["name"], "ECHOLILY_TOOL_NAME": tc["name"],
                     "LINAR_TOOL_ARGUMENTS": tc["arguments"], "ECHOLILY_TOOL_ARGUMENTS": tc["arguments"],

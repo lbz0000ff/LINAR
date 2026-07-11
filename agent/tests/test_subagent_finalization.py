@@ -7,17 +7,20 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from subagent import load_subagent
 from agent import Agent
-from tool.basic_tools.tool_plan import SubmitOutputTool
+from tool.basic_tools.tool_plan import SubmitOutputTool, Tool_CreatePlan
 
 
-def _tool():
-    tool = SubmitOutputTool()
+def _tool(agent_type=None):
+    tool = SubmitOutputTool(agent_type=agent_type)
     tool.agent_ref = SimpleNamespace()
     return tool
 
 
 def test_submit_output_requires_generic_status_and_summary():
     tool = _tool()
+
+    properties = tool.tool_schema["parameters"]["properties"]
+    assert {"status", "summary", "unresolved", "artifacts", "error"} <= set(properties)
 
     result = tool.execute(findings=[])
 
@@ -38,7 +41,7 @@ def test_submit_output_records_generic_completed_result():
 
 
 def test_submit_output_preserves_research_fields_and_legacy_assets():
-    tool = _tool()
+    tool = _tool("web_researcher")
     asset = {"file": "chart.mmd", "type": "diagram", "description": "Trend"}
 
     tool.execute(
@@ -46,7 +49,6 @@ def test_submit_output_preserves_research_fields_and_legacy_assets():
         summary="Found one supported claim.",
         unresolved=["A primary source is still missing."],
         findings=[{"text": "Claim", "source": "https://example.com"}],
-        sources=["https://example.com"],
         assets=[asset],
     )
 
@@ -57,6 +59,40 @@ def test_submit_output_preserves_research_fields_and_legacy_assets():
     assert len(submission["findings"]) == 1
 
 
+def test_submit_output_schema_is_minimal_for_each_research_role():
+    common = {"status", "summary", "unresolved", "artifacts", "error"}
+
+    researcher = set(_tool("web_researcher").tool_schema["parameters"]["properties"])
+    analyst = set(_tool("analyst").tool_schema["parameters"]["properties"])
+    critic = set(_tool("critic").tool_schema["parameters"]["properties"])
+    generic = set(_tool().tool_schema["parameters"]["properties"])
+
+    assert researcher == common | {"findings", "gaps"}
+    assert analyst == common | {
+        "contradictions", "critical_gaps", "coverage_score",
+        "next_wave_suggestions", "key_evidence_ids", "remove_evidence_ids",
+    }
+    assert critic == common | {
+        "verdicts", "critical_gaps", "overall_assessment", "remove_evidence_ids",
+    }
+    assert generic == common
+
+
+def test_submit_output_discards_fields_outside_active_role_contract():
+    tool = _tool("web_researcher")
+
+    tool.execute(
+        status="completed",
+        summary="Selected evidence.",
+        findings=[{"text": "Claim", "source": "https://example.com"}],
+        next_wave_suggestions=[{"direction": "irrelevant"}],
+        verdicts=[{"finding": "irrelevant"}],
+    )
+
+    assert "next_wave_suggestions" not in tool.agent_ref._submission
+    assert "verdicts" not in tool.agent_ref._submission
+
+
 def test_installed_research_templates_use_generic_handoff_contract():
     for name in ("web_researcher", "analyst", "critic"):
         definition = load_subagent(name)
@@ -65,6 +101,61 @@ def test_installed_research_templates_use_generic_handoff_contract():
         prompt = definition["system_prompt"]
         assert "status" in prompt
         assert "summary" in prompt
+        assert "get_date" not in definition["allowed_tools"]
+        assert "get_time" not in definition["allowed_tools"]
+
+
+def test_research_templates_describe_selection_and_progressive_state_access():
+    researcher = load_subagent("web_researcher")
+    analyst = load_subagent("analyst")
+    critic = load_subagent("critic")
+
+    assert "12" in researcher["system_prompt"]
+    assert "3" in researcher["system_prompt"]
+    assert "search history" in researcher["system_prompt"].lower()
+    assert "read_research_state" in analyst["allowed_tools"]
+    assert "overview" in analyst["system_prompt"]
+    assert "new_evidence" in analyst["system_prompt"]
+    assert "read `research_state.json`" not in analyst["system_prompt"]
+    assert "read_research_state" in critic["allowed_tools"]
+    assert "evidence_by_id" in critic["system_prompt"]
+    assert "read `research_state.json`" not in critic["system_prompt"]
+
+
+def test_deep_research_skill_uses_compact_state_views():
+    skill_path = os.path.join(
+        os.path.dirname(__file__), "..", "..", "skills", "deep-research", "SKILL.md",
+    )
+    text = open(skill_path, encoding="utf-8").read()
+
+    assert "synthesis" in text
+    assert "key_evidence_ids" in text
+    assert "Read `research_state.json` for all findings" not in text
+
+
+def test_predecessor_context_preserves_generic_handoff_before_large_extensions():
+    result = '{"status":"partial","summary":"usable","unresolved":["gap"],"artifacts":[{"path":"out.md"}],"findings":[' + ('{"text":"x"},' * 1000).rstrip(',') + ']}'
+
+    context = Tool_CreatePlan._format_predecessor_context(result)
+
+    parsed = __import__("json").loads(context)
+    assert parsed["status"] == "partial"
+    assert parsed["summary"] == "usable"
+    assert parsed["unresolved"] == ["gap"]
+    assert parsed["artifacts"] == [{"path": "out.md"}]
+    assert "findings" not in parsed
+
+
+def test_checkpoint_preserves_bounded_agent_output_and_written_artifacts():
+    fake = SimpleNamespace(chat_history=[
+        {"role": "agent", "content": "useful partial analysis"},
+        {"role": "tool", "name": "write_file", "arguments": '{"file_path":"report.md"}', "result": "ok"},
+    ])
+
+    checkpoint = Tool_CreatePlan._build_checkpoint(fake, "node-a")
+
+    assert checkpoint["last_agent_output"] == "useful partial analysis"
+    assert checkpoint["artifacts"] == [{"path": "report.md", "type": "file"}]
 
 
 class _NoopTool:
@@ -126,6 +217,43 @@ class _TextLLM:
         return self._stream()
 
 
+class _MalformedArgumentsLLM:
+    model = "fake"
+    provider = "fake"
+    system_prompt = ""
+    tools = {}
+
+    def __init__(self):
+        self.calls = 0
+
+    async def _stream(self):
+        self.calls += 1
+        if self.calls == 1:
+            yield SimpleNamespace(
+                choices=[SimpleNamespace(delta=SimpleNamespace(
+                    content=None,
+                    reasoning_content=None,
+                    tool_calls=[SimpleNamespace(
+                        index=0,
+                        id="bad-date",
+                        function=SimpleNamespace(
+                            name="noop",
+                            arguments='{"date": 2025-04-03T00:00:00.000Z}',
+                        ),
+                    )],
+                ))]
+            )
+        else:
+            yield SimpleNamespace(
+                choices=[SimpleNamespace(delta=SimpleNamespace(
+                    content="recovered", reasoning_content=None, tool_calls=None,
+                ))]
+            )
+
+    def stream_response_messages(self, _messages):
+        return self._stream()
+
+
 def _agent_config():
     return {
         "llm": {"api_key": "test", "base_url": "http://test.invalid/v1", "model": "fake"},
@@ -172,3 +300,17 @@ def test_process_with_llm_preserves_injected_stop_event(monkeypatch):
     asyncio.run(agent.process_with_llm())
 
     assert agent.stop_event is shared_event
+
+
+def test_malformed_tool_arguments_are_returned_to_model_without_crashing(monkeypatch):
+    monkeypatch.setattr("agent.load_config", _agent_config)
+    agent = Agent(tools={"noop": _NoopTool()}, memory_enabled=False)
+    agent.llm = _MalformedArgumentsLLM()
+    agent.emit = lambda _event: None
+
+    asyncio.run(agent.process_with_llm())
+
+    tool_messages = [m for m in agent.chat_history if m.get("role") == "tool"]
+    assert len(tool_messages) == 1
+    assert "invalid JSON" in tool_messages[0]["result"]
+    assert agent.llm.calls == 2

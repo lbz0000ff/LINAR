@@ -28,7 +28,11 @@ def _redact_value(value: Any) -> Any:
         for key, item in value.items():
             key_text = str(key)
             normalized = key_text.lower().replace("-", "_")
-            if normalized in {"api_key", "apikey", "token", "secret", "password", "authorization"}:
+            secret_key = any(marker in normalized for marker in (
+                "api_key", "apikey", "token", "secret", "password",
+                "authorization", "credential",
+            ))
+            if secret_key:
                 redacted[key_text] = "[REDACTED]"
             else:
                 redacted[key_text] = _redact_value(item)
@@ -154,7 +158,8 @@ class SubagentTraceRelay:
     def _normalize_tool_result(self, event: dict) -> dict[str, Any]:
         name = str(event.get("name") or "")
         tool_id = str(event.get("id") or "")
-        result = _redact_value(_parse_json(event.get("result")))
+        raw_result = event.get("raw_result", event.get("result"))
+        result = _redact_value(_parse_json(raw_result))
         started = self._pending_tools.pop(tool_id, None)
         duration_ms = round((time.perf_counter() - started) * 1000) if started else None
         summary = self._tool_summary(name, result)

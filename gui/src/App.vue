@@ -12,7 +12,7 @@ import InputArea from './components/InputArea.vue'
 import SettingsPage from './components/SettingsPage.vue'
 import TitleBar from './components/TitleBar.vue'
 import RightPanel from './components/RightPanel.vue'
-import { applyDagNodeComplete, applyDagNodeStart, applySubagentEvent } from './utils/subagentTrace.js'
+import { applyDagNodeComplete, applyDagNodeStart, applySubagentEvent, appendDagPlan, updateDagPlan } from './utils/subagentTrace.js'
 import { useI18n } from 'vue-i18n'
 
 const { t } = useI18n()
@@ -50,6 +50,9 @@ const showRightPanel = ref(false)
 const dagNodes = ref({})
 const dagGoal = ref('')
 const dagActive = ref(false)
+const dagPlans = ref([])
+const activeDagId = ref('')
+let dagSequence = 0
 const btwResults = ref([])
 const workspacePath = ref('')
 const workspaceAssets = ref([])
@@ -116,15 +119,15 @@ function handleMessage(event) {
   else if (type === 'skill_loaded') { currentSkill.value = event.data?.name || null; addMessage({ role: 'notification', text: t('chat.skillLoaded', { name: event.data?.name || '' }) }) }
   else if (type === 'permission_request') handlePermission(event)
   else if (type === 'promise_resolved') addMessage({ role: 'notification', text: t('chat.asyncDone', { id: event.data?.id || '' }) })
-  else if (type === 'plan_start') { planText.value = ''; addMessage({ role: 'plan', _text: '', _open: true }); dagNodes.value = {}; dagActive.value = true; dagGoal.value = ''; showRightPanel.value = true }
-  else if (type === 'plan') { const last = messages.value[messages.value.length - 1]; if (last?.role === 'plan') { last._text += (event.data || ''); messages.value = [...messages.value] }; dagGoal.value = (event.data || '') }
-  else if (type === 'plan_nodes') { const nodes = event.data || []; const m = {}; nodes.forEach(n => { m[n.id] = { id: n.id, description: n.description, depends_on: n.depends_on || [], hint: n.hint, status: n.status || 'PENDING', result: '' } }); dagNodes.value = m }
+  else if (type === 'plan_start') { planText.value = ''; addMessage({ role: 'plan', _text: '', _open: true }); dagNodes.value = {}; dagActive.value = true; dagGoal.value = ''; activeDagId.value = `dag-${Date.now()}-${++dagSequence}`; dagPlans.value = appendDagPlan(dagPlans.value, { id: activeDagId.value }); showRightPanel.value = true }
+  else if (type === 'plan') { const last = messages.value[messages.value.length - 1]; if (last?.role === 'plan') { last._text += (event.data || ''); messages.value = [...messages.value] }; dagGoal.value = (event.data || ''); syncActiveDag({ goal: dagGoal.value }) }
+  else if (type === 'plan_nodes') { const nodes = event.data || []; const m = {}; nodes.forEach(n => { m[n.id] = { id: n.id, description: n.description, depends_on: n.depends_on || [], hint: n.hint, status: n.status || 'PENDING', result: '' } }); dagNodes.value = m; syncActiveDag({ nodes: m }) }
   else if (type === 'plan_execute') { /* DAG execution begins — nodes will follow */ }
-  else if (type === 'dag_node_start') { dagNodes.value = applyDagNodeStart(dagNodes.value, event.data || {}) }
-  else if (type === 'subagent_event') { dagNodes.value = applySubagentEvent(dagNodes.value, event.data || {}) }
-  else if (type === 'dag_node_complete') { dagNodes.value = applyDagNodeComplete(dagNodes.value, event.data || {}) }
-  else if (type === 'plan_complete') { const last = messages.value[messages.value.length - 1]; if (last?.role === 'plan') { last._open = false; messages.value = [...messages.value] }; dagActive.value = false }
-  else if (type === 'plan_error') { dagActive.value = false }
+  else if (type === 'dag_node_start') { dagNodes.value = applyDagNodeStart(dagNodes.value, event.data || {}); syncActiveDag({ nodes: dagNodes.value }) }
+  else if (type === 'subagent_event') { dagNodes.value = applySubagentEvent(dagNodes.value, event.data || {}); syncActiveDag({ nodes: dagNodes.value }) }
+  else if (type === 'dag_node_complete') { dagNodes.value = applyDagNodeComplete(dagNodes.value, event.data || {}); syncActiveDag({ nodes: dagNodes.value }) }
+  else if (type === 'plan_complete') { const last = messages.value[messages.value.length - 1]; if (last?.role === 'plan') { last._open = false; messages.value = [...messages.value] }; dagActive.value = false; syncActiveDag({ status: 'COMPLETED', completedAt: Date.now() }) }
+  else if (type === 'plan_error') { dagActive.value = false; syncActiveDag({ status: 'FAILED', completedAt: Date.now() }) }
   else if (type === 'skills') skillsList.value = event.data || []
   else if (type === 'system') { addMessage({ role: 'system', text: event.data || '' }) }
   else if (type === 'btw_result') { const d = event.data; btwResults.value = [{ question: d.question, answer: d.answer, ts: Date.now() }, ...btwResults.value]; showRightPanel.value = true }
@@ -141,6 +144,19 @@ function handleMessage(event) {
     }
   }
   else if (type === 'config_json') handleConfig(event.data || {})
+}
+
+function syncActiveDag(changes) {
+  if (!activeDagId.value) return
+  dagPlans.value = updateDagPlan(dagPlans.value, activeDagId.value, plan => ({ ...plan, ...changes }))
+}
+
+function resetDagPlans() {
+  dagNodes.value = {}
+  dagGoal.value = ''
+  dagActive.value = false
+  dagPlans.value = []
+  activeDagId.value = ''
 }
 
 function applySessionContext(session) {
@@ -319,6 +335,7 @@ function switchSession(id) {
   currentSkill.value = null
   workspacePath.value = ''
   workspaceAssets.value = []
+  resetDagPlans()
   send('switch_session', { id })
   send('get_session', { id })
 }
@@ -329,6 +346,7 @@ function newSession() {
   currentSkill.value = null
   workspacePath.value = ''
   workspaceAssets.value = []
+  resetDagPlans()
 }
 function deleteSession(id) {
   send('delete_session', { id })
@@ -726,6 +744,7 @@ onUnmounted(() => offMessage(handleMessage))
       v-if="showRightPanel"
       :dag-nodes="dagNodes" :dag-goal="dagGoal"
       :dag-active="dagActive" :btw-results="btwResults"
+      :dag-plans="dagPlans" :active-dag-id="activeDagId"
       :workspace-path="workspacePath"
       :workspace-assets="workspaceAssets"
       @close="showRightPanel = false"

@@ -1,11 +1,40 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
+import { readFileSync } from 'node:fs'
+import { fileURLToPath } from 'node:url'
 
 import {
   applyDagNodeComplete,
   applyDagNodeStart,
   applySubagentEvent,
+  appendDagPlan,
+  updateDagPlan,
 } from './subagentTrace.js'
+
+test('appends DAG plans without replacing earlier traces', () => {
+  const first = appendDagPlan([], { id: 'wave-1', goal: 'Broad search' })
+  const second = appendDagPlan(first, { id: 'wave-2', goal: 'Fill gaps' })
+
+  assert.equal(first.length, 1)
+  assert.deepEqual(second.map(plan => plan.id), ['wave-1', 'wave-2'])
+  assert.equal(second[0].goal, 'Broad search')
+  assert.deepEqual(second[0].nodes, {})
+})
+
+test('updates only the selected DAG plan', () => {
+  const plans = [
+    { id: 'wave-1', goal: 'Broad search', nodes: { old: { id: 'old' } }, status: 'COMPLETED' },
+    { id: 'wave-2', goal: 'Fill gaps', nodes: {}, status: 'ACTIVE' },
+  ]
+  const updated = updateDagPlan(plans, 'wave-2', plan => ({
+    ...plan,
+    nodes: applyDagNodeStart(plan.nodes, { id: 'new', description: 'Research gap' }),
+  }))
+
+  assert.equal(updated[0], plans[0])
+  assert.equal(updated[1].nodes.new.description, 'Research gap')
+  assert.deepEqual(plans[1].nodes, {})
+})
 
 test('routes events to the matching node without mutating prior state', () => {
   const initial = applyDagNodeStart({}, { id: 'one', description: 'First' })
@@ -49,4 +78,12 @@ test('applies explicit terminal status and completion metadata', () => {
   assert.equal(updated.one.status, 'CHECKPOINTED')
   assert.equal(updated.one.stopReason, 'budget')
   assert.equal(updated.one.durationMs, 42)
+})
+
+test('trace event rows cannot shrink instead of overflowing the scroll container', () => {
+  const componentPath = fileURLToPath(new URL('../components/RightPanel/SubagentTracePanel.vue', import.meta.url))
+  const source = readFileSync(componentPath, 'utf8')
+
+  assert.match(source, /\.trace-events\s*\{[^}]*overflow-y:\s*auto/s)
+  assert.match(source, /\.trace-event\s*\{[^}]*flex:\s*0\s+0\s+auto/s)
 })

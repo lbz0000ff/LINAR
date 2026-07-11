@@ -1,5 +1,20 @@
 export const DEFAULT_MAX_EVENTS = 500
 
+export function appendDagPlan(plans, plan) {
+  return [...plans, {
+    id: plan.id,
+    goal: plan.goal || '',
+    nodes: plan.nodes || {},
+    status: plan.status || 'ACTIVE',
+    startedAt: plan.startedAt || Date.now(),
+    completedAt: plan.completedAt || null,
+  }]
+}
+
+export function updateDagPlan(plans, planId, updater) {
+  return plans.map(plan => plan.id === planId ? updater(plan) : plan)
+}
+
 function normalizeNode(data = {}, existing = {}) {
   return {
     id: data.id || existing.id || '',
@@ -15,6 +30,10 @@ function normalizeNode(data = {}, existing = {}) {
     sequenceGap: existing.sequenceGap || false,
     stopReason: data.stop_reason ?? existing.stopReason ?? null,
     durationMs: data.duration_ms ?? existing.durationMs ?? null,
+    maxLlmCalls: data.max_llm_calls ?? existing.maxLlmCalls ?? null,
+    submissionReserve: data.submission_reserve ?? existing.submissionReserve ?? null,
+    wrapUpCalls: data.wrap_up_calls ?? existing.wrapUpCalls ?? null,
+    startedAt: data.started_at ?? existing.startedAt ?? null,
   }
 }
 

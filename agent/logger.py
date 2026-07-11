@@ -38,6 +38,7 @@ _initialized = False
 _console_handler: logging.Handler | None = None
 
 _SECRET_PATTERNS = [
+    re.compile(r"(?i)(^|[\s'\":=])((?:as_)?sk[-_][A-Za-z0-9._~+/=-]{10,})"),
     re.compile(r"(?i)(authorization\s*[:=]\s*bearer\s+)([^\s,;\"']+)"),
     re.compile(r"(?i)(bearer\s+)([A-Za-z0-9._~+/=-]{12,})"),
     re.compile(r"(?i)((?:api[_-]?key|token|secret|password)\s*[:=]\s*)([^\s,;\"']+)"),

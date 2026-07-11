@@ -1,21 +1,41 @@
 <script setup>
-import { ref } from 'vue'
+import { computed, ref, watch } from 'vue'
 import PlanProgress from './RightPanel/PlanProgress.vue'
 import BtwResults from './RightPanel/BtwResults.vue'
 import AgentStatus from './RightPanel/AgentStatus.vue'
 import AssetsArea from './RightPanel/AssetsArea.vue'
 import SubagentTracePanel from './RightPanel/SubagentTracePanel.vue'
+import DagPlanViewer from './RightPanel/DagPlanViewer.vue'
 
 const props = defineProps({
   dagNodes: { type: Object, default: () => ({}) },
   dagGoal: { type: String, default: '' },
   dagActive: { type: Boolean, default: false },
+  dagPlans: { type: Array, default: () => [] },
+  activeDagId: { type: String, default: '' },
   btwResults: { type: Array, default: () => [] },
   workspacePath: { type: String, default: '' },
   workspaceAssets: { type: Array, default: () => [] },
 })
 
 const emit = defineEmits(['close'])
+
+const selectedPlanId = ref('')
+const userSelectedPlan = ref(false)
+const selectedPlan = computed(() => (
+  props.dagPlans.find(plan => plan.id === selectedPlanId.value)
+  || props.dagPlans.at(-1)
+  || { nodes: props.dagNodes, goal: props.dagGoal, status: props.dagActive ? 'ACTIVE' : 'COMPLETED' }
+))
+
+watch(() => props.activeDagId, activeId => {
+  if (!selectedPlanId.value || !userSelectedPlan.value) selectedPlanId.value = activeId
+}, { immediate: true })
+
+function selectPlan(planId) {
+  selectedPlanId.value = planId
+  userSelectedPlan.value = planId !== props.activeDagId
+}
 
 const panelEl = ref(null)
 let panelWidth = 480
@@ -61,8 +81,9 @@ function onResizeStart(e) {
     </div>
 
     <div class="rp-body">
-      <PlanProgress :nodes="dagNodes" :goal="dagGoal" :active="dagActive" />
-      <SubagentTracePanel :nodes="dagNodes" />
+      <DagPlanViewer :plans="dagPlans" :selected-id="selectedPlan?.id" @select="selectPlan" />
+      <PlanProgress :nodes="selectedPlan.nodes" :goal="selectedPlan.goal" :active="selectedPlan.status === 'ACTIVE'" />
+      <SubagentTracePanel :nodes="selectedPlan.nodes" />
       <AssetsArea :assets="workspaceAssets" :workspace-path="workspacePath" />
       <BtwResults :results="btwResults" />
       <AgentStatus />
