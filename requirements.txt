@@ -11,10 +11,9 @@ prompt_toolkit==3.0.52
 rich==15.0.0
 
 # Web and research tools
+crawl4ai==0.9.1
 ddgs==9.14.4
 duckduckgo_search==8.1.1
-html2text==2025.4.15
 httpx==0.28.1
 requests==2.34.2
 tavily==1.1.0
-trafilatura==2.0.0

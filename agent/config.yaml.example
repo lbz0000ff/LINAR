@@ -92,6 +92,13 @@ web_search:
     tavily_api_key: "${TAVILY_API_KEY}"
     # serper_api_key: "${SERPER_API_KEY}"
 
+# Web Fetch Configuration
+web_fetch:
+    max_chars: 30000            # preview chars returned to the model
+    artifact_dir: web_fetch     # full markdown is saved under the active workspace
+    browser_channel: chromium   # chromium = Playwright browser; msedge = system Edge fallback
+    respect_robots_txt: true    # refuse URLs disallowed by the site's robots.txt
+
 # Logging Configuration
 logging:
     level: INFO                # DEBUG | INFO | WARNING | ERROR | CRITICAL
