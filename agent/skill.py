@@ -672,12 +672,14 @@ def activate_skill_for_agent(
                     role="meta",
                     content=header,
                     conversation_round=agent._conversation_round,
+                    visibility="internal",
                 )
                 db.save_message(
                     session_id=agent.session_id,
                     role="user",
                     content=content,
                     conversation_round=agent._conversation_round,
+                    visibility="internal",
                 )
             except Exception:
                 log.warning("Failed to persist skill '%s' messages", skill.name, exc_info=True)

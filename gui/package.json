@@ -6,6 +6,7 @@
   "main": "electron/main.js",
   "scripts": {
     "dev": "concurrently -k -n vite,electron -c blue,green \"vite\" \"wait-on http://localhost:5173 && node scripts/start-electron.cjs .\"",
+    "test:unit": "node --test src/utils/subagentTrace.test.js",
     "build": "vite build",
     "pack": "vite build && electron-builder --dir",
     "dist": "vite build && electron-builder"

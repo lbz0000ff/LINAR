@@ -71,6 +71,7 @@ def test_activate_skill_injects_messages_persists_checkpoint_and_keeps_tools(mon
         {"role": "user", "content": "Follow the demo skill."},
     ]
     assert [m["role"] for m in saved] == ["meta", "user"]
+    assert [m["visibility"] for m in saved] == ["internal", "internal"]
     assert checkpoints == [(42, "demo", "topic")]
     assert agent.events == [
         {"type": "skill_loaded", "data": {"name": "demo", "desc": "Demo skill", "args": "topic"}}
@@ -123,6 +124,7 @@ def test_generic_skill_tool_uses_shared_activation_path(monkeypatch, tmp_path):
     assert "demo_helper" in agent.tools
     assert checkpoints == [(42, "demo", "topic")]
     assert [m["role"] for m in saved] == ["meta", "user"]
+    assert [m["visibility"] for m in saved] == ["internal", "internal"]
 
 
 def test_build_llm_messages_keeps_skill_listing_available_each_turn(monkeypatch):

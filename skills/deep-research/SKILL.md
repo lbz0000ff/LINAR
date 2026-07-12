@@ -31,9 +31,9 @@ You have three predefined subagent types. **All research tasks MUST use the `age
 
 | `agent` | Role | Model | Output merged to |
 |---------|------|-------|-----------------|
-| `web_researcher` | Multi-angle web research | flash | `findings[]`, `gaps[]`, `sources[]` |
-| `analyst` | Cross-validation & synthesis | pro | `contradictions[]`, `gaps[]`, `coverage_score`, `next_wave_suggestions[]` |
-| `critic` | Adversarial verification | pro | `verdicts[]`, `gaps[]`, `overall_assessment` |
+| `web_researcher` | Multi-angle web research | flash | selected `evidence` candidates and material gaps |
+| `analyst` | Cross-validation & synthesis | pro | compact `synthesis`, `key_evidence_ids`, contradictions, next-wave directions |
+| `critic` | Adversarial verification | pro | verdicts, critical gaps, evidence removals |
 
 ### How to use subagent types
 
@@ -70,13 +70,13 @@ You have three predefined subagent types. **All research tasks MUST use the `age
   "agent": "critic",
   "params": {
     "task_description": "Adversarially review all findings for quality",
-    "findings_to_review": "Read research_state.json for all findings"
+    "findings_to_review": "Review the high-risk key evidence selected in the current synthesis"
   },
   "depends_on": ["wave1_review"]
 }
 ```
 
-**Important**: do NOT set `agent_hint` when `agent` is set. The `description` field is still required (used as fallback display text). The `depends_on` list must reference the exact `id` values of predecessor sub-tasks.
+**Important**: do NOT set `agent_hint` when `agent` is set. For predefined agents, the DAG description defaults to `params.task_description`; use the optional top-level `description` only when a shorter GUI label is useful. The `depends_on` list must reference the exact `id` values of predecessor sub-tasks.
 
 ---
 
@@ -159,14 +159,15 @@ sub_tasks:
 
 **Step 4 — Review Results**
 
-After each wave, read `research_state.json`. Key fields:
-- `findings[]` — all discoveries
-- `contradictions[]` — flagged conflicts
-- `gaps[]` — uncovered angles
-- `meta.next_wave_suggestions[]` — analyst recommendations
-- `meta.coverage_score` — coverage estimate
-- `meta.verdicts[]` — critic quality verdicts (if critic was run)
-- `assets[]` — auxiliary files (Mermaid diagrams, screenshots)
+After each wave, use the compact working state rather than loading every evidence item:
+- `synthesis.summary` — current global assessment
+- `synthesis.key_evidence_ids[]` — evidence selected for downstream use
+- `synthesis.contradictions[]` — material unresolved conflicts
+- `synthesis.critical_gaps[]` — gaps that affect the final answer
+- `synthesis.next_wave_suggestions[]` — analyst recommendations
+- `synthesis.coverage_score` — coverage estimate
+- `synthesis.verdicts[]` — critic verdicts when present
+- `assets[]` — auxiliary files
 
 If `assets` has `.mmd` files, read them and embed in the report with ` ```mermaid ` fences.
 
@@ -174,7 +175,7 @@ If `assets` has `.mmd` files, read them and embed in the report with ` ```mermai
 
 1. Run `search_files` for `*.json` in the workspace — if orphaned JSON files exist, read them
 2. Run `search_files` for `*.mmd` — if diagrams exist, read and prepare to embed
-3. Read `research_state.json` for all structured findings
+3. Read `synthesis` first, then retrieve only the evidence referenced by `key_evidence_ids`
 4. Write the report to `report.md` following the template below
 
 ### Report Template
@@ -232,7 +233,7 @@ If `assets` has `.mmd` files, read them and embed in the report with ` ```mermai
 
 - **All research sub-tasks MUST use the `agent` field**. `agent_hint` is forbidden for research tasks — only use it for one-off operations like listing files.
 - **One `create_plan` call per wave**. Let the DAG run to completion before reviewing results.
-- **Always read `research_state.json` between waves**. It is the single source of truth. Do NOT rely on conversation context.
+- **Start from the leading `synthesis` section between waves**. Expand only its selected key evidence when needed; do not bulk-load the complete evidence collection.
 - **Audit workspace before final report**. Subagents sometimes create orphaned JSON files. Find and read them.
 - **Recover from errors**: If a tool call fails, read conversation history instead of giving up.
 - **`patch_file` is removed from allowed-tools** — use `write_file` for new files and report generation.

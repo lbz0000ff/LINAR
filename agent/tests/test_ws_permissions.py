@@ -80,7 +80,7 @@ def test_subagent_factory_defaults_to_auto_permission_mode(monkeypatch):
     import agent_factory
 
     cfg = {
-        "llm": {"api_key": "", "base_url": "", "model": "fake"},
+        "llm": {"api_key": "test", "base_url": "http://test.invalid/v1", "model": "fake"},
         "chat_history": {},
         "permissions": {"default": "ask"},
         "permission_modes": {"active": "safe", "modes": {"safe": {"default": "ask"}}},

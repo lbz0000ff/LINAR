@@ -6,7 +6,10 @@ from types import SimpleNamespace
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 sys.modules.setdefault(
     "openai",
-    SimpleNamespace(AsyncOpenAI=lambda *args, **kwargs: SimpleNamespace()),
+    SimpleNamespace(
+        AsyncOpenAI=lambda *args, **kwargs: SimpleNamespace(),
+        OpenAI=lambda *args, **kwargs: SimpleNamespace(),
+    ),
 )
 
 from agent import Agent
@@ -52,7 +55,7 @@ def test_agent_uses_max_turns_config(monkeypatch):
     monkeypatch.setattr(
         "agent.load_config",
         lambda: {
-            "llm": {"api_key": "", "base_url": "", "model": "fake"},
+            "llm": {"api_key": "test", "base_url": "http://test.invalid/v1", "model": "fake"},
             "max_turns": 80,
             "chat_history": {},
             "permissions": {"default": "allow"},
@@ -69,7 +72,7 @@ def test_agent_keeps_legacy_max_llm_calls_config(monkeypatch):
     monkeypatch.setattr(
         "agent.load_config",
         lambda: {
-            "llm": {"api_key": "", "base_url": "", "model": "fake"},
+            "llm": {"api_key": "test", "base_url": "http://test.invalid/v1", "model": "fake"},
             "max_llm_calls": 12,
             "chat_history": {},
             "permissions": {"default": "allow"},
@@ -86,7 +89,7 @@ def test_llm_limit_adds_explicit_meta_message(monkeypatch):
     monkeypatch.setattr(
         "agent.load_config",
         lambda: {
-            "llm": {"api_key": "", "base_url": "", "model": "fake"},
+            "llm": {"api_key": "test", "base_url": "http://test.invalid/v1", "model": "fake"},
             "max_turns": 1,
             "chat_history": {},
             "permissions": {"default": "allow"},

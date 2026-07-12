@@ -16,6 +16,12 @@ const STATUS_CFG = computed(() => ({
   COMPLETED:  { cls: 'st-done',       icon: '●', label: t('plan.statusCompleted') },
   FAILED:     { cls: 'st-failed',     icon: '✕', label: t('plan.statusFailed') },
   BLOCKED:    { cls: 'st-blocked',    icon: '⊘', label: t('plan.statusBlocked') },
+  ACTIVE:     { cls: 'st-running',    icon: '◉', label: 'Active' },
+  WRAP_UP:    { cls: 'st-blocked',    icon: '◐', label: 'Wrapping up' },
+  SUBMIT_ONLY:{ cls: 'st-blocked',    icon: '◐', label: 'Submitting' },
+  SUBMITTED:  { cls: 'st-done',       icon: '●', label: 'Submitted' },
+  CHECKPOINTED:{ cls: 'st-failed',    icon: '◆', label: 'Checkpointed' },
+  STOPPED:    { cls: 'st-blocked',    icon: '■', label: 'Stopped' },
 }))
 
 // Compute dependency levels for each node

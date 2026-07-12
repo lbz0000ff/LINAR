@@ -141,6 +141,7 @@ class DAGNode:
     description: str
     agent_hint: str = "any"          # e.g. "file_agent", "analysis_agent"
     depends_on: list[str] = field(default_factory=list)
+    dependency_policy: str = "all_completed"
     status: DAGNodeStatus = DAGNodeStatus.PENDING
     result: str = ""
 
@@ -150,6 +151,7 @@ class DAGNode:
             "description": self.description,
             "agent_hint": self.agent_hint,
             "depends_on": self.depends_on,
+            "dependency_policy": self.dependency_policy,
             "status": self.status.value,
             "result": self.result,
         }
@@ -162,6 +164,7 @@ class DAGNode:
             description=data["description"],
             agent_hint=data.get("agent_hint", "any"),
             depends_on=data.get("depends_on", []),
+            dependency_policy=data.get("dependency_policy", "all_completed"),
             status=DAGNodeStatus(data.get("status", "pending")),
             result=data.get("result", ""),
         )
@@ -188,11 +191,18 @@ class DAGPlan:
         return [
             n for n in self.nodes.values()
             if n.status == DAGNodeStatus.PENDING
-            and all(
-                self.nodes[d].status == DAGNodeStatus.COMPLETED
-                for d in n.depends_on
-            )
+            and all(self._dependency_satisfied(n, self.nodes[d]) for d in n.depends_on)
         ]
+
+    @staticmethod
+    def _dependency_satisfied(node: DAGNode, dependency: DAGNode) -> bool:
+        if node.dependency_policy == "all_terminal":
+            return dependency.status in {
+                DAGNodeStatus.COMPLETED,
+                DAGNodeStatus.FAILED,
+                DAGNodeStatus.BLOCKED,
+            }
+        return dependency.status == DAGNodeStatus.COMPLETED
 
     def get_failed(self) -> list[DAGNode]:
         """Return all nodes that have failed."""
@@ -203,9 +213,13 @@ class DAGPlan:
         return [
             n for n in self.nodes.values()
             if n.status == DAGNodeStatus.PENDING
+            and n.dependency_policy != "all_terminal"
             and any(
                 self.nodes.get(d) is not None
-                and self.nodes[d].status == DAGNodeStatus.FAILED
+                and self.nodes[d].status in {
+                    DAGNodeStatus.FAILED,
+                    DAGNodeStatus.BLOCKED,
+                }
                 for d in n.depends_on
             )
         ]

@@ -77,6 +77,7 @@ def load_subagent(name: str) -> dict | None:
         "hint": str(meta.get("hint", "")),
         "model": meta.get("model"),              # None = inherit from main agent
         "provider": meta.get("provider"),         # None = inherit from main agent
+        "finalization_hint": str(meta.get("finalization_hint", "")),
         "allowed_tools": _parse_allowed_tools(meta),  # tool whitelist
         "system_prompt": body.strip(),
     }

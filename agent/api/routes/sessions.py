@@ -31,7 +31,7 @@ async def get_session(session_id: int):
 
 @router.get("/sessions/{session_id}/messages")
 async def get_session_messages(session_id: int):
-    return db.get_session_messages(session_id)
+    return db.get_session_display_messages(session_id)
 
 
 @router.put("/sessions/{session_id}/title")

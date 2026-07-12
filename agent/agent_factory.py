@@ -109,6 +109,7 @@ def create_agent(agent_hint: str = "any",
     # ── share parent stop_event so Ctrl+C propagates ──
     if stop_event is not None:
         agent.stop_event = stop_event
+        agent._owns_stop_event = False
     # Re-wire stop_event to tools (Agent.__init__ wired a fresh Event)
     for t in agent.tools.values():
         if hasattr(t, 'stop_event'):
