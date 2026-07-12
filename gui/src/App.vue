@@ -94,7 +94,7 @@ function handleMessage(event) {
     'plan_execute', 'dag_node_start', 'dag_node_complete',
     'subagent_event',
     'plan_complete', 'plan_error', 'system', 'btw_result',
-    'workspace_updated', 'ask_user_request', 'session_context_restored'
+    'workspace_updated', 'ask_user_request', 'session_context_restored', 'session_msgs'
   ])
   if (
     event.session_id != null &&
