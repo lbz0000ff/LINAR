@@ -74,7 +74,7 @@ function resetBottomFollowing() {
 function scrollToBottom() {
   resetBottomFollowing()
   if (!msgContainer.value) return
-  msgContainer.value.scrollTo({ top: msgContainer.value.scrollHeight, behavior: 'smooth' })
+  msgContainer.value.scrollTop = msgContainer.value.scrollHeight
 }
 // 新消息自动滚动（仅当用户未向上滚动时）
 watch(messages, () => {
@@ -104,6 +104,11 @@ function handleMessage(event) {
   ) return
   if (type === 'sessions' && event.data) loadSessions(event.data)
   else if (type === 'session_msgs' && event.data) {
+    if (
+      event.session_id == null ||
+      currentSessionId.value == null ||
+      Number(event.session_id) !== Number(currentSessionId.value)
+    ) return
     resetBottomFollowing()
     messages.value = convertDbMessages(event.data).map(m => ({ ...m, collapsed: true }))
     if (event.title) chatTitle.value = event.title
@@ -204,7 +209,7 @@ function convertDbMessages(dbMsgs) {
   })
 }
 
-function addMessage(msg) { messages.value.push(msg) }
+function addMessage(msg) { messages.value = [...messages.value, msg] }
 
 // ── 渲染函数 ──
 function renderMd(text) {
