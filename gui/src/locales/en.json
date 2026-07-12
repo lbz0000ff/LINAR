@@ -73,10 +73,6 @@
     "title": "BTW Query",
     "empty": "No queries"
   },
-  "agent": {
-    "status": "Agent Status",
-    "comingSoon": "Coming soon"
-  },
   "panel": {
     "title": "Panel",
     "close": "Close panel"

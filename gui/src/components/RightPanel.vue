@@ -2,7 +2,6 @@
 import { computed, ref, watch } from 'vue'
 import PlanProgress from './RightPanel/PlanProgress.vue'
 import BtwResults from './RightPanel/BtwResults.vue'
-import AgentStatus from './RightPanel/AgentStatus.vue'
 import AssetsArea from './RightPanel/AssetsArea.vue'
 import SubagentTracePanel from './RightPanel/SubagentTracePanel.vue'
 import DagPlanViewer from './RightPanel/DagPlanViewer.vue'
@@ -86,7 +85,6 @@ function onResizeStart(e) {
       <SubagentTracePanel :nodes="selectedPlan.nodes" />
       <AssetsArea :assets="workspaceAssets" :workspace-path="workspacePath" />
       <BtwResults :results="btwResults" />
-      <AgentStatus />
     </div>
   </aside>
 </template>

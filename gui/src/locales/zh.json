@@ -73,10 +73,6 @@
     "title": "侧边查询",
     "empty": "暂无查询"
   },
-  "agent": {
-    "status": "多 Agent 状态",
-    "comingSoon": "即将推出"
-  },
   "chat": {
     "unknown": "未知",
     "copyCode": "复制代码",
