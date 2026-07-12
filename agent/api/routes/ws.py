@@ -226,7 +226,7 @@ async def ws_endpoint(ws: WebSocket):
 
             elif t == "get_session":
                 sid = int(data.get("id", active_session_id or 0))
-                msgs = db.get_session_messages(sid)
+                msgs = db.get_session_display_messages(sid)
                 sess = db.get_session_by_id(sid)
                 title = sess.get("title", f"Session #{sid}") if sess else ""
                 await _send(ws, {

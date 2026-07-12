@@ -400,6 +400,11 @@ class Tool_CreatePlan(Tool):
                                 "items": {"type": "string"},
                                 "description": "IDs of tasks that must complete first",
                             },
+                            "dependency_policy": {
+                                "type": "string",
+                                "enum": ["all_completed", "all_terminal"],
+                                "description": "Whether dependencies must succeed or only reach a terminal state",
+                            },
                             "agent_hint": {
                                 "type": "string",
                                 "description": "Toolset hint: any/code/shell/analysis/research",
@@ -451,6 +456,11 @@ class Tool_CreatePlan(Tool):
                 id=st["id"], description=description,
                 agent_hint=st.get("agent_hint", "any"),
                 depends_on=st.get("depends_on", []),
+                dependency_policy=st.get("dependency_policy") or (
+                    "all_terminal"
+                    if st.get("agent") in {"analyst", "critic"}
+                    else "all_completed"
+                ),
             ))
             # Stash agent/params for _run_node
             _sub_meta[st["id"]] = {
@@ -469,11 +479,20 @@ class Tool_CreatePlan(Tool):
         async def _run_node(node_id: str, description: str) -> str:
             node = plan.nodes.get(node_id)
             hint = node.agent_hint if node else "any"
-            deps = {
-                d: agent_results[d]
-                for d in (node.depends_on if node else [])
-                if d in agent_results
-            }
+            deps: dict[str, str] = {}
+            for dependency_id in (node.depends_on if node else []):
+                if dependency_id in agent_results:
+                    deps[dependency_id] = agent_results[dependency_id]
+                    continue
+                dependency = plan.nodes.get(dependency_id)
+                if dependency and dependency.status in {
+                    DAGNodeStatus.FAILED, DAGNodeStatus.BLOCKED,
+                }:
+                    deps[dependency_id] = json.dumps({
+                        "status": dependency.status.value,
+                        "node": dependency_id,
+                        "error": dependency.result or "Dependency did not complete.",
+                    }, ensure_ascii=False)
             meta = _sub_meta.get(node_id, {})
             agent_type = meta.get("agent")
             params = meta.get("params") or {}

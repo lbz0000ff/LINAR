@@ -49,6 +49,11 @@ class _FakeSubAgent:
         self.chat_history.append({"role": "agent", "content": "done"})
 
 
+class _FailingSubAgent(_FakeSubAgent):
+    async def process_with_llm(self):
+        raise RuntimeError("research node failed")
+
+
 class _FakeTool:
     def __init__(self, name):
         self.name = name
@@ -150,6 +155,45 @@ def test_checkpointed_node_blocks_dependents(monkeypatch):
 
     assert len(created) == 1
     assert "[BLOCKED]" in result
+
+
+def test_analyst_runs_after_research_dependency_failure(monkeypatch):
+    created = []
+
+    def fake_create_agent(**_kwargs):
+        sub_agent = _FailingSubAgent() if not created else _FakeSubAgent()
+        created.append(sub_agent)
+        return sub_agent
+
+    monkeypatch.setattr("agent_factory.create_agent", fake_create_agent)
+    tool = Tool_CreatePlan()
+    parent = _FakeParentAgent()
+    tool.agent_ref = parent
+
+    result = asyncio.run(tool.execute(
+        goal="partial research",
+        sub_tasks=[
+            {
+                "id": "researcher",
+                "description": "Gather evidence",
+                "agent": "web_researcher",
+                "params": {"task_description": "Gather evidence", "angles": ["one"]},
+            },
+            {
+                "id": "review",
+                "description": "Review available evidence",
+                "agent": "analyst",
+                "params": {"task_description": "Review available evidence", "context": ""},
+                "depends_on": ["researcher"],
+            },
+        ],
+    ))
+
+    assert len(created) == 2
+    assert "research node failed" in result
+    started = [event["data"]["id"] for event in parent.events if event["type"] == "dag_node_start"]
+    assert started == ["researcher", "review"]
+    assert "research node failed" in created[1].chat_history[0]["content"]
 
 
 def test_interrupted_subagent_emits_stopped_status(monkeypatch):

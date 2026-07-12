@@ -98,6 +98,12 @@ def init_db():
     except sqlite3.OperationalError:
         pass  # already exists
 
+    # ── migration: distinguish model-only context from user-visible history ──
+    try:
+        conn.execute("ALTER TABLE messages ADD COLUMN visibility TEXT DEFAULT 'visible'")
+    except sqlite3.OperationalError:
+        pass  # already exists
+
     # ── migration: add workspace_path column to sessions ──
     try:
         conn.execute("ALTER TABLE sessions ADD COLUMN workspace_path TEXT DEFAULT ''")
@@ -114,6 +120,7 @@ def init_db():
     except sqlite3.OperationalError:
         pass  # already exists
 
+    conn.commit()
     log.info("Database initialized at %s", _DB_PATH)
 
 
@@ -185,15 +192,15 @@ def update_session_active_skill(session_id: int, skill_name: str, args: str = ""
 # Messages
 # ---------------------------------------------------------------------------
 
-def save_message(session_id: int, role: str, content, tool_name: str = "", conversation_round: int = 0, reasoning: str = "", tool_call_id: str = "", tool_calls: str = "", prompt_tokens: int | None = None):
+def save_message(session_id: int, role: str, content, tool_name: str = "", conversation_round: int = 0, reasoning: str = "", tool_call_id: str = "", tool_calls: str = "", prompt_tokens: int | None = None, visibility: str = "visible"):
     # Ensure content is a string for DB storage
     if isinstance(content, list):
         import json
         content = json.dumps(content, ensure_ascii=False)
     conn = _get_connection()
     conn.execute(
-        "INSERT INTO messages (session_id, role, content, tool_name, conversation_round, reasoning, tool_call_id, tool_calls, prompt_tokens) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-        (session_id, role, content, tool_name or None, conversation_round, reasoning or None, tool_call_id or None, tool_calls or None, prompt_tokens),
+        "INSERT INTO messages (session_id, role, content, tool_name, conversation_round, reasoning, tool_call_id, tool_calls, prompt_tokens, visibility) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        (session_id, role, content, tool_name or None, conversation_round, reasoning or None, tool_call_id or None, tool_calls or None, prompt_tokens, visibility),
     )
     conn.commit()
     log.debug("Saved %s message to session #%s (round=%s)", role, session_id, conversation_round)
@@ -207,7 +214,18 @@ def get_session_messages(session_id: int):
     """Return all messages for a session, oldest first."""
     conn = _get_connection()
     rows = conn.execute(
-        "SELECT id, role, content, tool_name, conversation_round, created_at, reasoning, tool_call_id, tool_calls, prompt_tokens FROM messages WHERE session_id = ? ORDER BY id",
+        "SELECT id, role, content, tool_name, conversation_round, created_at, reasoning, tool_call_id, tool_calls, prompt_tokens, visibility FROM messages WHERE session_id = ? ORDER BY id",
+        (session_id,),
+    ).fetchall()
+    return [dict(r) for r in rows]
+
+
+def get_session_display_messages(session_id: int):
+    """Return only messages intended for rendering in conversation history."""
+    conn = _get_connection()
+    rows = conn.execute(
+        "SELECT id, role, content, tool_name, conversation_round, created_at, reasoning, tool_call_id, tool_calls, prompt_tokens, visibility "
+        "FROM messages WHERE session_id = ? AND COALESCE(visibility, 'visible') != 'internal' ORDER BY id",
         (session_id,),
     ).fetchall()
     return [dict(r) for r in rows]
