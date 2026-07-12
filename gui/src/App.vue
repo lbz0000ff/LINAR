@@ -13,6 +13,7 @@ import SettingsPage from './components/SettingsPage.vue'
 import TitleBar from './components/TitleBar.vue'
 import RightPanel from './components/RightPanel.vue'
 import { applyDagNodeComplete, applyDagNodeStart, applySubagentEvent, appendDagPlan, updateDagPlan } from './utils/subagentTrace.js'
+import { isNearBottom, markAnswerStarted, shouldShowScrollButton } from './utils/chatStreaming.js'
 import { useI18n } from 'vue-i18n'
 
 const { t } = useI18n()
@@ -58,21 +59,27 @@ const workspacePath = ref('')
 const workspaceAssets = ref([])
 const msgContainer = ref(null)
 const showScrollBtn = ref(false)
-
+const isPinnedToBottom = ref(true)
 
 function onMsgScroll() {
   if (!msgContainer.value) return
   const el = msgContainer.value
-  showScrollBtn.value = el.scrollHeight - el.scrollTop - el.clientHeight > 200
+  isPinnedToBottom.value = isNearBottom(el.scrollHeight, el.scrollTop, el.clientHeight)
+  showScrollBtn.value = shouldShowScrollButton(el.scrollHeight, el.scrollTop, el.clientHeight)
+}
+function resetBottomFollowing() {
+  isPinnedToBottom.value = true
+  showScrollBtn.value = false
 }
 function scrollToBottom() {
+  resetBottomFollowing()
   if (!msgContainer.value) return
   msgContainer.value.scrollTo({ top: msgContainer.value.scrollHeight, behavior: 'smooth' })
 }
 // 新消息自动滚动（仅当用户未向上滚动时）
 watch(messages, () => {
   nextTick(() => {
-    if (!msgContainer.value || showScrollBtn.value) return
+    if (!msgContainer.value || !isPinnedToBottom.value) return
     msgContainer.value.scrollTop = msgContainer.value.scrollHeight
   })
 }, { deep: false })
@@ -97,6 +104,7 @@ function handleMessage(event) {
   ) return
   if (type === 'sessions' && event.data) loadSessions(event.data)
   else if (type === 'session_msgs' && event.data) {
+    resetBottomFollowing()
     messages.value = convertDbMessages(event.data).map(m => ({ ...m, collapsed: true }))
     if (event.title) chatTitle.value = event.title
     applySessionContext(event.session || {})
@@ -328,6 +336,7 @@ function loadSessions(data) {
 }
 function switchSession(id) {
   if (isProcessing.value) { send('stop', {}); isProcessing.value = false }
+  resetBottomFollowing()
   currentSessionId.value = id; isNewSession.value = false
   messages.value = []
   chatTitle.value = sessions.value.find(s => s.id === id)?.title || t('chat.sessionLabel', { id })
@@ -341,6 +350,7 @@ function switchSession(id) {
 }
 function newSession() {
   if (isProcessing.value) return
+  resetBottomFollowing()
   currentSessionId.value = null; isNewSession.value = true
   messages.value = []; chatTitle.value = t('sidebar.newSession')
   currentSkill.value = null
@@ -378,6 +388,7 @@ function ensureAiMessage() {
 function handleToken(text) {
   isProcessing.value = true
   const msg = ensureAiMessage()
+  markAnswerStarted(msg)
   if (!msg._fullText) msg._fullText = ''
   msg._fullText += text
   msg.text = renderMd(msg._fullText)
@@ -496,6 +507,7 @@ function onSend(text, files) {
     userMsg._content = blocks
     lastFilePaths.value = filePaths
   }
+  resetBottomFollowing()
   addMessage(userMsg)
   if (isNewSession.value || !currentSessionId.value) {
     pendingMsg.value = text; pendingFiles.value = filePaths
