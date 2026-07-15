@@ -24,6 +24,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from tqdm import tqdm
+
 ROOT_DIR = Path(__file__).resolve().parents[1]
 AGENT_DIR = ROOT_DIR / "agent"
 BENCH_DIR = ROOT_DIR / "eval" / "deep_research_bench"
@@ -593,6 +595,15 @@ async def async_main(
     else:
         runner = task_runner
 
+    progress = tqdm(
+        total=len(selected),
+        initial=len(selected) - len(pending),
+        desc="LINAR DRB",
+        unit="task",
+        dynamic_ncols=True,
+        disable=True if bool(getattr(args, "no_progress", False)) else None,
+    )
+
     async def execute_pending(
         idx: int,
         query: dict[str, Any],
@@ -649,42 +660,56 @@ async def async_main(
         active_tasks.add(asyncio.create_task(execute_pending(idx, query)))
         return True
 
-    for _ in range(min(max_workers, len(pending))):
-        launch_next()
+    def refresh_progress() -> None:
+        progress.set_postfix({
+            "ok": sum(1 for query in selected if str(query["id"]) in results_by_id),
+            "failed": sum(1 for query in selected if str(query["id"]) in failures_by_id),
+            "running": len(active_tasks),
+        })
 
-    stop_after_failure = False
-    while active_tasks and not stop_after_failure:
-        completed, still_running = await asyncio.wait(
-            active_tasks,
-            return_when=asyncio.FIRST_COMPLETED,
-        )
-        active_tasks = set(still_running)
-        for completed_task in completed:
-            idx, result = await completed_task
-            prompt = result.prompt
-            qid = result.id
-            print(f"\n[{idx}/{len(pending)}] ID={qid} {prompt[:80]}...")
-            key = str(result.id)
-            if result.ok:
-                validate_article(result.article, source=f"article for id={result.id}")
-                results_by_id[key] = result
-                failures_by_id.pop(key, None)
-                print(f"  OK in {result.elapsed_seconds:.0f}s ({len(result.article)} chars)")
-            else:
-                failures_by_id[key] = result
-                print(f"  FAILED in {result.elapsed_seconds:.0f}s: {result.error}")
-            if results_by_id:
-                write_results(output_path, list(results_by_id.values()), strict=False)
-            write_failures(failure_path, list(failures_by_id.values()))
-            if strict and not result.ok:
-                stop_after_failure = True
-                break
+    try:
+        for _ in range(min(max_workers, len(pending))):
             launch_next()
+        refresh_progress()
 
-    if stop_after_failure and active_tasks:
-        for task in active_tasks:
-            task.cancel()
-        await asyncio.gather(*active_tasks, return_exceptions=True)
+        stop_after_failure = False
+        while active_tasks and not stop_after_failure:
+            completed, still_running = await asyncio.wait(
+                active_tasks,
+                return_when=asyncio.FIRST_COMPLETED,
+            )
+            active_tasks = set(still_running)
+            for completed_task in completed:
+                _idx, result = await completed_task
+                key = str(result.id)
+                if result.ok:
+                    validate_article(result.article, source=f"article for id={result.id}")
+                    results_by_id[key] = result
+                    failures_by_id.pop(key, None)
+                else:
+                    failures_by_id[key] = result
+                    progress.write(
+                        f"FAILED ID={result.id} in {result.elapsed_seconds:.0f}s: {result.error}"
+                    )
+                if results_by_id:
+                    write_results(output_path, list(results_by_id.values()), strict=False)
+                write_failures(failure_path, list(failures_by_id.values()))
+                progress.update(1)
+                if strict and not result.ok:
+                    stop_after_failure = True
+                    refresh_progress()
+                    break
+                launch_next()
+                refresh_progress()
+
+        if stop_after_failure and active_tasks:
+            for task in active_tasks:
+                task.cancel()
+            await asyncio.gather(*active_tasks, return_exceptions=True)
+            active_tasks.clear()
+            refresh_progress()
+    finally:
+        progress.close()
 
     selected_successes = sum(1 for query in selected if str(query["id"]) in results_by_id)
     selected_failures = sum(1 for query in selected if str(query["id"]) in failures_by_id)
@@ -746,6 +771,11 @@ def parse_args() -> argparse.Namespace:
         type=float,
         default=3600,
         help="Per-task timeout in seconds; 0 disables it (default: 3600)",
+    )
+    parser.add_argument(
+        "--no-progress",
+        action="store_true",
+        help="Disable the dynamic tqdm campaign progress bar",
     )
     parser.add_argument("--worker-query-id", default="", help=argparse.SUPPRESS)
     parser.add_argument("--worker-workspace", default="", help=argparse.SUPPRESS)

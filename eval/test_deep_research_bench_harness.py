@@ -732,3 +732,150 @@ def test_cancelling_subprocess_runner_kills_worker_and_preserves_log(
 
     assert process.killed is True
     assert (workspace / "harness.log").read_text(encoding="utf-8") == "partial worker log\n"
+
+
+class _FakeProgress:
+    def __init__(self, **kwargs: object) -> None:
+        self.kwargs = kwargs
+        self.updates: list[int] = []
+        self.postfixes: list[dict[str, int]] = []
+        self.messages: list[str] = []
+        self.closed = False
+
+    def update(self, amount: int = 1) -> None:
+        self.updates.append(amount)
+
+    def set_postfix(self, values: dict[str, int], refresh: bool = True) -> None:
+        self.postfixes.append(dict(values))
+
+    def write(self, message: str) -> None:
+        self.messages.append(message)
+
+    def close(self) -> None:
+        self.closed = True
+
+
+def test_progress_bar_starts_from_resumed_count_and_tracks_campaign(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    query_file = tmp_path / "queries.jsonl"
+    _write_queries(query_file, count=3)
+    (tmp_path / "raw.jsonl").write_text(
+        json.dumps({"id": 1, "prompt": "prompt 1", "article": "# Existing"}) + "\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "raw.failures.jsonl").write_text(
+        json.dumps({
+            "id": 2,
+            "prompt": "prompt 2",
+            "error": "old failure",
+            "elapsed_seconds": 5.0,
+        }) + "\n",
+        encoding="utf-8",
+    )
+    progress_instances: list[_FakeProgress] = []
+
+    def fake_tqdm(**kwargs: object) -> _FakeProgress:
+        progress = _FakeProgress(**kwargs)
+        progress_instances.append(progress)
+        return progress
+
+    monkeypatch.setattr(harness, "tqdm", fake_tqdm, raising=False)
+
+    async def fake_runner(query: dict, workspace_root: Path) -> harness.BenchRunResult:
+        return harness.BenchRunResult(
+            id=query["id"],
+            prompt=str(query["prompt"]),
+            article="# New report",
+            ok=True,
+        )
+
+    exit_code = asyncio.run(harness.async_main(
+        _campaign_args(tmp_path, query_file),
+        task_runner=fake_runner,
+    ))
+
+    assert exit_code == 1
+    progress = progress_instances[0]
+    assert progress.kwargs["total"] == 3
+    assert progress.kwargs["initial"] == 2
+    assert progress.kwargs["desc"] == "LINAR DRB"
+    assert progress.updates == [1]
+    assert progress.postfixes[-1] == {"ok": 2, "failed": 1, "running": 0}
+    assert progress.closed is True
+
+
+def test_progress_bar_writes_failure_detail(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    query_file = tmp_path / "queries.jsonl"
+    _write_queries(query_file, count=1)
+    progress_instances: list[_FakeProgress] = []
+
+    def fake_tqdm(**kwargs: object) -> _FakeProgress:
+        progress = _FakeProgress(**kwargs)
+        progress_instances.append(progress)
+        return progress
+
+    monkeypatch.setattr(harness, "tqdm", fake_tqdm, raising=False)
+
+    async def failed_runner(query: dict, workspace_root: Path) -> harness.BenchRunResult:
+        return harness.BenchRunResult(
+            id=query["id"],
+            prompt=str(query["prompt"]),
+            article="",
+            ok=False,
+            error="provider blocked output",
+        )
+
+    asyncio.run(harness.async_main(
+        _campaign_args(tmp_path, query_file),
+        task_runner=failed_runner,
+    ))
+
+    assert progress_instances[0].messages == [
+        "FAILED ID=1 in 0s: provider blocked output"
+    ]
+
+
+def test_no_progress_cli_flag_forces_disabled_bar(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    query_file = tmp_path / "queries.jsonl"
+    _write_queries(query_file, count=1)
+    progress_instances: list[_FakeProgress] = []
+
+    def fake_tqdm(**kwargs: object) -> _FakeProgress:
+        progress = _FakeProgress(**kwargs)
+        progress_instances.append(progress)
+        return progress
+
+    monkeypatch.setattr(harness, "tqdm", fake_tqdm, raising=False)
+
+    async def fake_runner(query: dict, workspace_root: Path) -> harness.BenchRunResult:
+        return harness.BenchRunResult(
+            id=query["id"],
+            prompt=str(query["prompt"]),
+            article="# Report",
+            ok=True,
+        )
+
+    asyncio.run(harness.async_main(
+        _campaign_args(tmp_path, query_file, no_progress=True),
+        task_runner=fake_runner,
+    ))
+
+    assert progress_instances[0].kwargs["disable"] is True
+
+
+def test_parse_args_accepts_no_progress(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        ["run_deep_research_bench.py", "--no-progress"],
+    )
+
+    assert harness.parse_args().no_progress is True
