@@ -17,6 +17,9 @@ providers:
   zhipu:
     base_url: "https://open.bigmodel.cn/api/paas/v4"
     api_key: "${ZHIPU_API_KEY}"
+  stepfun:
+    base_url: "https://api.stepfun.com/v1"
+    api_key: "${STEPFUN_API_KEY}"
   openrouter:
     base_url: "https://openrouter.ai/api/v1"
     api_key: "${OPENROUTER_API_KEY}"
@@ -39,8 +42,7 @@ llm:
 # System Configuration
 locale: en                      # "zh" | "en" — default UI language
 max_turns: 80                    # 0 = unlimited; N = max LLM rounds
-sub_agent_max_llm_calls: 20       # generic create_plan sub-task rounds
-research_sub_agent_max_llm_calls: 40  # deep-research DAG sub-task rounds
+sub_agent_max_llm_calls: 25       # maximum rounds for every create_plan subagent
 research_sub_agent_max_web_search_calls: 10  # hard per-web-researcher search budget
 research_sub_agent_max_web_fetch_calls: 15   # hard per-web-researcher fetch budget
 show_reasoning: full              # "hide" | "full"
@@ -148,6 +150,12 @@ permission_modes:
 
 # MCP Servers (Model Context Protocol)
 mcp_servers:
+  # stepsearch:
+  #   enabled: true
+  #   command: npx
+  #   args: ["-y", "mcp-remote", "https://api.stepfun.com/step_plan/v1/mcp/web_search/mcp"]
+  #   auth_provider: stepfun
+  #   is_search_tool: true
   # fetch:
   #   enabled: true
   #   command: python

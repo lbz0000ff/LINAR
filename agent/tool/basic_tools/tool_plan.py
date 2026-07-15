@@ -14,7 +14,7 @@ from .tool import Tool
 
 
 class Tool_PlanAdvance(Tool):
-    """Mark a sub-task as complete and check what's now ready."""
+    """[DISCARDED]Mark a sub-task as complete and check what's now ready."""
 
     name: str = "plan_advance"
     description: str = (
@@ -108,7 +108,7 @@ class Tool_PlanAdvance(Tool):
 
 
 class Tool_PlanStatus(Tool):
-    """Show the current state of the task plan."""
+    """[DISCARDED]Show the current state of the task plan."""
 
     name: str = "plan_status"
     description: str = (
@@ -517,7 +517,6 @@ class Tool_CreatePlan(Tool):
                 rendered = render_prompt(defn, params)
                 rendered = f"{rendered}\n\nCurrent date: {date.today().isoformat()}"
                 sub_model = defn.get("model")
-                sub_provider = defn.get("provider")
 
                 # Build user message with predecessor context
                 user_msg = (
@@ -532,7 +531,6 @@ class Tool_CreatePlan(Tool):
             else:
                 # ── Legacy path: free-form description ──
                 rendered = None
-                sub_provider = None
                 user_msg = description
                 if hint and hint != "any":
                     user_msg = f"Your role: {hint}\n{description}"
@@ -551,7 +549,8 @@ class Tool_CreatePlan(Tool):
                 workspace_root=workspace_root,
                 model=sub_model,
                 system_prompt=rendered,
-                provider=sub_provider if agent_type else None,
+                use_aux=bool(agent_type),
+                tool_factory=getattr(agent, "_subagent_tool_factory", None),
             )
 
             # ── Inject submit_output tool (all DAG sub-tasks) ──
@@ -596,16 +595,29 @@ class Tool_CreatePlan(Tool):
 
             cfg = getattr(agent, "cfg", {}) or {}
             if agent_type == "web_researcher":
-                from orchestrator.research_tool_budget import ResearchToolBudget
+                from orchestrator.research_tool_budget import (
+                    ResearchToolBudget,
+                    ResearchToolBudgetCounter,
+                )
 
                 research_limits = {
                     "web_search": cfg.get("research_sub_agent_max_web_search_calls", 10),
                     "web_fetch": cfg.get("research_sub_agent_max_web_fetch_calls", 15),
                 }
                 for tool_name, limit in research_limits.items():
-                    if tool_name in sub_agent.tools:
-                        sub_agent.tools[tool_name] = ResearchToolBudget(
-                            sub_agent.tools[tool_name], limit,
+                    counter = ResearchToolBudgetCounter(limit)
+                    mcp_suffix = "search" if tool_name == "web_search" else "fetch"
+                    equivalent_tools = [
+                        name for name in sub_agent.tools
+                        if name == tool_name
+                        or (
+                            name.startswith("mcp_")
+                            and name.endswith(mcp_suffix)
+                        )
+                    ]
+                    for equivalent_name in equivalent_tools:
+                        sub_agent.tools[equivalent_name] = ResearchToolBudget(
+                            sub_agent.tools[equivalent_name], limit, counter,
                         )
                 sub_agent.llm.tools = sub_agent.tools
                 user_msg += (
@@ -625,12 +637,7 @@ class Tool_CreatePlan(Tool):
             node_started = time.perf_counter()
 
             # Research-style predefined agents usually need more rounds.
-            default_limit = cfg.get("sub_agent_max_llm_calls", 20)
-            if agent_type:
-                default_limit = cfg.get(
-                    "research_sub_agent_max_llm_calls",
-                    max(default_limit, 40),
-                )
+            default_limit = cfg.get("sub_agent_max_llm_calls", 25)
             sub_agent.max_llm_calls = default_limit
 
             deps_list = node.depends_on if node else []
@@ -728,11 +735,10 @@ class Tool_CreatePlan(Tool):
         # requests to rate-limited providers (e.g. StepFun V0: 5 concurrent).
         _node_provider: dict[str, str | None] = {}
         for nid, meta in _sub_meta.items():
-            atype = meta.get("agent")
-            if atype:
-                from subagent import load_subagent
-                defn = load_subagent(atype)
-                _node_provider[nid] = defn.get("provider") if defn else None
+            if meta.get("agent"):
+                _node_provider[nid] = (
+                    (agent.cfg.get("aux") or {}).get("provider") or None
+                )
 
         # Max concurrent sub-agents per provider (tune per your API tier)
         _PROVIDER_MAX_CONCURRENT = {"stepfun": 3}
@@ -995,13 +1001,17 @@ class Tool_CreatePlan(Tool):
                 if key in parsed:
                     synthesis[key] = parsed[key]
             if agent_type == "analyst":
-                synthesis["key_evidence"] = [
-                    evidence[evidence_id]
-                    for evidence_id in synthesis.get("key_evidence_ids", [])
-                    if evidence_id in evidence
-                ]
                 synthesis["candidate_gaps"] = []
                 meta["last_analyzed_revision"] = revision
+
+        # Evidence is the canonical store. Keep synthesis as a compact index and
+        # repair stale references left by removals or older state-file versions.
+        synthesis["key_evidence_ids"] = [
+            evidence_id
+            for evidence_id in synthesis.get("key_evidence_ids", [])
+            if evidence_id in evidence
+        ]
+        synthesis.pop("key_evidence", None)
 
         meta["revision"] = revision
 

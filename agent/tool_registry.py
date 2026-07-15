@@ -110,12 +110,42 @@ def _load_mcp_config() -> dict:
     return merged
 
 
+def _resolve_mcp_args(scfg: dict, config: dict) -> list[str]:
+    """Return MCP process args, optionally adding provider-backed bearer auth."""
+    args = [str(arg) for arg in (scfg.get("args") or [])]
+    provider_name = str(scfg.get("auth_provider") or "").strip()
+    if not provider_name:
+        return args
+
+    providers = config.get("providers") or {}
+    provider = providers.get(provider_name) or {}
+    api_key = str(provider.get("api_key") or "").strip()
+    if not api_key or api_key.startswith("${"):
+        for section_name in ("llm", "aux", "vision"):
+            section = config.get(section_name) or {}
+            candidate = str(section.get("api_key") or "").strip()
+            if (
+                section.get("provider") == provider_name
+                and candidate
+                and not candidate.startswith("${")
+            ):
+                api_key = candidate
+                break
+    if not api_key or api_key.startswith("${"):
+        raise ValueError(
+            f"MCP auth provider '{provider_name}' has no configured API key"
+        )
+    return [*args, "--header", f"Authorization: Bearer {api_key}"]
+
+
 def _start_one_mcp(name: str, scfg: dict) -> tuple[str, object, list[dict]] | None:
     """Start a single MCP server with its own timeout — runs in a worker thread."""
     import asyncio
     timeout = scfg.get("start_timeout", _MCP_START_TIMEOUT)
-    server = MCPServer(name, scfg["command"], scfg.get("args", []), env=scfg.get("env"))
     try:
+        config = load_config()
+        args = _resolve_mcp_args(scfg, config)
+        server = MCPServer(name, scfg["command"], args, env=scfg.get("env"))
         asyncio.run(asyncio.wait_for(server.start(), timeout=timeout))
         return name, server, server.list_tools()
     except asyncio.TimeoutError:
@@ -167,6 +197,9 @@ def _init_mcp_servers() -> dict:
                 original_name=t['name'],
                 description=t["description"],
                 input_schema=t["inputSchema"],
+                is_search_tool=bool(
+                    (servers_cfg.get(name) or {}).get("is_search_tool", False)
+                ),
             )
         _mcp_servers.append(server)
         log.info("MCP server '%s': registered %d tools", name, len(tools_list))
@@ -277,18 +310,28 @@ class ToolRegistry:
     def get_tools(self) -> dict:
         """Return a dict of tool instances filtered by enabled sets."""
         selected = {}
+        mcp_tools = {}
         if self._enabled_sets is None:
             for name, cls in _TOOL_CLASSES.items():
                 selected[name] = cls()
+            mcp_tools = _init_mcp_servers()
+            selected.update(mcp_tools)
         else:
             for name in self._enabled_sets:
                 for tool_name in _TOOLSETS.get(name, []):
                     if tool_name in _TOOL_CLASSES:
                         selected[tool_name] = _TOOL_CLASSES[tool_name]()
             # Enable MCP servers when "mcp" or "research" toolset is selected
-            if "mcp" in self._enabled_sets or "research" in self._enabled_sets:
+            if any(
+                name in self._enabled_sets for name in ("web", "mcp", "research")
+            ):
                 mcp_tools = _init_mcp_servers()
+            if "mcp" in self._enabled_sets or "research" in self._enabled_sets:
                 selected.update(mcp_tools)
+        if self._enabled_sets is None or any(
+            name in self._enabled_sets for name in ("web", "research")
+        ):
+            _replace_native_web_tools(selected, mcp_tools)
         _add_vision_tools(selected)
         return selected
 
@@ -335,6 +378,20 @@ def _add_vision_tools(tools: dict) -> None:
     if vision_enabled:
         tools["img_to_text"] = Tool_ImgToText()
 
+
+def _replace_native_web_tools(tools: dict, mcp_tools: dict) -> None:
+    """Hide native web tools when a successful search MCP can replace them."""
+    search_mcp_tools = {
+        name: tool
+        for name, tool in mcp_tools.items()
+        if bool(getattr(tool, "is_search_tool", False))
+    }
+    if not search_mcp_tools:
+        return
+    tools.pop("web_search", None)
+    tools.pop("web_fetch", None)
+    tools.update(search_mcp_tools)
+
 # ── public API ───────────────────────────────────────────────
 
 def get_tools(enabled_sets=None, include_mcp=True):
@@ -348,6 +405,7 @@ def get_tools(enabled_sets=None, include_mcp=True):
     if enabled_sets is None:
         all_tools = dict(_all_tools)
         all_tools.update(mcp_tools)
+        _replace_native_web_tools(all_tools, mcp_tools)
         _add_vision_tools(all_tools)
         log.info("Loaded %d native + %d MCP tools", len(_all_tools), len(mcp_tools))
         return all_tools
@@ -357,8 +415,10 @@ def get_tools(enabled_sets=None, include_mcp=True):
         for tool_name in _TOOLSETS.get(name, []):
             if tool_name in _all_tools:
                 selected[tool_name] = _all_tools[tool_name]
-    if include_mcp and "mcp" in enabled_sets:
+    if include_mcp and ("mcp" in enabled_sets or "research" in enabled_sets):
         selected.update(mcp_tools)
+    if include_mcp and ("web" in enabled_sets or "research" in enabled_sets):
+        _replace_native_web_tools(selected, mcp_tools)
     _add_vision_tools(selected)
     log.info("Loaded %d tools from enabled sets: %s", len(selected), enabled_sets)
     return selected

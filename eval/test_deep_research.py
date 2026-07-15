@@ -14,6 +14,13 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "agent"))
 import pytest
 
 
+live_eval = pytest.mark.skipif(
+    os.environ.get("RUN_LIVE_EVAL") != "1",
+    reason="set RUN_LIVE_EVAL=1 to run online Deep Research smoke tests",
+)
+
+
+@live_eval
 @pytest.mark.anyio
 async def test_smoke_single_question():
     """Smoke test: answer one simple research question via create_plan."""
@@ -41,6 +48,7 @@ async def test_smoke_single_question():
     print(f"Smoke test PASSED: {result[:100]}")
 
 
+@live_eval
 @pytest.mark.anyio
 async def test_dag_execution_basic():
     """Test that a minimal 2-node DAG executes and returns results."""

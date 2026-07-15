@@ -10,8 +10,8 @@ from memory.topic import Topic, TopicRegistry
 # ── Seed topics (no general) ───────────────────────────────────
 
 
-def test_seed_topics_no_general():
-    tr = TopicRegistry()
+def test_seed_topics_no_general(tmp_path):
+    tr = TopicRegistry(path=str(tmp_path / "topics.json"))
     names = {t.name for t in tr.list_topics()}
     assert "general" not in names
     assert names == {"preference", "project", "behavior", "workflow"}

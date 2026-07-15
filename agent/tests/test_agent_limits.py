@@ -51,6 +51,36 @@ class _FakeLLM:
         return self._stream()
 
 
+class _UsageStreamingLLM:
+    model = "step-3.7-flash"
+    provider = "stepfun"
+
+    def __init__(self):
+        self.system_prompt = ""
+
+    async def _stream(self):
+        for completion_tokens in (1, 2, 3):
+            yield SimpleNamespace(
+                usage=SimpleNamespace(
+                    prompt_tokens=100,
+                    completion_tokens=completion_tokens,
+                    total_tokens=100 + completion_tokens,
+                    model_extra={
+                        "prompt_cache_hit_tokens": 80,
+                        "prompt_cache_miss_tokens": 20,
+                    },
+                ),
+                choices=[SimpleNamespace(delta=SimpleNamespace(
+                    content="x",
+                    reasoning_content=None,
+                    tool_calls=[],
+                ))],
+            )
+
+    def stream_response_messages(self, _messages):
+        return self._stream()
+
+
 def test_agent_uses_max_turns_config(monkeypatch):
     monkeypatch.setattr(
         "agent.load_config",
@@ -107,3 +137,35 @@ def test_llm_limit_adds_explicit_meta_message(monkeypatch):
         and "LLM call limit reached" in msg.get("content", "")
         for msg in agent.chat_history
     )
+
+
+def test_streaming_usage_is_emitted_once_with_the_final_snapshot(monkeypatch):
+    monkeypatch.setattr(
+        "agent.load_config",
+        lambda: {
+            "llm": {"api_key": "test", "base_url": "http://test.invalid/v1", "model": "fake"},
+            "max_turns": 1,
+            "chat_history": {},
+            "permissions": {"default": "allow"},
+            "permission_modes": {},
+        },
+    )
+    agent = Agent(tools={}, memory_enabled=False)
+    agent.llm = _UsageStreamingLLM()
+    emitted = []
+    agent.emit = emitted.append
+
+    asyncio.run(agent.process_with_llm())
+
+    usage_events = [event for event in emitted if event.get("type") == "usage"]
+    assert usage_events == [{
+        "type": "usage",
+        "data": {
+            "prompt_tokens": 100,
+            "completion_tokens": 3,
+            "total_tokens": 103,
+            "prompt_cache_hit_tokens": 80,
+            "prompt_cache_miss_tokens": 20,
+            "reasoning_tokens": 0,
+        },
+    }]

@@ -21,6 +21,7 @@ models/*
 reports
 research
 test/*
+.worktrees/
 agent/memory/chat_history/*
 agent/memory/archived/*
 agent/prompt/USER.md
@@ -56,7 +57,6 @@ webui/*
 # Playwright MCP runtime data
 .playwright-mcp/
 .superpowers/
-.worktrees/
 
 # Python virtual environment
 .venv/

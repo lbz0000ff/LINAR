@@ -8,6 +8,7 @@ from types import SimpleNamespace
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from tool.basic_tools.tool_plan import Tool_CreatePlan
+from config import DEFAULTS
 
 
 class _FakeParentAgent:
@@ -19,6 +20,11 @@ class _FakeParentAgent:
 
     def emit(self, event):
         self.events.append(event)
+
+
+def test_subagent_llm_limit_has_one_default_of_25():
+    assert DEFAULTS["sub_agent_max_llm_calls"] == 25
+    assert "research_sub_agent_max_llm_calls" not in DEFAULTS
 
 
 class _FakeSubAgent:
@@ -98,6 +104,55 @@ def test_create_plan_uses_configured_sub_agent_llm_limit(monkeypatch):
     assert created[0].submission_required is True
     assert created[0].submission_reserve == 2
     assert created[0].wrap_up_calls == 2
+
+
+def test_predefined_research_agent_uses_same_sub_agent_llm_limit(monkeypatch):
+    created = []
+    created_kwargs = []
+
+    def fake_create_agent(**kwargs):
+        sub_agent = _FakeSubAgent()
+        created.append(sub_agent)
+        created_kwargs.append(kwargs)
+        return sub_agent
+
+    monkeypatch.setattr("agent_factory.create_agent", fake_create_agent)
+    tool = Tool_CreatePlan()
+    tool.agent_ref = _FakeParentAgent()
+
+    asyncio.run(tool.execute(
+        goal="research",
+        sub_tasks=[{
+            "id": "researcher",
+            "agent": "web_researcher",
+            "params": {"task_description": "Research", "angles": ["one"]},
+        }],
+    ))
+
+    assert created[0].max_llm_calls == 27
+    assert created_kwargs[0]["use_aux"] is True
+
+
+def test_create_plan_forwards_parent_subagent_tool_factory(monkeypatch):
+    created_kwargs = []
+
+    def fake_create_agent(**kwargs):
+        created_kwargs.append(kwargs)
+        return _FakeSubAgent()
+
+    monkeypatch.setattr("agent_factory.create_agent", fake_create_agent)
+    parent = _FakeParentAgent()
+    tool_factory = lambda _sets: {}
+    parent._subagent_tool_factory = tool_factory
+    tool = Tool_CreatePlan()
+    tool.agent_ref = parent
+
+    asyncio.run(tool.execute(
+        goal="research",
+        sub_tasks=[{"id": "one", "description": "Research safely"}],
+    ))
+
+    assert created_kwargs[0]["tool_factory"] is tool_factory
 
 
 def test_create_plan_forwards_node_scoped_subagent_events(monkeypatch):
@@ -285,6 +340,46 @@ def test_web_researcher_tools_enforce_independent_search_and_fetch_budgets(monke
     assert created[0].tools["submit_output"] is not None
 
 
+def test_web_researcher_mcp_and_native_tools_share_retrieval_budgets(monkeypatch):
+    created = []
+
+    def fake_create_agent(**_kwargs):
+        sub_agent = _FakeSubAgent()
+        sub_agent.tools = {
+            "web_search": _FakeTool("web_search"),
+            "mcp_stepsearch_web_search": _FakeTool("mcp_stepsearch_web_search"),
+            "mcp_anysearch_search": _FakeTool("mcp_anysearch_search"),
+            "mcp_anysearch_batch_search": _FakeTool("mcp_anysearch_batch_search"),
+            "web_fetch": _FakeTool("web_fetch"),
+            "mcp_stepsearch_web_fetch": _FakeTool("mcp_stepsearch_web_fetch"),
+        }
+        sub_agent.llm.tools = sub_agent.tools
+        created.append(sub_agent)
+        return sub_agent
+
+    parent = _FakeParentAgent()
+    parent.cfg.update({
+        "research_sub_agent_max_web_search_calls": 2,
+        "research_sub_agent_max_web_fetch_calls": 1,
+    })
+    monkeypatch.setattr("agent_factory.create_agent", fake_create_agent)
+    tool = Tool_CreatePlan()
+    tool.agent_ref = parent
+
+    asyncio.run(tool.execute(
+        goal="research",
+        sub_tasks=[{"id": "one", "description": "Research", "agent": "web_researcher"}],
+    ))
+
+    tools = created[0].tools
+    assert tools["mcp_stepsearch_web_search"].execute(query="one")["message"].endswith("ok")
+    assert tools["mcp_anysearch_search"].execute(query="two")["message"].endswith("ok")
+    assert tools["web_search"].execute(query="three")["budget_exhausted"] is True
+    assert tools["mcp_anysearch_batch_search"].execute(query="four")["budget_exhausted"] is True
+    assert tools["mcp_stepsearch_web_fetch"].execute(url="https://one.example")["message"].endswith("ok")
+    assert tools["web_fetch"].execute(url="https://two.example")["budget_exhausted"] is True
+
+
 def test_predefined_subagent_prompt_includes_current_date(monkeypatch):
     created_kwargs = []
 
@@ -424,8 +519,40 @@ def test_analyst_updates_synthesis_and_removes_superseded_evidence(tmp_path):
     assert set(state["evidence"]) == {"wave1_angle_1:e01"}
     assert state["synthesis"]["summary"] == "Compact synthesis"
     assert state["synthesis"]["key_evidence_ids"] == ["wave1_angle_1:e01"]
-    assert [item["id"] for item in state["synthesis"]["key_evidence"]] == [
-        "wave1_angle_1:e01"
-    ]
+    assert "key_evidence" not in state["synthesis"]
     assert state["synthesis"]["critical_gaps"] == ["Missing panel data"]
     assert state["meta"]["last_analyzed_revision"] == state["meta"]["revision"]
+
+
+def test_critic_removal_cleans_stale_key_evidence_ids(tmp_path):
+    Tool_CreatePlan._write_research_state(
+        str(tmp_path), "wave1_angle_1",
+        {"findings": [
+            {"text": "Keep", "source": "https://keep.example"},
+            {"text": "Refuted", "source": "https://refuted.example"},
+        ]},
+        agent_type="web_researcher",
+    )
+    Tool_CreatePlan._write_research_state(
+        str(tmp_path), "wave1_review",
+        {
+            "summary": "Initial synthesis",
+            "key_evidence_ids": ["wave1_angle_1:e01", "wave1_angle_1:e02"],
+        },
+        agent_type="analyst",
+    )
+
+    Tool_CreatePlan._write_research_state(
+        str(tmp_path), "quality_check",
+        {
+            "summary": "Refuted one claim",
+            "remove_evidence_ids": ["wave1_angle_1:e02"],
+            "verdicts": [{"evidence_id": "wave1_angle_1:e02", "verdict": "refuted"}],
+        },
+        agent_type="critic",
+    )
+
+    state = json.loads((tmp_path / "research_state.json").read_text(encoding="utf-8"))
+    assert set(state["evidence"]) == {"wave1_angle_1:e01"}
+    assert state["synthesis"]["key_evidence_ids"] == ["wave1_angle_1:e01"]
+    assert "key_evidence" not in state["synthesis"]

@@ -1,4 +1,4 @@
-"""Tool for monitoring long-running tasks via background threads.
+"""[DISCARDED]Tool for monitoring long-running tasks via background threads.
 
 Usage (LLM-facing):
     watch(promise_id="img-1", check_type="ws",

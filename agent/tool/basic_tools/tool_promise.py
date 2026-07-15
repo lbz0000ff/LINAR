@@ -1,4 +1,4 @@
-"""Tool for LLM to check the status of pending async operations (promises).
+"""[DISCARDED]Tool for LLM to check the status of pending async operations (promises).
 
 A promise represents an async operation that was submitted and is still running
 in the background. This tool lets the LLM check whether a promise has resolved

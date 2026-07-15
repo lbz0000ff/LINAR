@@ -5,6 +5,8 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+from collections.abc import Callable
+from openai import AsyncOpenAI
 from config import load_config
 from logger import get_logger
 from tool_registry import ToolRegistry
@@ -39,8 +41,9 @@ def create_agent(agent_hint: str = "any",
                  workspace_root: str | None = None,
                  model: str | None = None,
                  system_prompt: str | None = None,
-                 provider: str | None = None,
-                 permission_mode: str | None = "auto") -> Agent:
+                 use_aux: bool = False,
+                 permission_mode: str | None = "auto",
+                 tool_factory: Callable[[list[str] | None], dict] | None = None) -> Agent:
     """Create an Agent instance for a DAG sub-task.
 
     Parameters
@@ -55,11 +58,12 @@ def create_agent(agent_hint: str = "any",
     system_prompt : str, optional
         Custom system prompt.  When set, it replaces the default
         ``_RESEARCH_PROMPT`` entirely.
-    provider : str, optional
-        Named provider profile from config.yaml ``providers`` section
-        (e.g. ``"stepfun"``, ``"zhipu"``).  When set, the sub-agent's
-        LLM client is re-created with that provider's base_url and
-        api_key.  When ``None`` the main agent's provider is used.
+    use_aux : bool
+        Resolve provider credentials and the default model exclusively from
+        the auxiliary runtime. Predefined DAG subagents set this to ``True``.
+    tool_factory : callable, optional
+        Build tools for the resolved tool sets. Benchmark runtimes use this to
+        preserve workspace confinement across DAG subagents.
 
     Returns
     -------
@@ -78,33 +82,44 @@ def create_agent(agent_hint: str = "any",
     enabled = hint_to_tools.get(agent_hint,
                                 cfg.get("tools", {}).get("enabled_sets", None))
 
-    registry = ToolRegistry(enabled_sets=enabled)
-    tools = registry.get_tools()
+    if tool_factory is not None:
+        tools = tool_factory(enabled)
+    else:
+        registry = ToolRegistry(enabled_sets=enabled)
+        tools = registry.get_tools()
 
     agent = Agent(tools=tools)
     if permission_mode:
         agent.permissions.switch_mode(permission_mode)
 
-    # ── override model if specified ──
-    if model:
+    if use_aux:
+        aux = cfg.get("aux") or {}
+        provider = str(aux.get("provider") or "").strip()
+        resolved_model = str(model or aux.get("model") or "").strip()
+        base_url = str(aux.get("base_url") or "").strip()
+        api_key = str(aux.get("api_key") or "").strip()
+        if not provider:
+            raise ValueError("aux.provider is required for predefined subagents")
+        if provider not in (cfg.get("providers") or {}):
+            raise ValueError(
+                f"aux.provider '{provider}' is not configured in providers"
+            )
+        if not resolved_model:
+            raise ValueError("aux.model is required when the subagent template has no model")
+        if not base_url:
+            raise ValueError("aux.base_url is required for predefined subagents")
+        if not api_key:
+            raise ValueError("aux.api_key is required for predefined subagents")
+        agent.llm.client = AsyncOpenAI(base_url=base_url, api_key=api_key)
+        agent.llm.provider = provider
+        agent.llm.model = resolved_model
+        log.info(
+            "Sub-agent aux runtime: %s → %s/%s (%s)",
+            agent_hint, provider, resolved_model, base_url,
+        )
+    elif model:
         agent.llm.model = model
         log.info("Sub-agent model override: %s → %s", agent_hint, model)
-
-    # ── override provider if specified ──
-    if provider:
-        provider_cfg = cfg.get("providers", {}).get(provider)
-        if provider_cfg and provider_cfg.get("api_key"):
-            from openai import AsyncOpenAI
-            agent.llm.client = AsyncOpenAI(
-                base_url=provider_cfg["base_url"],
-                api_key=provider_cfg["api_key"],
-            )
-            log.info("Sub-agent provider override: %s → %s (%s)",
-                     agent_hint, provider, provider_cfg["base_url"])
-        else:
-            reason = "not found in config" if not provider_cfg else "has empty api_key"
-            log.warning("Sub-agent provider '%s' %s — falling back to main model (%s)",
-                        provider, reason, agent.llm.model)
 
     # ── share parent stop_event so Ctrl+C propagates ──
     if stop_event is not None:

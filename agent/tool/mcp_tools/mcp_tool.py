@@ -5,14 +5,29 @@ from ..basic_tools.tool import Tool
 class MCPTool(Tool):
     """Delegates execute() to an MCPServer instance."""
 
-    def __init__(self, server, name: str, original_name: str, description: str, input_schema: dict):
+    is_search_tool: bool = False
+
+    def __init__(
+        self,
+        server,
+        name: str,
+        original_name: str,
+        description: str,
+        input_schema: dict,
+        is_search_tool: bool = False,
+    ):
         # Convert the JSON Schema into LINAR's OpenAI-compatible schema
         schema = {
             "name": name,
             "description": description,
             "parameters": input_schema or {"type": "object", "properties": {}},
         }
-        super().__init__(name=name, description=description, tool_schema=schema)
+        super().__init__(
+            name=name,
+            description=description,
+            tool_schema=schema,
+            is_search_tool=is_search_tool,
+        )
         self._server = server
         self._original_name = original_name
 

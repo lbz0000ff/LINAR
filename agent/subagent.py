@@ -51,6 +51,7 @@ def load_subagent(name: str) -> dict | None:
 
     Returns a dict with keys ``name``, ``description``, ``hint``,
     ``model``, ``system_prompt``, or ``None`` if the file doesn't exist.
+    Provider routing is intentionally not part of this definition contract.
     """
     path = os.path.join(_resolve_agents_dir(), f"{name}.md")
     if not os.path.isfile(path):
@@ -71,12 +72,17 @@ def load_subagent(name: str) -> dict | None:
     else:
         meta = {}
 
+    if "provider" in meta:
+        raise ValueError(
+            f"Subagent definition '{os.path.basename(path)}' contains forbidden "
+            "field 'provider'; predefined subagents always use aux.provider."
+        )
+
     return {
         "name": str(meta.get("name", name)),
         "description": str(meta.get("description", "")),
         "hint": str(meta.get("hint", "")),
-        "model": meta.get("model"),              # None = inherit from main agent
-        "provider": meta.get("provider"),         # None = inherit from main agent
+        "model": meta.get("model"),              # None = inherit from aux model
         "finalization_hint": str(meta.get("finalization_hint", "")),
         "allowed_tools": _parse_allowed_tools(meta),  # tool whitelist
         "system_prompt": body.strip(),

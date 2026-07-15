@@ -1,5 +1,6 @@
 <script setup>
 import { computed, ref, watch } from 'vue'
+import { formatTokenCount, sumTokenMetrics, tokenCacheHitRate } from '../../utils/subagentTrace.js'
 
 const props = defineProps({
   nodes: { type: Object, default: () => ({}) },
@@ -10,6 +11,8 @@ const expanded = ref(new Set())
 
 const tracedNodes = computed(() => Object.values(props.nodes).filter(node => node.events?.length))
 const selectedNode = computed(() => props.nodes[selectedId.value] || tracedNodes.value[0] || null)
+const dagTokenMetrics = computed(() => sumTokenMetrics(props.nodes))
+const dagCacheHitRate = computed(() => tokenCacheHitRate(dagTokenMetrics.value))
 
 watch(tracedNodes, nodes => {
   if (!nodes.length) selectedId.value = ''
@@ -62,7 +65,14 @@ function formatDuration(durationMs) {
 
 <template>
   <section v-if="tracedNodes.length" class="trace-section">
-    <div class="trace-title">Subagent Trace</div>
+    <div class="trace-title">
+      <span>Subagent Trace</span>
+      <span class="trace-token-summary">
+        DAG input {{ formatTokenCount(dagTokenMetrics.prompt_tokens) }}
+        · output {{ formatTokenCount(dagTokenMetrics.completion_tokens) }}
+        <template v-if="dagCacheHitRate"> · cache {{ dagCacheHitRate }}</template>
+      </span>
+    </div>
     <div class="trace-layout">
       <div class="trace-nodes">
         <button
@@ -81,6 +91,9 @@ function formatDuration(durationMs) {
             · LLM {{ node.metrics?.llm_calls || 0 }}/{{ node.maxLlmCalls || '?' }}
             · search {{ node.metrics?.search_calls || 0 }}
             · fetch {{ node.metrics?.fetch_calls || 0 }}
+            · input {{ formatTokenCount(node.metrics?.prompt_tokens) }}
+            · output {{ formatTokenCount(node.metrics?.completion_tokens) }}
+            <template v-if="tokenCacheHitRate(node.metrics)"> · cache {{ tokenCacheHitRate(node.metrics) }}</template>
           </span>
         </button>
       </div>
@@ -126,7 +139,8 @@ function formatDuration(durationMs) {
 
 <style scoped>
 .trace-section { margin-bottom: 20px; }
-.trace-title { font-size: 13px; font-weight: 600; color: var(--text-primary); margin-bottom: 10px; }
+.trace-title { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; font-size: 13px; font-weight: 600; color: var(--text-primary); margin-bottom: 10px; }
+.trace-token-summary { color: var(--text-weak); font-size: 10px; font-weight: 400; font-variant-numeric: tabular-nums; }
 .trace-layout { display: grid; grid-template-columns: minmax(150px, 0.85fr) minmax(220px, 1.5fr); gap: 10px; }
 .trace-nodes { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
 .trace-node { border: 1px solid var(--border-light); background: transparent; color: var(--text-primary); border-radius: 7px; padding: 8px; text-align: left; cursor: pointer; }

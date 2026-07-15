@@ -8,6 +8,9 @@ import {
   applyDagNodeStart,
   applySubagentEvent,
   appendDagPlan,
+  formatTokenCount,
+  sumTokenMetrics,
+  tokenCacheHitRate,
   updateDagPlan,
 } from './subagentTrace.js'
 
@@ -78,6 +81,20 @@ test('applies explicit terminal status and completion metadata', () => {
   assert.equal(updated.one.status, 'CHECKPOINTED')
   assert.equal(updated.one.stopReason, 'budget')
   assert.equal(updated.one.durationMs, 42)
+})
+
+test('sums per-node token metrics into DAG totals', () => {
+  const totals = sumTokenMetrics({
+    one: { metrics: { prompt_tokens: 1000, completion_tokens: 200, prompt_cache_hit_tokens: 750 } },
+    two: { metrics: { prompt_tokens: 500, completion_tokens: 100, prompt_cache_hit_tokens: 250, prompt_cache_miss_tokens: 250 } },
+  })
+
+  assert.equal(totals.prompt_tokens, 1500)
+  assert.equal(totals.completion_tokens, 300)
+  assert.equal(totals.prompt_cache_hit_tokens, 1000)
+  assert.equal(totals.prompt_cache_miss_tokens, 250)
+  assert.equal(tokenCacheHitRate(totals), '80.0%')
+  assert.equal(formatTokenCount(1500), '1.5K')
 })
 
 test('trace event rows cannot shrink instead of overflowing the scroll container', () => {

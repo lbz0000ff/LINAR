@@ -19,6 +19,7 @@ allowed-tools:
   - recall_fact
   - recall_topic
   - get_topic_list
+  - deep-research_state_reader
 ---
 
 # Deep Research Mode
@@ -132,6 +133,8 @@ The `path` is a short kebab-case slug (e.g. `vla-robotics` or `multi-agent-syste
 
 **Step 2 — Research Plan**
 
+Before planning, turn the user's request into a short **Definition of Done** checklist describing what the final report must contain. Preserve explicit quantities, named entities, requested dimensions, scope, time ranges, comparisons, and output requirements. A requested focus area **adds depth**; it does not replace the rest of the request. Use every checklist item to shape at least one research sub-task.
+
 Analyze the research topic. Ask the user about the number of waves or decide yourself. Typical: 2 waves (Wave 1: 3-4 angles, Wave 2: 2-3 deeper angles, each wave ends with an analyst).
 
 **Step 3 — Execute Each Wave**
@@ -159,7 +162,7 @@ sub_tasks:
 
 **Step 4 — Review Results**
 
-After each wave, use the compact working state rather than loading every evidence item:
+After each wave, call `deep-research_state_reader(command="overview")`. Use the compact working state rather than loading every evidence item:
 - `synthesis.summary` — current global assessment
 - `synthesis.key_evidence_ids[]` — evidence selected for downstream use
 - `synthesis.contradictions[]` — material unresolved conflicts
@@ -173,9 +176,11 @@ If `assets` has `.mmd` files, read them and embed in the report with ` ```mermai
 
 **Step 5 — Final Report**
 
+Before finalizing, check the report against every item in the Definition of Done. Continue researching when a required item is still answerable; when reliable evidence cannot be found, state the gap instead of silently omitting the requirement. Do not treat report length, source count, or polished structure as proof of completion.
+
 1. Run `search_files` for `*.json` in the workspace — if orphaned JSON files exist, read them
 2. Run `search_files` for `*.mmd` — if diagrams exist, read and prepare to embed
-3. Read `synthesis` first, then retrieve only the evidence referenced by `key_evidence_ids`
+3. Call `deep-research_state_reader(command="overview")`, then call it with `command="evidence"` and only the `key_evidence_ids` needed for each report section (maximum 20 IDs per call)
 4. Write the report to `report.md` following the template below
 
 ### Report Template
@@ -239,6 +244,10 @@ If `assets` has `.mmd` files, read them and embed in the report with ` ```mermai
 - **`patch_file` is removed from allowed-tools** — use `write_file` for new files and report generation.
 
 ## Research Principles
+
+### Source priority
+
+Prefer sources in this order: **primary** (official data, original law, paper, or dataset) → **authoritative** (established institutions and research organizations) → media reports → **community** sources. Lower tiers may provide discovery leads, but replace them with a higher-tier source when possible. If a claim remains supported only by lower-tier sources, narrow its scope and state the uncertainty; do not silently discard conflicting evidence from different tiers.
 
 - **Cite sources**: Every factual claim must have `[Source: URL]`. No source = speculation.
 - **Coverage first, depth second**: Wave 1 explores broadly, later waves dive deeper.

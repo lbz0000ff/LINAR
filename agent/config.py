@@ -2,7 +2,10 @@
 
 import os
 import re
+from pathlib import Path
+
 import yaml
+from dotenv import load_dotenv
 
 _CONFIG_PATH = os.path.join(os.path.dirname(__file__), "config.yaml")
 
@@ -44,6 +47,7 @@ DEFAULTS = {
         "top_p": 1.0,
     },
     "max_llm_calls": 80,
+    "sub_agent_max_llm_calls": 25,
     "max_memory_length": 2200,
     "max_user_preferences_length": 500,
     "show_reasoning": "hide",
@@ -63,6 +67,11 @@ DEFAULTS = {
         "trim_to": 5000,
         "protect_last_rounds": 3,
         "strategy": "compact",  # "compact" | "compress"
+    },
+    "web_fetch": {
+        "max_chars": 30000,
+        "artifact_dir": "web_fetch",
+        "browser_channel": "chromium",
     },
     "memory": {
         "enabled": True,
@@ -153,6 +162,14 @@ def load_config(path=None):
     Returns a flat-or-nested dict guaranteed to have all keys from DEFAULTS.
     Missing fields in the YAML file fall back to DEFAULTS values.
     """
+
+    # ── Load .env file into os.environ (project root, then up to 3 levels) ──
+    for parent in (Path(__file__).resolve().parent.parent,):
+        env_path = parent / ".env"
+        if env_path.exists():
+            load_dotenv(env_path, override=False)
+            break
+
     config_path = path or _CONFIG_PATH
 
     # Auto-create config.yaml from example if missing

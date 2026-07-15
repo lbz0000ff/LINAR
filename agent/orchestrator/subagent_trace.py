@@ -20,6 +20,14 @@ FORWARDED_EVENT_TYPES = {
     "complete",
     "budget_state",
 }
+TOKEN_METRIC_KEYS = (
+    "prompt_tokens",
+    "completion_tokens",
+    "total_tokens",
+    "prompt_cache_hit_tokens",
+    "prompt_cache_miss_tokens",
+    "reasoning_tokens",
+)
 
 
 def _redact_value(value: Any) -> Any:
@@ -28,10 +36,13 @@ def _redact_value(value: Any) -> Any:
         for key, item in value.items():
             key_text = str(key)
             normalized = key_text.lower().replace("-", "_")
-            secret_key = any(marker in normalized for marker in (
-                "api_key", "apikey", "token", "secret", "password",
-                "authorization", "credential",
-            ))
+            secret_key = normalized not in TOKEN_METRIC_KEYS and any(
+                marker in normalized
+                for marker in (
+                    "api_key", "apikey", "token", "secret", "password",
+                    "authorization", "credential",
+                )
+            )
             if secret_key:
                 redacted[key_text] = "[REDACTED]"
             else:
@@ -80,6 +91,7 @@ class SubagentTraceRelay:
         self._agent_type = agent_type
         self._sequence = 0
         self._pending_tools: dict[str, float] = {}
+        self._pending_usage: dict[str, int] | None = None
         self._metrics: dict[str, Any] = {
             "llm_calls": 0,
             "tool_calls": 0,
@@ -87,12 +99,20 @@ class SubagentTraceRelay:
             "fetch_calls": 0,
             "findings_submitted": 0,
             "sources_submitted": 0,
+            **{key: 0 for key in TOKEN_METRIC_KEYS},
         }
 
     def __call__(self, event: dict) -> None:
         event_type = str(event.get("type") or "")
         if event_type not in FORWARDED_EVENT_TYPES:
             return
+        if event_type == "usage":
+            self._pending_usage = self._normalize_usage(event.get("data") or {})
+            return
+        if event_type == "start":
+            self._pending_usage = None
+        elif event_type in {"done", "error", "complete"}:
+            self._commit_pending_usage()
 
         self._sequence += 1
         payload = self._normalize(event_type, event)
@@ -122,9 +142,6 @@ class SubagentTraceRelay:
             return self._normalize_tool_call(event)
         if event_type == "tool_result":
             return self._normalize_tool_result(event)
-        if event_type == "usage":
-            data = _redact_value(event.get("data") or {})
-            return {"status": "success", "summary": data, "detail": {}}
         if event_type == "error":
             return {
                 "status": "error",
@@ -135,6 +152,24 @@ class SubagentTraceRelay:
             data = _redact_value(event.get("data") or {})
             return {"status": str(data.get("state") or "running"), "summary": data, "detail": {}}
         return {"status": "success", "summary": {}, "detail": {}}
+
+    def _normalize_usage(self, data: Any) -> dict[str, int]:
+        if not isinstance(data, dict):
+            return {key: 0 for key in TOKEN_METRIC_KEYS}
+        usage: dict[str, int] = {}
+        for key in TOKEN_METRIC_KEYS:
+            try:
+                usage[key] = max(0, int(data.get(key) or 0))
+            except (TypeError, ValueError):
+                usage[key] = 0
+        return usage
+
+    def _commit_pending_usage(self) -> None:
+        if self._pending_usage is None:
+            return
+        for key in TOKEN_METRIC_KEYS:
+            self._metrics[key] += self._pending_usage[key]
+        self._pending_usage = None
 
     def _normalize_tool_call(self, event: dict) -> dict[str, Any]:
         name = str(event.get("name") or "")

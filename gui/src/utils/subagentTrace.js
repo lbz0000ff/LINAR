@@ -1,4 +1,36 @@
 export const DEFAULT_MAX_EVENTS = 500
+export const TOKEN_METRIC_KEYS = [
+  'prompt_tokens',
+  'completion_tokens',
+  'total_tokens',
+  'prompt_cache_hit_tokens',
+  'prompt_cache_miss_tokens',
+  'reasoning_tokens',
+]
+
+export function sumTokenMetrics(nodes = {}) {
+  const totals = Object.fromEntries(TOKEN_METRIC_KEYS.map(key => [key, 0]))
+  for (const node of Object.values(nodes)) {
+    for (const key of TOKEN_METRIC_KEYS) {
+      totals[key] += Number(node?.metrics?.[key]) || 0
+    }
+  }
+  return totals
+}
+
+export function formatTokenCount(value) {
+  const count = Number(value) || 0
+  if (count >= 1_000_000) return `${(count / 1_000_000).toFixed(1).replace(/\.0$/, '')}M`
+  if (count >= 1_000) return `${(count / 1_000).toFixed(1).replace(/\.0$/, '')}K`
+  return String(count)
+}
+
+export function tokenCacheHitRate(metrics = {}) {
+  const hit = Number(metrics.prompt_cache_hit_tokens) || 0
+  const miss = Number(metrics.prompt_cache_miss_tokens) || 0
+  const total = hit + miss
+  return total ? `${((hit / total) * 100).toFixed(1)}%` : null
+}
 
 export function appendDagPlan(plans, plan) {
   return [...plans, {

@@ -27,7 +27,7 @@ import os
 import shutil
 import subprocess
 import sys
-from logger import get_logger
+from logger import get_logger, redact_sensitive
 
 log = get_logger(__name__)
 
@@ -57,7 +57,8 @@ class MCPServer:
         if self._started:
             return
 
-        log.info("Starting MCP server '%s': %s %s", self.name, self._command, " ".join(self._args))
+        display_cmd = redact_sensitive(f"{self._command} {' '.join(self._args)}".strip())
+        log.info("Starting MCP server '%s': %s", self.name, display_cmd)
         proc_env = None
         if self._env:
             proc_env = os.environ.copy()

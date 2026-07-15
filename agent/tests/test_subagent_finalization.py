@@ -133,6 +133,19 @@ def test_deep_research_skill_uses_compact_state_views():
     assert "Read `research_state.json` for all findings" not in text
 
 
+def test_deep_research_skill_preserves_user_intent_with_definition_of_done():
+    skill_path = os.path.join(
+        os.path.dirname(__file__), "..", "..", "skills", "deep-research", "SKILL.md",
+    )
+    text = open(skill_path, encoding="utf-8").read()
+
+    assert "Definition of Done" in text
+    assert "explicit quantities" in text
+    assert "named entities" in text
+    assert "adds depth" in text
+    assert "check the report against every item" in text
+
+
 def test_predecessor_context_preserves_generic_handoff_before_large_extensions():
     result = '{"status":"partial","summary":"usable","unresolved":["gap"],"artifacts":[{"path":"out.md"}],"findings":[' + ('{"text":"x"},' * 1000).rstrip(',') + ']}'
 

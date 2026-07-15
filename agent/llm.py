@@ -14,11 +14,12 @@ def generate_function_calling(tool_schema: dict):
 class LLM:
     def __init__(self, api_key: str, system_prompt: str = "You are a helpful assistant.",
                  tools: dict = {}, base_url: str = "https://api.deepseek.com/v1",
-                 model: str = "deepseek-v4-flash"):
+                 model: str = "deepseek-v4-flash", provider: str = "deepseek"):
         self.client = AsyncOpenAI(base_url=base_url, api_key=api_key)
         self.system_prompt = system_prompt
         self.tools = tools
         self.model = model
+        self.provider = provider
 
     async def generate_response(self, prompt: str, temperature: float = 0.7):
         log.debug("LLM request (model=%s, temperature=%s)", self.model, temperature)

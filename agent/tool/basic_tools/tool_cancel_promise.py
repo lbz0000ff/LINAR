@@ -1,4 +1,4 @@
-"""Tool for cancelling a previously registered watch task.
+"""[DISCARDED]Tool for cancelling a previously registered watch task.
 
 Usage:
     cancel_promise(promise_id="img-1")

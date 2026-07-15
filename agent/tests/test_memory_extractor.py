@@ -53,12 +53,12 @@ def test_should_extract_max_interval_safety():
     ) is True
 
 
-def test_should_extract_skip_empty():
-    """After consecutive_empty >= 2, skip if not at max_interval."""
+def test_should_extract_ignores_legacy_empty_backpressure():
+    """Fixed scheduling ignores legacy consecutive_empty state."""
     assert should_extract(
         state={"last_extraction_round": 0, "current_interval": 8, "consecutive_empty": 2},
         current_round=12,
-    ) is False
+    ) is True
 
 
 def test_should_extract_one_empty():

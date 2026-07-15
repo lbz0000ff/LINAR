@@ -61,7 +61,12 @@ class Agent:
         base_url = cfg["llm"].get("base_url", "https://api.deepseek.com/v1")
         model = cfg["llm"].get("model", "deepseek-v4-flash")
         system_prompt = self._build_prompt(cfg)
-        self.llm = LLM(api_key, system_prompt, tools, base_url=base_url, model=model)
+        self.llm = LLM(
+            api_key, system_prompt, tools,
+            base_url=base_url,
+            model=model,
+            provider=cfg["llm"].get("provider", ""),
+        )
         self.tools = tools
         self._skill_active = False
         self._active_skill = None
@@ -393,7 +398,7 @@ class Agent:
                     content = None
                 entry: dict = {"role": "assistant", "content": content}
                 # reasoning_content is DeepSeek-specific; skip for other providers
-                _provider = (self.cfg.get("llm", {}).get("provider", "") or "").lower()
+                _provider = (getattr(self.llm, "provider", "") or "").lower()
                 if _provider == "deepseek" and msg.get("reasoning") and msg.get("tool_calls"):
                     entry["reasoning_content"] = msg["reasoning"]
                 if msg.get("tool_calls"):
@@ -1180,30 +1185,33 @@ class Agent:
             text_parts = []
             reasoning_parts = []
             tool_call_deltas = {}
+            usage_data = None
             async for chunk in stream:
                 if self.stop_event.is_set():
                     break
                 if hasattr(chunk, "usage") and chunk.usage:
                     u = chunk.usage
                     extra = getattr(u, "model_extra", None) or {}
+                    completion_details = getattr(u, "completion_tokens_details", None)
+                    if isinstance(completion_details, dict):
+                        reasoning_tokens = completion_details.get("reasoning_tokens", 0)
+                    else:
+                        reasoning_tokens = getattr(completion_details, "reasoning_tokens", 0)
                     self._last_prompt_tokens = u.prompt_tokens or 0
                     usage_data = {
                         "prompt_tokens": u.prompt_tokens or 0,
                         "completion_tokens": u.completion_tokens or 0,
                         "total_tokens": u.total_tokens or 0,
-                        "prompt_cache_hit_tokens": extra.get("prompt_cache_hit_tokens", 0),
-                        "prompt_cache_miss_tokens": extra.get("prompt_cache_miss_tokens", 0),
+                        "prompt_cache_hit_tokens": (
+                            getattr(u, "prompt_cache_hit_tokens", None)
+                            or extra.get("prompt_cache_hit_tokens", 0)
+                        ),
+                        "prompt_cache_miss_tokens": (
+                            getattr(u, "prompt_cache_miss_tokens", None)
+                            or extra.get("prompt_cache_miss_tokens", 0)
+                        ),
+                        "reasoning_tokens": reasoning_tokens or extra.get("reasoning_tokens", 0),
                     }
-                    self.emit({"type": "usage", "data": usage_data})
-                    # Dispatch LLM_USAGE hook (fire-and-forget for metrics tracking)
-                    await self.hooks.dispatch_fire_and_forget(
-                        HookContext(
-                            event=HookEvent.LLM_USAGE,
-                            agent=self,
-                            timestamp=time.time(),
-                            usage_data=usage_data,
-                        )
-                    )
                 if not chunk.choices:
                     continue
                 delta = chunk.choices[0].delta
@@ -1233,6 +1241,17 @@ class Agent:
                     "round": self._conversation_round,
                 })
                 break
+
+            if usage_data is not None:
+                self.emit({"type": "usage", "data": usage_data})
+                await self.hooks.dispatch_fire_and_forget(
+                    HookContext(
+                        event=HookEvent.LLM_USAGE,
+                        agent=self,
+                        timestamp=time.time(),
+                        usage_data=usage_data,
+                    )
+                )
 
             # Dispatch LLM_DONE hook
             await self.hooks.dispatch_fire_and_forget(
