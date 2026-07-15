@@ -130,6 +130,9 @@ async def persist_agent_response(context: HookContext) -> None:
     import database as db
     import json
 
+    if not context.agent.session_id:
+        return
+
     if context.agent_text:
         # Get metadata (reasoning, tool_calls, prompt_tokens)
         metadata = context.metadata
@@ -174,6 +177,9 @@ async def persist_tool_result(context: HookContext) -> None:
     """
     import database as db
     import json
+
+    if not context.agent.session_id:
+        return
 
     if context.tool_name and context.tool_result:
         await asyncio.to_thread(

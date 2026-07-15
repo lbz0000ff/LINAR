@@ -50,6 +50,11 @@ WORKSPACE_PATH_ARGUMENTS = {
     "search_files": ("path",),
 }
 BLOCKED_BENCHMARK_TOOLS = {"cmd_execute", "create_workspace", "switch_workspace"}
+BENCHMARK_DISABLED_HOOKS = (
+    "builtin_db_user_persist",
+    "builtin_db_agent_persist",
+    "builtin_db_tool_persist",
+)
 ALLOWED_BENCHMARK_MCP_PREFIXES = ("mcp_stepsearch_", "mcp_anysearch_")
 
 sys.path.insert(0, str(AGENT_DIR))
@@ -183,6 +188,8 @@ async def run_deep_research(prompt: str, workspace_root: Path) -> None:
         if skill is None:
             raise BenchmarkRunError("The deep-research skill could not be loaded")
         agent = Agent(tools=tools, memory_enabled=False)
+        for hook_name in BENCHMARK_DISABLED_HOOKS:
+            agent.hooks.unregister(hook_name)
     finally:
         os.chdir(execution_cwd)
 

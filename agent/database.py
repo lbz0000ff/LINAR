@@ -198,11 +198,15 @@ def save_message(session_id: int, role: str, content, tool_name: str = "", conve
         import json
         content = json.dumps(content, ensure_ascii=False)
     conn = _get_connection()
-    conn.execute(
-        "INSERT INTO messages (session_id, role, content, tool_name, conversation_round, reasoning, tool_call_id, tool_calls, prompt_tokens, visibility) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-        (session_id, role, content, tool_name or None, conversation_round, reasoning or None, tool_call_id or None, tool_calls or None, prompt_tokens, visibility),
-    )
-    conn.commit()
+    try:
+        conn.execute(
+            "INSERT INTO messages (session_id, role, content, tool_name, conversation_round, reasoning, tool_call_id, tool_calls, prompt_tokens, visibility) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (session_id, role, content, tool_name or None, conversation_round, reasoning or None, tool_call_id or None, tool_calls or None, prompt_tokens, visibility),
+        )
+        conn.commit()
+    except sqlite3.Error:
+        conn.rollback()
+        raise
     log.debug("Saved %s message to session #%s (round=%s)", role, session_id, conversation_round)
 
 

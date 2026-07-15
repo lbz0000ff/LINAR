@@ -106,6 +106,9 @@ def test_production_runner_initializes_agent_like_gui_then_executes_in_workspace
         def __init__(self, tools: dict, memory_enabled: bool) -> None:
             calls["init_cwd"] = Path.cwd()
             calls["memory_enabled"] = memory_enabled
+            self.hooks = SimpleNamespace(
+                unregister=lambda name: calls.setdefault("unregistered_hooks", []).append(name)
+            )
             self.tools = tools
             self.chat_history: list[dict] = []
             self._conversation_round = 0
@@ -140,6 +143,11 @@ def test_production_runner_initializes_agent_like_gui_then_executes_in_workspace
     assert calls["init_cwd"] == harness.AGENT_DIR
     assert calls["process_cwd"] == workspace
     assert calls["memory_enabled"] is False
+    assert calls["unregistered_hooks"] == [
+        "builtin_db_user_persist",
+        "builtin_db_agent_persist",
+        "builtin_db_tool_persist",
+    ]
     assert calls["skills_path"] == str(harness.ROOT_DIR / "skills")
     assert calls["history"][-1] == {
         "role": "user",
