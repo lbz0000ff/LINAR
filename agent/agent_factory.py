@@ -110,7 +110,11 @@ def create_agent(agent_hint: str = "any",
             raise ValueError("aux.base_url is required for predefined subagents")
         if not api_key:
             raise ValueError("aux.api_key is required for predefined subagents")
-        agent.llm.client = AsyncOpenAI(base_url=base_url, api_key=api_key)
+        agent.llm.client = AsyncOpenAI(
+            base_url=base_url,
+            api_key=api_key,
+            max_retries=0,
+        )
         agent.llm.provider = provider
         agent.llm.model = resolved_model
         log.info(

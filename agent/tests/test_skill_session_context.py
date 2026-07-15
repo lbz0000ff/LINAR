@@ -3,11 +3,14 @@ import sys
 from types import SimpleNamespace
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
-_openai_stub = sys.modules.setdefault("openai", SimpleNamespace())
-if not hasattr(_openai_stub, "AsyncOpenAI"):
-    _openai_stub.AsyncOpenAI = lambda *args, **kwargs: SimpleNamespace()
-if not hasattr(_openai_stub, "OpenAI"):
-    _openai_stub.OpenAI = lambda *args, **kwargs: SimpleNamespace()
+try:
+    import openai  # noqa: F401
+except ImportError:
+    sys.modules["openai"] = SimpleNamespace(
+        APIError=Exception,
+        AsyncOpenAI=lambda *args, **kwargs: SimpleNamespace(),
+        OpenAI=lambda *args, **kwargs: SimpleNamespace(),
+    )
 
 from skill import Skill, activate_skill_for_agent
 from tool.basic_tools.tool_skill import Tool_Skill

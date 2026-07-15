@@ -94,6 +94,7 @@ def test_predefined_subagent_inherits_aux_provider_and_model(monkeypatch):
     assert created.llm.provider == "deepseek"
     assert created.llm.model == "deepseek-v4-flash"
     assert created.llm.client[1]["base_url"] == "https://api.deepseek.com/v1"
+    assert created.llm.client[1]["max_retries"] == 0
 
 
 def test_predefined_subagent_model_overrides_aux_model_only(monkeypatch):

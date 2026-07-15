@@ -4,13 +4,14 @@ import sys
 from types import SimpleNamespace
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
-sys.modules.setdefault(
-    "openai",
-    SimpleNamespace(
+try:
+    import openai  # noqa: F401
+except ImportError:
+    sys.modules["openai"] = SimpleNamespace(
+        APIError=Exception,
         AsyncOpenAI=lambda *args, **kwargs: SimpleNamespace(),
         OpenAI=lambda *args, **kwargs: SimpleNamespace(),
-    ),
-)
+    )
 
 from agent import Agent
 
