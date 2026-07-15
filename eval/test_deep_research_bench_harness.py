@@ -243,7 +243,6 @@ def test_zero_query_run_does_not_create_empty_raw_data_file(
 
 def test_async_main_loads_queries_from_cli_selected_file(
     tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     query_file = tmp_path / "smoke-query.jsonl"
     query_file.write_text(
@@ -261,7 +260,6 @@ def test_async_main_loads_queries_from_cli_selected_file(
             ok=True,
         )
 
-    monkeypatch.setattr(harness, "run_single", fake_run_single)
     args = SimpleNamespace(
         all=False,
         limit=1,
@@ -272,7 +270,9 @@ def test_async_main_loads_queries_from_cli_selected_file(
         allow_partial=False,
     )
 
-    assert asyncio.run(harness.async_main(args)) == 0
+    assert asyncio.run(
+        harness.async_main(args, task_runner=fake_run_single)
+    ) == 0
     assert seen["query"] == {"id": 20, "prompt": "safe technical query"}
 
 
@@ -340,3 +340,395 @@ def test_cli_default_model_name_matches_evaluator_target(monkeypatch: pytest.Mon
     monkeypatch.setattr(sys, "argv", ["run_deep_research_bench.py"])
 
     assert harness.parse_args().model_name == "linar-step-3.7-flash"
+
+
+def _campaign_args(tmp_path: Path, query_file: Path, **overrides: object) -> SimpleNamespace:
+    values: dict[str, object] = {
+        "all": True,
+        "limit": 100,
+        "query_file": str(query_file),
+        "output": str(tmp_path / "raw.jsonl"),
+        "model_name": "linar-campaign",
+        "workspace_dir": str(tmp_path / "workspaces"),
+        "allow_partial": False,
+        "resume": True,
+        "retry_failed": False,
+        "strict": False,
+        "max_workers": 1,
+        "task_timeout": 0,
+    }
+    values.update(overrides)
+    return SimpleNamespace(**values)
+
+
+def _write_queries(path: Path, count: int = 3) -> list[dict[str, object]]:
+    queries = [
+        {"id": index, "prompt": f"prompt {index}", "language": "zh"}
+        for index in range(1, count + 1)
+    ]
+    path.write_text(
+        "".join(json.dumps(query) + "\n" for query in queries),
+        encoding="utf-8",
+    )
+    return queries
+
+
+def test_campaign_checkpoints_success_before_later_tasks_finish(tmp_path: Path) -> None:
+    query_file = tmp_path / "queries.jsonl"
+    queries = _write_queries(query_file)
+    output = tmp_path / "raw.jsonl"
+
+    async def fake_runner(query: dict, workspace_root: Path) -> harness.BenchRunResult:
+        if query["id"] == 2:
+            rows = [json.loads(line) for line in output.read_text(encoding="utf-8").splitlines()]
+            assert [row["id"] for row in rows] == [1]
+            return harness.BenchRunResult(
+                id=2,
+                prompt=str(query["prompt"]),
+                article="",
+                ok=False,
+                error="provider rejected output",
+            )
+        return harness.BenchRunResult(
+            id=query["id"],
+            prompt=str(query["prompt"]),
+            article=f"# Report {query['id']}",
+            ok=True,
+        )
+
+    exit_code = asyncio.run(
+        harness.async_main(
+            _campaign_args(tmp_path, query_file),
+            task_runner=fake_runner,
+        )
+    )
+
+    assert exit_code == 1
+    rows = [json.loads(line) for line in output.read_text(encoding="utf-8").splitlines()]
+    assert [row["id"] for row in rows] == [1, 3]
+    failures = [
+        json.loads(line)
+        for line in (tmp_path / "raw.failures.jsonl").read_text(encoding="utf-8").splitlines()
+    ]
+    assert failures == [
+        {
+            "id": 2,
+            "prompt": queries[1]["prompt"],
+            "error": "provider rejected output",
+            "elapsed_seconds": 0.0,
+        }
+    ]
+
+
+def test_campaign_resume_skips_successes_and_recorded_failures(tmp_path: Path) -> None:
+    query_file = tmp_path / "queries.jsonl"
+    _write_queries(query_file)
+    output = tmp_path / "raw.jsonl"
+    output.write_text(
+        json.dumps({"id": 1, "prompt": "prompt 1", "article": "# Existing"}) + "\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "raw.failures.jsonl").write_text(
+        json.dumps({
+            "id": 2,
+            "prompt": "prompt 2",
+            "error": "old failure",
+            "elapsed_seconds": 12.0,
+        }) + "\n",
+        encoding="utf-8",
+    )
+    called: list[int] = []
+
+    async def fake_runner(query: dict, workspace_root: Path) -> harness.BenchRunResult:
+        called.append(int(query["id"]))
+        return harness.BenchRunResult(
+            id=query["id"],
+            prompt=str(query["prompt"]),
+            article="# New",
+            ok=True,
+        )
+
+    exit_code = asyncio.run(
+        harness.async_main(
+            _campaign_args(tmp_path, query_file),
+            task_runner=fake_runner,
+        )
+    )
+
+    assert called == [3]
+    assert exit_code == 1
+
+
+def test_retry_failed_replaces_failure_with_success(tmp_path: Path) -> None:
+    query_file = tmp_path / "queries.jsonl"
+    _write_queries(query_file, count=1)
+    failure_path = tmp_path / "raw.failures.jsonl"
+    failure_path.write_text(
+        json.dumps({
+            "id": 1,
+            "prompt": "prompt 1",
+            "error": "old failure",
+            "elapsed_seconds": 12.0,
+        }) + "\n",
+        encoding="utf-8",
+    )
+
+    async def fake_runner(query: dict, workspace_root: Path) -> harness.BenchRunResult:
+        return harness.BenchRunResult(
+            id=query["id"],
+            prompt=str(query["prompt"]),
+            article="# Recovered",
+            ok=True,
+        )
+
+    exit_code = asyncio.run(
+        harness.async_main(
+            _campaign_args(tmp_path, query_file, retry_failed=True),
+            task_runner=fake_runner,
+        )
+    )
+
+    assert exit_code == 0
+    assert not failure_path.exists()
+    assert "# Recovered" in (tmp_path / "raw.jsonl").read_text(encoding="utf-8")
+
+
+def test_all_failed_campaign_does_not_create_empty_raw_file(tmp_path: Path) -> None:
+    query_file = tmp_path / "queries.jsonl"
+    _write_queries(query_file, count=1)
+
+    async def fake_runner(query: dict, workspace_root: Path) -> harness.BenchRunResult:
+        return harness.BenchRunResult(
+            id=query["id"],
+            prompt=str(query["prompt"]),
+            article="",
+            ok=False,
+            error="generation failed",
+        )
+
+    exit_code = asyncio.run(
+        harness.async_main(
+            _campaign_args(tmp_path, query_file),
+            task_runner=fake_runner,
+        )
+    )
+
+    assert exit_code == 1
+    assert not (tmp_path / "raw.jsonl").exists()
+    assert (tmp_path / "raw.failures.jsonl").is_file()
+
+
+def test_campaign_limits_concurrent_task_runners(tmp_path: Path) -> None:
+    query_file = tmp_path / "queries.jsonl"
+    _write_queries(query_file, count=4)
+    active = 0
+    max_active = 0
+
+    async def fake_runner(query: dict, workspace_root: Path) -> harness.BenchRunResult:
+        nonlocal active, max_active
+        active += 1
+        max_active = max(max_active, active)
+        await asyncio.sleep(0.01)
+        active -= 1
+        return harness.BenchRunResult(
+            id=query["id"],
+            prompt=str(query["prompt"]),
+            article=f"# Report {query['id']}",
+            ok=True,
+        )
+
+    exit_code = asyncio.run(
+        harness.async_main(
+            _campaign_args(tmp_path, query_file, max_workers=2),
+            task_runner=fake_runner,
+        )
+    )
+
+    assert exit_code == 0
+    assert max_active == 2
+
+
+def test_campaign_turns_task_timeout_into_failure(tmp_path: Path) -> None:
+    query_file = tmp_path / "queries.jsonl"
+    _write_queries(query_file, count=1)
+
+    async def hanging_runner(query: dict, workspace_root: Path) -> harness.BenchRunResult:
+        await asyncio.sleep(0.1)
+        raise AssertionError("unreachable")
+
+    exit_code = asyncio.run(
+        harness.async_main(
+            _campaign_args(tmp_path, query_file, task_timeout=0.01),
+            task_runner=hanging_runner,
+        )
+    )
+
+    assert exit_code == 1
+    failures = [
+        json.loads(line)
+        for line in (tmp_path / "raw.failures.jsonl").read_text(encoding="utf-8").splitlines()
+    ]
+    assert failures[0]["id"] == 1
+    assert "timed out" in failures[0]["error"]
+
+
+def test_cli_defaults_to_resumable_isolated_serial_workers(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(sys, "argv", ["run_deep_research_bench.py"])
+
+    args = harness.parse_args()
+
+    assert args.resume is True
+    assert args.retry_failed is False
+    assert args.max_workers == 1
+    assert args.task_timeout == 3600
+
+
+def test_worker_command_uses_an_isolated_process_and_result_file(tmp_path: Path) -> None:
+    command = harness.build_worker_command(
+        query_id=7,
+        query_file=tmp_path / "queries.jsonl",
+        workspace_root=tmp_path / "workspace",
+        result_path=tmp_path / "result.jsonl",
+        python_executable=Path("C:/Python/python.exe"),
+    )
+
+    assert command == [
+        "C:\\Python\\python.exe",
+        "-u",
+        str(Path(harness.__file__).resolve()),
+        "--query-file",
+        str(tmp_path / "queries.jsonl"),
+        "--worker-query-id",
+        "7",
+        "--worker-workspace",
+        str(tmp_path / "workspace"),
+        "--worker-result",
+        str(tmp_path / "result.jsonl"),
+    ]
+
+
+def test_worker_main_writes_structured_result(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    query_file = tmp_path / "queries.jsonl"
+    _write_queries(query_file, count=1)
+    result_path = tmp_path / "worker-result.jsonl"
+
+    async def fake_run_single(query: dict, workspace_root: Path) -> harness.BenchRunResult:
+        return harness.BenchRunResult(
+            id=query["id"],
+            prompt=str(query["prompt"]),
+            article="# Worker report",
+            ok=True,
+            elapsed_seconds=4.5,
+        )
+
+    monkeypatch.setattr(harness, "run_single", fake_run_single)
+    args = SimpleNamespace(
+        query_file=str(query_file),
+        worker_query_id="1",
+        worker_workspace=str(tmp_path / "workspace"),
+        worker_result=str(result_path),
+    )
+
+    assert asyncio.run(harness.worker_main(args)) == 0
+    payload = json.loads(result_path.read_text(encoding="utf-8"))
+    assert payload == {
+        "id": 1,
+        "prompt": "prompt 1",
+        "article": "# Worker report",
+        "ok": True,
+        "error": None,
+        "elapsed_seconds": 4.5,
+    }
+
+
+def test_subprocess_runner_streams_worker_output_to_log_file(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    seen: dict[str, object] = {}
+
+    class FakeProcess:
+        returncode = 1
+
+        async def wait(self) -> int:
+            return self.returncode
+
+        def kill(self) -> None:
+            self.returncode = -9
+
+    async def fake_create_subprocess_exec(*command: str, **kwargs: object) -> FakeProcess:
+        seen["stdout"] = kwargs["stdout"]
+        assert kwargs["stdout"] is not asyncio.subprocess.PIPE
+        kwargs["stdout"].write(b"worker failed\n")
+        return FakeProcess()
+
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_create_subprocess_exec)
+    monkeypatch.setattr(
+        harness,
+        "build_worker_command",
+        lambda **_kwargs: ["fake-python", "fake-worker"],
+    )
+    workspace = tmp_path / "workspaces" / "task_1"
+
+    result = asyncio.run(harness.run_task_subprocess(
+        {"id": 1, "prompt": "prompt 1"},
+        workspace,
+        tmp_path / "queries.jsonl",
+    ))
+
+    assert result.ok is False
+    assert "worker exited with code 1" in (result.error or "")
+    assert (workspace / "harness.log").read_text(encoding="utf-8") == "worker failed\n"
+
+
+def test_cancelling_subprocess_runner_kills_worker_and_preserves_log(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class FakeProcess:
+        def __init__(self) -> None:
+            self.returncode: int | None = None
+            self.killed = False
+            self._finished = asyncio.Event()
+
+        async def wait(self) -> int:
+            await self._finished.wait()
+            assert self.returncode is not None
+            return self.returncode
+
+        def kill(self) -> None:
+            self.killed = True
+            self.returncode = -9
+            self._finished.set()
+
+    process = FakeProcess()
+
+    async def fake_create_subprocess_exec(*command: str, **kwargs: object) -> FakeProcess:
+        kwargs["stdout"].write(b"partial worker log\n")
+        return process
+
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_create_subprocess_exec)
+    monkeypatch.setattr(
+        harness,
+        "build_worker_command",
+        lambda **_kwargs: ["fake-python", "fake-worker"],
+    )
+    workspace = tmp_path / "workspaces" / "task_1"
+
+    async def cancel_runner() -> None:
+        task = asyncio.create_task(harness.run_task_subprocess(
+            {"id": 1, "prompt": "prompt 1"},
+            workspace,
+            tmp_path / "queries.jsonl",
+        ))
+        await asyncio.sleep(0)
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+
+    asyncio.run(cancel_runner())
+
+    assert process.killed is True
+    assert (workspace / "harness.log").read_text(encoding="utf-8") == "partial worker log\n"
