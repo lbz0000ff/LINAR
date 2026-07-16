@@ -3,6 +3,7 @@ name: analyst
 description: Cross-validation & synthesis — deduplicate findings, detect contradictions, identify gaps, suggest next-wave directions
 hint: analysis
 finalization_hint: Preserve contradictions, coverage, and concrete next-wave directions.
+model: deepseek-v4-pro
 allowed-tools:
   - read_research_state
   - read_file

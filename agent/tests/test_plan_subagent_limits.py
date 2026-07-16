@@ -332,11 +332,11 @@ def test_web_researcher_tools_enforce_independent_search_and_fetch_budgets(monke
 
     search = created[0].tools["web_search"]
     fetch = created[0].tools["web_fetch"]
-    assert search.execute(query="one")["message"] == "web_search ok"
-    assert search.execute(query="two")["budget_exhausted"] is True
-    assert fetch.execute(url="https://one.example")["message"] == "web_fetch ok"
-    assert fetch.execute(url="https://two.example")["message"] == "web_fetch ok"
-    assert fetch.execute(url="https://three.example")["budget_exhausted"] is True
+    assert asyncio.run(search.execute(query="one"))["message"] == "web_search ok"
+    assert asyncio.run(search.execute(query="two"))["budget_exhausted"] is True
+    assert asyncio.run(fetch.execute(url="https://one.example"))["message"] == "web_fetch ok"
+    assert asyncio.run(fetch.execute(url="https://two.example"))["message"] == "web_fetch ok"
+    assert asyncio.run(fetch.execute(url="https://three.example"))["budget_exhausted"] is True
     assert created[0].tools["submit_output"] is not None
 
 
@@ -372,12 +372,12 @@ def test_web_researcher_mcp_and_native_tools_share_retrieval_budgets(monkeypatch
     ))
 
     tools = created[0].tools
-    assert tools["mcp_stepsearch_web_search"].execute(query="one")["message"].endswith("ok")
-    assert tools["mcp_anysearch_search"].execute(query="two")["message"].endswith("ok")
-    assert tools["web_search"].execute(query="three")["budget_exhausted"] is True
-    assert tools["mcp_anysearch_batch_search"].execute(query="four")["budget_exhausted"] is True
-    assert tools["mcp_stepsearch_web_fetch"].execute(url="https://one.example")["message"].endswith("ok")
-    assert tools["web_fetch"].execute(url="https://two.example")["budget_exhausted"] is True
+    assert asyncio.run(tools["mcp_stepsearch_web_search"].execute(query="one"))["message"].endswith("ok")
+    assert asyncio.run(tools["mcp_anysearch_search"].execute(query="two"))["message"].endswith("ok")
+    assert asyncio.run(tools["web_search"].execute(query="three"))["budget_exhausted"] is True
+    assert asyncio.run(tools["mcp_anysearch_batch_search"].execute(query="four"))["budget_exhausted"] is True
+    assert asyncio.run(tools["mcp_stepsearch_web_fetch"].execute(url="https://one.example"))["message"].endswith("ok")
+    assert asyncio.run(tools["web_fetch"].execute(url="https://two.example"))["budget_exhausted"] is True
 
 
 def test_predefined_subagent_prompt_includes_current_date(monkeypatch):

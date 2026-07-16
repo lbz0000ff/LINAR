@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import asyncio
+import inspect
 from threading import Lock
 from typing import Any
 
@@ -49,7 +51,7 @@ class ResearchToolBudget:
     def limit(self) -> int:
         return self._counter.limit
 
-    def execute(self, *args: Any, **kwargs: Any) -> Any:
+    async def execute(self, *args: Any, **kwargs: Any) -> Any:
         if not self._counter.try_acquire():
             return {
                 "budget_exhausted": True,
@@ -60,4 +62,7 @@ class ResearchToolBudget:
                     "and call submit_output."
                 ),
             }
-        return self._tool.execute(*args, **kwargs)
+        execute = self._tool.execute
+        if inspect.iscoroutinefunction(execute):
+            return await execute(*args, **kwargs)
+        return await asyncio.to_thread(execute, *args, **kwargs)

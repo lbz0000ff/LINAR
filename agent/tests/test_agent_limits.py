@@ -23,6 +23,19 @@ class _NoopTool:
         return "ok"
 
 
+class _SyncWrapperReturningAwaitable:
+    """Model a synchronous decorator wrapped around an async tool."""
+
+    name = "noop"
+
+    def execute(self):
+        async def finish():
+            await asyncio.sleep(0)
+            return "awaited result"
+
+        return finish()
+
+
 class _FakeLLM:
     model = "fake"
 
@@ -138,6 +151,31 @@ def test_llm_limit_adds_explicit_meta_message(monkeypatch):
         and "LLM call limit reached" in msg.get("content", "")
         for msg in agent.chat_history
     )
+
+
+def test_agent_awaits_awaitable_returned_by_sync_tool_wrapper(monkeypatch):
+    monkeypatch.setattr(
+        "agent.load_config",
+        lambda: {
+            "llm": {"api_key": "test", "base_url": "http://test.invalid/v1", "model": "fake"},
+            "max_turns": 1,
+            "chat_history": {},
+            "permissions": {"default": "allow"},
+            "permission_modes": {},
+        },
+    )
+    agent = Agent(tools={"noop": _SyncWrapperReturningAwaitable()}, memory_enabled=False)
+    agent.llm = _FakeLLM()
+    agent.emit = lambda _event: None
+
+    asyncio.run(agent.process_with_llm())
+
+    tool_results = [
+        message.get("content", message.get("result", ""))
+        for message in agent.chat_history
+        if message.get("role") == "tool"
+    ]
+    assert any("awaited result" in str(result) for result in tool_results)
 
 
 def test_streaming_usage_is_emitted_once_with_the_final_snapshot(monkeypatch):

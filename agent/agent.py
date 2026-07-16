@@ -1,4 +1,5 @@
 import asyncio
+import inspect
 import json
 import os
 import re
@@ -1393,6 +1394,11 @@ class Agent:
                             if interrupt_task in done:
                                 raise InterruptedError("User interrupted")
                             result = execute_task.result()
+                            # A synchronous decorator can legitimately return
+                            # an awaitable from an async wrapped tool.  Do not
+                            # stringify or discard that coroutine.
+                            if inspect.isawaitable(result):
+                                result = await result
                             if isinstance(result, str) and result.strip().startswith('{'):
                                 try:
                                     result = json.loads(result)
