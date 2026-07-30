@@ -22,6 +22,26 @@ from hooks import HookRegistry, HookContext, HookEvent, _LEGACY_HOOK_EVENT
 
 log = get_logger(__name__)
 
+_TOOL_FAILURE_THRESHOLD = 3
+_TOOL_FAILURE_PREFIXES = (
+    "Error",
+    "[PERMISSION_DENIED]",
+    "[REJECTED_BY_USER]",
+    "[BLOCKED_BY_HOOK]",
+    "[NO RESULT]",
+    "[SYSTEM] Tool execution",
+    "[Interrupted by user]",
+)
+
+
+def _is_tool_failure_result(result: object) -> bool:
+    """Recognize explicit failure observations without rejecting all ``[...`` output."""
+    return (
+        isinstance(result, str)
+        and bool(result)
+        and result.startswith(_TOOL_FAILURE_PREFIXES)
+    )
+
 
 def _detect_shell() -> str:
     import platform, shutil
@@ -1067,6 +1087,9 @@ class Agent:
         print(json.dumps(event, ensure_ascii=False), flush=True)
 
     async def process_with_llm(self):
+        # A circuit breaker protects one Agent execution only.  A new user
+        # turn (or a new forked Agent) gets a clean opportunity to use tools.
+        self._tool_failures.clear()
         if self._owns_stop_event:
             self.stop_event.clear()
         self._interrupted = False
@@ -1328,8 +1351,26 @@ class Agent:
                     })
                     break
                 result = None
-                result_str = await self._check_permission(tc["name"], tc["arguments"])
                 _tool_failed = False
+                circuit_rejected = (
+                    self._tool_failures.get(tc["name"], 0)
+                    >= _TOOL_FAILURE_THRESHOLD
+                )
+                policy_rejected = False
+                if circuit_rejected:
+                    result_str = (
+                        f"[TOOL_CIRCUIT_OPEN] Tool '{tc['name']}' was not "
+                        f"executed because it failed "
+                        f"{_TOOL_FAILURE_THRESHOLD} times in a row during "
+                        f"this Agent execution. Use a different strategy or "
+                        f"wait for the next user turn."
+                    )
+                    _tool_failed = True
+                else:
+                    result_str = await self._check_permission(
+                        tc["name"], tc["arguments"]
+                    )
+                    policy_rejected = result_str is not None
                 hook_result = None
                 if result_str is None:
                     raw_args = tc["arguments"]
@@ -1354,6 +1395,7 @@ class Agent:
                             hook_data = json.loads(hook_result)
                             if hook_data.get("block"):
                                 result_str = f"[BLOCKED_BY_HOOK] {hook_data.get('reason', 'blocked')}"
+                                policy_rejected = True
                         except json.JSONDecodeError:
                             pass
                     if result_str is None:
@@ -1431,12 +1473,10 @@ class Agent:
                         except Exception as e:
                             result_str = f"Error: {e}"
                             _tool_failed = True
-                is_failure = _tool_failed or (
-                    isinstance(result_str, str) and result_str and (result_str.startswith("Error") or result_str.startswith("["))
-                )
-                if is_failure:
+                is_failure = _tool_failed or _is_tool_failure_result(result_str)
+                if is_failure and not circuit_rejected and not policy_rejected:
                     self._tool_failures[tc["name"]] = self._tool_failures.get(tc["name"], 0) + 1
-                    if self._tool_failures[tc["name"]] >= 3:
+                    if self._tool_failures[tc["name"]] == _TOOL_FAILURE_THRESHOLD:
                         self.chat_history.append({
                             "role": "meta",
                             "content": (
@@ -1446,8 +1486,7 @@ class Agent:
                             ),
                             "round": self._conversation_round,
                         })
-                        self._tool_failures[tc["name"]] = 0
-                else:
+                elif not is_failure:
                     self._tool_failures[tc["name"]] = 0
                 if tc["name"] == "cmd_execute":
                     try:
