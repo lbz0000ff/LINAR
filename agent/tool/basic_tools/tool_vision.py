@@ -15,19 +15,19 @@ from openai import OpenAI
 import base64
 import os
 import logging
+from visual import MAX_INLINE_IMAGE_BYTES, encode_image_data_uri
 
 log = logging.getLogger(__name__)
 
-_MAX_IMAGE_SIZE = 20 * 1024 * 1024
+_MAX_IMAGE_SIZE = MAX_INLINE_IMAGE_BYTES
 
-_SUPPORTED_EXT = {".jpg", ".jpeg", ".png", ".gif", ".bmp", ".webp"}
+_SUPPORTED_EXT = {".jpg", ".jpeg", ".png", ".gif", ".webp"}
 
 _MIME_MAP = {
     ".jpg": "image/jpeg",
     ".jpeg": "image/jpeg",
     ".png": "image/png",
     ".gif": "image/gif",
-    ".bmp": "image/bmp",
     ".webp": "image/webp",
 }
 
@@ -53,7 +53,7 @@ class Tool_ImgToText(Tool):
                     "items": {"type": "string"},
                     "description": (
                         "File paths or URLs of the images to analyze. "
-                        "Supported: JPEG, PNG, GIF, BMP, WebP."
+                        "Supported: JPEG, PNG, GIF, WebP."
                     ),
                 },
                 "prompt": {
@@ -104,12 +104,6 @@ class Tool_ImgToText(Tool):
                 image_uri = path
                 break
             # Local file
-            ext = os.path.splitext(path)[1].lower()
-            if ext not in _SUPPORTED_EXT:
-                return {"error": (
-                    f"Unsupported format '{ext}' for: {path}. "
-                    f"Supported: {', '.join(sorted(_SUPPORTED_EXT))}."
-                )}
             if not os.path.isfile(path):
                 return {"error": f"File not found: {path}"}
             size = os.path.getsize(path)
@@ -119,12 +113,9 @@ class Tool_ImgToText(Tool):
                     f"Maximum: {_MAX_IMAGE_SIZE / 1024 / 1024:.0f} MB."
                 )}
             try:
-                with open(path, "rb") as f:
-                    b64 = base64.b64encode(f.read()).decode("utf-8")
-            except (OSError, PermissionError) as e:
+                image_uri = encode_image_data_uri(path)
+            except (OSError, PermissionError, ValueError) as e:
                 return {"error": f"Cannot read {path}: {e}"}
-            mime = _MIME_MAP.get(ext, "image/png")
-            image_uri = f"data:{mime};base64,{b64}"
             break  # single image per call
 
         if not image_uri:

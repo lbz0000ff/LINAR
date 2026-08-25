@@ -12,6 +12,7 @@ from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
 import database as db
 from config import load_config
+from visual import detect_image_mime
 
 router = APIRouter()
 log = logging.getLogger(__name__)
@@ -94,11 +95,9 @@ async def ws_endpoint(ws: WebSocket):
                 file_texts = []
                 if raw_files:
                     import os as _os
-                    _IMG_EXTS = {".jpg", ".jpeg", ".png", ".gif", ".webp", ".bmp"}
                     for fp in raw_files:
                         fp = str(fp).strip()
-                        ext = _os.path.splitext(fp)[1].lower()
-                        if ext in _IMG_EXTS:
+                        if _os.path.isfile(fp) and detect_image_mime(fp):
                             if blocks is None:
                                 blocks = []
                             fp_norm = fp.replace("\\", "/")

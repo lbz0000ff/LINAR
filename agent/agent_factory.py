@@ -10,8 +10,10 @@ from openai import AsyncOpenAI
 from config import load_config
 from logger import get_logger
 from tool_registry import ToolRegistry
+from tool.basic_tools.tool_vision_vlm import Tool_Vision
 from hooks import HookRegistry
 from agent import Agent
+from visual import VisualResolver
 
 log = get_logger(__name__)
 
@@ -117,9 +119,24 @@ def create_agent(agent_hint: str = "any",
         )
         agent.llm.provider = provider
         agent.llm.model = resolved_model
+        aux_model = str(aux.get("model") or "").strip()
+        aux_multimodal = bool(aux.get("multimodal", False))
+        if model and resolved_model != aux_model:
+            aux_multimodal = False
+        agent._is_multimodal = aux_multimodal
+        agent._visual_resolver = (
+            VisualResolver(provider=provider, api_key=api_key, base_url=base_url)
+            if aux_multimodal else None
+        )
+        vision_requested = enabled is None or "vision" in enabled
+        if aux_multimodal and vision_requested:
+            agent.tools.setdefault("vision", Tool_Vision())
+        elif not aux_multimodal:
+            agent.tools.pop("vision", None)
+        agent.llm.tools = agent.tools
         log.info(
-            "Sub-agent aux runtime: %s → %s/%s (%s)",
-            agent_hint, provider, resolved_model, base_url,
+            "Sub-agent aux runtime: %s → %s/%s (%s, multimodal=%s)",
+            agent_hint, provider, resolved_model, base_url, aux_multimodal,
         )
     elif model:
         agent.llm.model = model

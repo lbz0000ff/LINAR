@@ -44,6 +44,11 @@ def image_url_block(url: str, detail: str = "high") -> dict:
     return {"type": "image_url", "image_url": {"url": url, "detail": detail}}
 
 
+def file_id_block(file_id: str) -> dict:
+    """Create a DeepSeek/OpenAI-compatible uploaded-file Content Block."""
+    return {"type": "file", "file_id": file_id}
+
+
 def from_string(text: str) -> list[dict]:
     """Convert a plain string to a single-element Content Block list."""
     return [text_block(text)] if text else []
@@ -103,5 +108,5 @@ def blocks_from_json(raw: str) -> list[dict] | None:
 # ── validation ───────────────────────────────────────────────────
 
 def has_image_blocks(blocks: list[dict]) -> bool:
-    """Return ``True`` if any block is an ``image_url``."""
-    return any(b.get("type") == "image_url" for b in blocks)
+    """Return ``True`` if any block carries an inline, URL, or uploaded image."""
+    return any(b.get("type") in {"image_url", "file"} for b in blocks)

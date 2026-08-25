@@ -5,7 +5,7 @@ from types import SimpleNamespace
 
 import httpx
 import pytest
-from openai import APIConnectionError
+from openai import APIConnectionError, BadRequestError
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
@@ -14,6 +14,12 @@ import llm
 
 def _api_error() -> APIConnectionError:
     return APIConnectionError(request=httpx.Request("POST", "https://example.com/v1/chat/completions"))
+
+
+def _bad_request_error() -> BadRequestError:
+    request = httpx.Request("POST", "https://example.com/v1/chat/completions")
+    response = httpx.Response(400, request=request)
+    return BadRequestError("invalid image", response=response, body={"error": {"code": "bad_request"}})
 
 
 def _runtime(create):
@@ -81,6 +87,25 @@ def test_generate_response_raises_third_api_error(monkeypatch) -> None:
         asyncio.run(_runtime(create).generate_response("hello"))
 
     assert attempts == 3
+
+
+def test_generate_response_does_not_retry_bad_request(monkeypatch) -> None:
+    attempts = 0
+
+    async def create(**_kwargs):
+        nonlocal attempts
+        attempts += 1
+        raise _bad_request_error()
+
+    async def fail_sleep(_delay):
+        raise AssertionError("deterministic 400 errors must not sleep or retry")
+
+    monkeypatch.setattr(asyncio, "sleep", fail_sleep)
+
+    with pytest.raises(BadRequestError):
+        asyncio.run(_runtime(create).generate_response("hello"))
+
+    assert attempts == 1
 
 
 class _Stream:

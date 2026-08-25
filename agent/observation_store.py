@@ -23,7 +23,14 @@ class ObservationStore:
     def __init__(self):
         self._events: list[dict] = []
 
-    def add_event(self, type: str, uri: str = "", summary: str = ""):
+    def add_event(
+        self,
+        type: str,
+        uri: str = "",
+        summary: str = "",
+        tool_name: str = "",
+        tool_call_id: str = "",
+    ) -> None:
         """Append an event.
 
         *type* — ``"image"`` | ``"tool"`` | ``"file"``
@@ -33,25 +40,60 @@ class ObservationStore:
             "type": type,
             "uri": uri,
             "summary": summary,
+            "tool_name": tool_name,
+            "tool_call_id": tool_call_id,
             "ts": time.time(),
+            "attached": False,
         })
         log.debug("ObservationStore add: type=%s uri=%.80s", type, uri)
 
-    def add_image(self, uri: str):
+    def add_image(
+        self,
+        uri: str,
+        tool_name: str = "",
+        tool_call_id: str = "",
+    ) -> None:
         """Shorthand for registering an image reference."""
-        self.add_event("image", uri=uri)
+        self.add_event(
+            "image",
+            uri=uri,
+            tool_name=tool_name,
+            tool_call_id=tool_call_id,
+        )
 
-    def pop_attachable_images(self, max_n: int = 3) -> list[str]:
-        """Return the last *max_n* image URIs for this round.
+    def pop_attachable_image_events(self, max_n: int = 3) -> list[dict]:
+        """Return the last *max_n* image events for this round.
 
         Images are returned in chronological order and the consumed
         entries stay in the event log for traceability.
         """
-        image_uris = [e["uri"] for e in self._events if e["type"] == "image"]
-        return image_uris[-max_n:]
+        pending = [
+            event for event in self._events
+            if event["type"] == "image" and not event.get("attached", False)
+        ]
+        selected = pending[-max_n:]
+        for event in pending:
+            event["attached"] = True
+        if len(pending) > max_n:
+            log.warning(
+                "ObservationStore skipped %s older pending images; attaching the latest %s",
+                len(pending) - max_n,
+                max_n,
+            )
+        return [dict(event) for event in selected]
+
+    def pop_attachable_images(self, max_n: int = 3) -> list[str]:
+        """Backward-compatible URI-only view of attachable image events."""
+        return [
+            event["uri"]
+            for event in self.pop_attachable_image_events(max_n=max_n)
+        ]
 
     def has_images(self) -> bool:
-        return any(e["type"] == "image" for e in self._events)
+        return any(
+            event["type"] == "image" and not event.get("attached", False)
+            for event in self._events
+        )
 
     @property
     def events(self) -> list[dict]:

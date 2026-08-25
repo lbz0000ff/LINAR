@@ -110,6 +110,14 @@ class Session:
         if self._ask_future and not self._ask_future.done():
             self._ask_future.set_result(response)
 
+    def _recover_from_error(self, error: Exception) -> None:
+        """Finish the failed turn and reset only the terminal execution wrapper."""
+        self.agent.emit({"type": "error", "data": str(error)})
+        self.orchestrator = Orchestrator(self.agent)
+        self.status = "idle"
+        self.agent.emit({"type": "complete"})
+        log.info("Session #%s recovered with a fresh orchestrator", self.session_id)
+
     async def _run(self):
         """Agent async task: reads from input_queue, processes via Orchestrator."""
         while not self._stop.is_set():
@@ -186,8 +194,10 @@ class Session:
                 await self.orchestrator.start(text, blocks)
             except Exception as e:
                 log.exception("Session #%s error", self.session_id)
-                self.agent.emit({"type": "error", "data": str(e)})
-                self.status = "error"
+                # ERROR is deliberately terminal inside one Orchestrator. Keep the
+                # Agent and its history, but replace the failed execution wrapper
+                # so the next queued user message starts from a fresh IDLE FSM.
+                self._recover_from_error(e)
             else:
                 self.status = "idle"
 

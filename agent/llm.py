@@ -54,12 +54,20 @@ class LLM:
             self._error_code(error),
         )
 
+    @staticmethod
+    def _is_retryable(error: APIError) -> bool:
+        """Retry transient transport/server failures, not deterministic 4xx requests."""
+        status = getattr(error, "status_code", None)
+        if status is None:
+            return True
+        return status in {408, 409, 429} or status >= 500
+
     async def _create_with_retry(self, **kwargs: Any) -> Any:
         for attempt in range(1, MAX_API_ATTEMPTS + 1):
             try:
                 return await self.client.chat.completions.create(**kwargs)
             except APIError as error:
-                if attempt >= MAX_API_ATTEMPTS:
+                if attempt >= MAX_API_ATTEMPTS or not self._is_retryable(error):
                     raise
                 self._log_retry(error, attempt)
                 await asyncio.sleep(RETRY_DELAYS_SECONDS[attempt - 1])
@@ -75,7 +83,7 @@ class LLM:
                     yield chunk
                 return
             except APIError as error:
-                if yielded_chunk or attempt >= MAX_API_ATTEMPTS:
+                if yielded_chunk or attempt >= MAX_API_ATTEMPTS or not self._is_retryable(error):
                     raise
                 self._log_retry(error, attempt)
                 await asyncio.sleep(RETRY_DELAYS_SECONDS[attempt - 1])

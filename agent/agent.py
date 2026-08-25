@@ -7,10 +7,12 @@ import subprocess
 import sys
 import time
 
+from openai import APIError
+
 from llm import LLM
 from config import load_config
 from content_block import (
-    is_blocks, text_block, image_url_block,
+    is_blocks, text_block, image_url_block, file_id_block,
     has_image_blocks, extract_text,
 )
 from observation_store import ObservationStore
@@ -74,9 +76,13 @@ class Agent:
                 provider=cfg["llm"].get("provider", ""),
                 api_key=cfg["llm"].get("api_key", ""),
                 base_url=cfg["llm"].get("base_url", ""),
+                file_upload_mode=cfg["llm"].get("file_upload_mode", "auto"),
+                file_upload_threshold_mb=cfg["llm"].get("file_upload_threshold_mb", 8),
+                file_upload_expires_seconds=cfg["llm"].get("file_upload_expires_seconds", 86400),
             )
         self._project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
         self.observation_store = ObservationStore()
+        self._last_attached_image_events: list[dict] = []
 
         api_key = cfg["llm"]["api_key"]
         base_url = cfg["llm"].get("base_url", "https://api.deepseek.com/v1")
@@ -266,9 +272,12 @@ class Agent:
         if not resolve_images:
             stripped: list[dict] = []
             for b in blocks_or_str:
-                if b.get("type") == "image_url":
-                    url = (b.get("image_url") or {}).get("url", "")
-                    label = url[7:] if url.startswith("file://") else url
+                if b.get("type") in {"image_url", "file"}:
+                    if b.get("type") == "file":
+                        label = b.get("file_id") or b.get("filename") or "uploaded file"
+                    else:
+                        url = (b.get("image_url") or {}).get("url", "")
+                        label = url[7:] if url.startswith("file://") else url
                     stripped.append(text_block(f"(image: {label})"))
                     continue
                 stripped.append(b)
@@ -286,7 +295,14 @@ class Agent:
                 if url.startswith("file://"):
                     materialised = self._materialise_file_url(url[7:])
                     if materialised:
-                        resolved.append(image_url_block(materialised, detail))
+                        if materialised.startswith("deepseekfile://"):
+                            resolved.append(file_id_block(materialised.removeprefix("deepseekfile://")))
+                        else:
+                            resolved.append(image_url_block(materialised, detail))
+                    else:
+                        resolved.append(text_block(
+                            f"[Image attachment could not be prepared: {url[7:]}]"
+                        ))
                 else:
                     resolved.append(b)
             else:
@@ -298,7 +314,7 @@ class Agent:
         return resolved
 
     def _materialise_file_url(self, path: str) -> str | None:
-        """Convert a local *path* to a base64 ``data:`` URL.
+        """Convert a local path to an uploaded-file sentinel or base64 URL.
 
         Tries ``VisualResolver`` first (which may use provider upload APIs).
         Falls back to plain base64 encoding.
@@ -319,6 +335,150 @@ class Agent:
             return f"data:{mime_map.get(ext, 'image/png')};base64,{b64}"
         except Exception:
             return None
+
+    def _validate_deepseek_multimodal_request(self, msgs: list[dict]) -> None:
+        """Fail locally when a DeepSeek vision request violates API limits."""
+        if not getattr(self, "_is_multimodal", False):
+            return
+        provider = (getattr(self.llm, "provider", "") or "").lower()
+        if provider != "deepseek":
+            return
+
+        llm_cfg = self.cfg.get("llm", {})
+        max_images = int(llm_cfg.get("max_images_per_request", 20))
+        max_request_bytes = int(llm_cfg.get("max_request_size_mb", 48) * 1024 * 1024)
+        image_count = 0
+        allowed_data_mimes = (
+            "data:image/jpeg;base64,",
+            "data:image/png;base64,",
+            "data:image/gif;base64,",
+            "data:image/webp;base64,",
+        )
+
+        for message in msgs:
+            content = message.get("content")
+            if not isinstance(content, list):
+                continue
+            for block in content:
+                block_type = block.get("type")
+                if block_type not in {"image_url", "file"}:
+                    continue
+                image_count += 1
+                if message.get("role") != "user":
+                    raise ValueError("DeepSeek images may only appear in user messages.")
+                if block_type == "image_url":
+                    url = (block.get("image_url") or {}).get("url", "")
+                    if url.startswith(("http://", "https://")) and len(url) > 8192:
+                        raise ValueError("DeepSeek external image URLs may not exceed 8192 characters.")
+                    if url.startswith("data:") and not url.startswith(allowed_data_mimes):
+                        raise ValueError(
+                            "DeepSeek inline images must be JPEG, PNG, GIF, or WebP."
+                        )
+                else:
+                    file_id = block.get("file_id")
+                    file_data = block.get("file_data")
+                    if bool(file_id) == bool(file_data):
+                        raise ValueError(
+                            "DeepSeek file blocks require exactly one of file_id or file_data."
+                        )
+                    if file_id:
+                        if not str(file_id).startswith("file-api-"):
+                            raise ValueError("DeepSeek uploaded file IDs must start with file-api-.")
+                        if block.get("filename"):
+                            raise ValueError("DeepSeek filename is not allowed with file_id.")
+                    elif not str(file_data).startswith(allowed_data_mimes):
+                        raise ValueError(
+                            "DeepSeek inline file_data must be JPEG, PNG, GIF, or WebP."
+                        )
+
+        if image_count > max_images:
+            raise ValueError(
+                f"Too many images for one LINAR request ({image_count}); "
+                f"configured maximum is {max_images}."
+            )
+
+        tool_schemas = [
+            {"type": "function", "function": tool.tool_schema}
+            for tool in self.tools.values()
+        ]
+        request_shape = {
+            "model": self.llm.model,
+            "messages": [
+                {"role": "system", "content": self.llm.system_prompt},
+                *msgs,
+            ],
+            "tools": tool_schemas,
+        }
+        request_bytes = len(
+            json.dumps(request_shape, ensure_ascii=False, default=str).encode("utf-8")
+        )
+        if request_bytes > max_request_bytes:
+            raise ValueError(
+                f"DeepSeek request body is {request_bytes / 1024 / 1024:.1f} MiB; "
+                f"configured maximum is {max_request_bytes / 1024 / 1024:.0f} MiB."
+            )
+
+    def _handle_remote_image_fetch_error(self, error: APIError) -> bool:
+        """Turn a provider URL-fetch 400 into errors for originating image tools."""
+        status = getattr(error, "status_code", None)
+        error_text = str(error)
+        if status != 400 or "failed to download image" not in error_text.lower():
+            return False
+
+        events = [
+            event for event in getattr(self, "_last_attached_image_events", [])
+            if event.get("tool_name")
+            and event.get("tool_call_id")
+            and str(event.get("uri", "")).startswith(("http://", "https://"))
+        ]
+        if not events:
+            return False
+
+        # DeepSeek normally includes the failed URL in its error. Attribute only
+        # that observation when possible; conservatively mark all attached remote
+        # images only when the provider omits the URL.
+        matched_events = [event for event in events if event["uri"] in error_text]
+        if matched_events:
+            events = matched_events
+
+        detail = " ".join(error_text.split())[:500]
+        handled = False
+        for event in events:
+            event_handled = False
+            tool_call_id = event["tool_call_id"]
+            tool_name = event["tool_name"]
+            uri = event["uri"]
+            result = (
+                "Error: DeepSeek could not download the remote image URL "
+                f"'{uri}'. Provider response: {detail}"
+            )
+            for message in reversed(self.chat_history):
+                if (
+                    message.get("role") == "tool"
+                    and message.get("tool_call_id") == tool_call_id
+                    and message.get("name") == tool_name
+                ):
+                    message["result"] = result
+                    handled = True
+                    event_handled = True
+                    break
+            if event_handled:
+                self._tool_failures[tool_name] = self._tool_failures.get(tool_name, 0) + 1
+                self.emit({
+                    "type": "tool_result",
+                    "name": tool_name,
+                    "id": tool_call_id,
+                    "result": result,
+                })
+
+        if handled:
+            self._last_attached_image_events = []
+            log.warning(
+                "DeepSeek remote image fetch failed; converted %s attachment(s) "
+                "to originating tool errors",
+                len(events),
+            )
+        return handled
 
     def _format_chat_history(self) -> str:
         """Serialize internal JSON history to text for the LLM prompt."""
@@ -518,15 +678,23 @@ class Agent:
                     continue
             i += 1
         # ── attach images from observation_store at request boundary ──
+        self._last_attached_image_events = []
         if self._is_multimodal and self.observation_store.has_images():
-            img_uris = self.observation_store.pop_attachable_images()
-            if img_uris:
+            image_events = self.observation_store.pop_attachable_image_events()
+            self._last_attached_image_events = image_events
+            if image_events:
                 content: list = [{"type": "text", "text": "(image attached)"}]
-                for uri in img_uris:
-                    if uri.startswith("file://"):
+                for event in image_events:
+                    uri = event["uri"]
+                    if uri.startswith("deepseekfile://"):
+                        content.append(file_id_block(uri.removeprefix("deepseekfile://")))
+                    elif uri.startswith("file://"):
                         resolved = self._materialise_file_url(uri[7:])
                         if resolved:
-                            content.append({"type": "image_url", "image_url": {"url": resolved, "detail": "high"}})
+                            if resolved.startswith("deepseekfile://"):
+                                content.append(file_id_block(resolved.removeprefix("deepseekfile://")))
+                            else:
+                                content.append({"type": "image_url", "image_url": {"url": resolved, "detail": "high"}})
                     elif uri:
                         content.append({"type": "image_url", "image_url": {"url": uri, "detail": "high"}})
                 if len(content) > 1:
@@ -536,6 +704,7 @@ class Agent:
             if m["role"] == "tool" and isinstance(m.get("content"), dict):
                 c = m["content"]
                 m["content"] = c.get("message", str(c))
+        self._validate_deepseek_multimodal_request(msgs)
         return msgs
     # ── truncation thresholds ──
     _TRUNCATION_FULL = 5000        # 以下：原样返回
@@ -1192,7 +1361,9 @@ class Agent:
                 )
                 self.emit({"type": "token", "data": notice})
                 break
-            llm_messages = self._build_llm_messages()
+            # Building messages may upload a large local image through a provider
+            # Files API. Keep that blocking multipart transfer off the event loop.
+            llm_messages = await asyncio.to_thread(self._build_llm_messages)
 
             # Dispatch LLM_START hook
             await self.hooks.dispatch_fire_and_forget(
@@ -1206,11 +1377,22 @@ class Agent:
 
             self.emit({"type": "start"})
             stream = self.llm.stream_response_messages(llm_messages)
+            stream_iterator = stream.__aiter__()
             text_parts = []
             reasoning_parts = []
             tool_call_deltas = {}
             usage_data = None
-            async for chunk in stream:
+            vision_fetch_failed = False
+            while True:
+                try:
+                    chunk = await anext(stream_iterator)
+                except StopAsyncIteration:
+                    break
+                except APIError as error:
+                    if self._handle_remote_image_fetch_error(error):
+                        vision_fetch_failed = True
+                        break
+                    raise
                 if self.stop_event.is_set():
                     break
                 if hasattr(chunk, "usage") and chunk.usage:
@@ -1257,6 +1439,8 @@ class Agent:
                                 tool_call_deltas[idx]["name"] = tc.function.name
                             if tc.function.arguments:
                                 tool_call_deltas[idx]["arguments"] += tc.function.arguments
+            if vision_fetch_failed:
+                continue
             if self.stop_event.is_set():
                 self._interrupted = True
                 self.chat_history.append({
@@ -1453,7 +1637,11 @@ class Agent:
                                     _tool_failed = True
                                 # Extract image_uri for observation_store
                                 if result.get("image_uri"):
-                                    self.observation_store.add_image(result["image_uri"])
+                                    self.observation_store.add_image(
+                                        result["image_uri"],
+                                        tool_name=tc["name"],
+                                        tool_call_id=tc["id"],
+                                    )
                                 # Tool result text: use `message` field, fall back to str(dict)
                                 result_str = result.get("message", str(result))
                             elif result is not None:

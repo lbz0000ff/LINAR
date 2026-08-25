@@ -1,29 +1,21 @@
 """Tool for multimodal (vision-language) models.
 
-Registers an image for direct viewing by the main model.  The image is
-base64-encoded locally and returned as ``image_uri``; no external API
-call is made.  ``agent.py``'s prompt builder picks the URI from the
-observation store and attaches it at the request boundary.
+Registers an image for direct viewing by the main model. Remote URLs stay
+remote. Local images are either uploaded through the provider Files API or
+encoded inline according to the active resolver policy.
 """
 
-import base64
 import os
 import logging
+from typing import Any
 
 from .tool import Tool
+from visual import MAX_DEEPSEEK_FILE_BYTES, encode_image_data_uri
 
 log = logging.getLogger(__name__)
 
-_MAX_IMAGE_SIZE = 20 * 1024 * 1024
-_SUPPORTED_EXT = {".jpg", ".jpeg", ".png", ".gif", ".bmp", ".webp"}
-_MIME_MAP = {
-    ".jpg": "image/jpeg", ".jpeg": "image/jpeg",
-    ".png": "image/png", ".gif": "image/gif",
-    ".bmp": "image/bmp", ".webp": "image/webp",
-}
-
-
 class Tool_Vision(Tool):
+    agent_ref: Any = None
     name: str = "vision"
     description: str = (
         "Register an image for direct viewing. "
@@ -40,7 +32,7 @@ class Tool_Vision(Tool):
                     "type": "string",
                     "description": (
                         "Path or URL of the image to view. "
-                        "Supported: JPEG, PNG, GIF, BMP, WebP."
+                        "Supported: JPEG, PNG, GIF, WebP."
                     ),
                 },
             },
@@ -54,7 +46,8 @@ class Tool_Vision(Tool):
 
         path = str(image).strip()
 
-        # Remote URL — pass through directly
+        # Keep remote URLs remote so providers can fetch them without LINAR
+        # downloading and retaining every image locally.
         if path.startswith(("http://", "https://")):
             log.info("Vision (multimodal): remote URI %.80s", path)
             return {
@@ -63,27 +56,24 @@ class Tool_Vision(Tool):
             }
 
         # Local file
-        ext = os.path.splitext(path)[1].lower()
-        if ext not in _SUPPORTED_EXT:
-            return {"error": (
-                f"Unsupported format '{ext}' for: {path}. "
-                f"Supported: {', '.join(sorted(_SUPPORTED_EXT))}."
-            )}
         if not os.path.isfile(path):
             return {"error": f"File not found: {path}"}
         size = os.path.getsize(path)
-        if size > _MAX_IMAGE_SIZE:
+        if size > MAX_DEEPSEEK_FILE_BYTES:
             return {"error": (
                 f"File too large ({size / 1024 / 1024:.1f} MB): {path}. "
-                f"Maximum: {_MAX_IMAGE_SIZE / 1024 / 1024:.0f} MB."
+                f"Maximum: {MAX_DEEPSEEK_FILE_BYTES / 1024 / 1024:.0f} MB."
             )}
         try:
-            with open(path, "rb") as f:
-                b64 = base64.b64encode(f.read()).decode("utf-8")
-        except (OSError, PermissionError) as e:
+            resolver = getattr(self.agent_ref, "_visual_resolver", None)
+            image_uri = resolver.resolve(path) if resolver else encode_image_data_uri(path)
+        except (OSError, PermissionError, ValueError) as e:
             return {"error": f"Cannot read {path}: {e}"}
-        mime = _MIME_MAP.get(ext, "image/png")
-        image_uri = f"data:{mime};base64,{b64}"
+        if not image_uri:
+            return {"error": (
+                f"Cannot prepare image for the active provider: {path}. "
+                "Check the Files API configuration or use an image up to 32 MiB."
+            )}
 
         log.info("Vision (multimodal): 1 image encoded")
         return {

@@ -115,6 +115,50 @@ def test_predefined_subagent_model_overrides_aux_model_only(monkeypatch):
     assert created.llm.model == "deepseek-v4-pro"
 
 
+def test_predefined_subagent_applies_aux_multimodal_capability(monkeypatch):
+    cfg = _factory_config({
+        "provider": "deepseek",
+        "model": "deepseek-v4-flash-vision-exp",
+        "multimodal": True,
+        "base_url": "https://api.deepseek.com/v1",
+        "api_key": "test-key",
+    })
+    monkeypatch.setattr(agent_factory, "load_config", lambda: cfg)
+    monkeypatch.setattr(agent_factory, "ToolRegistry", _FakeRegistry)
+    monkeypatch.setattr(agent_factory, "Agent", _FakeRuntimeAgent)
+    monkeypatch.setattr(agent_factory, "AsyncOpenAI", lambda **kwargs: ("client", kwargs), raising=False)
+
+    created = agent_factory.create_agent(agent_hint="research", use_aux=True)
+
+    assert created._is_multimodal is True
+    assert created._visual_resolver.provider == "deepseek"
+    assert "vision" in created.tools
+    assert created.llm.tools is created.tools
+
+
+def test_aux_model_override_disables_unproven_multimodal_capability(monkeypatch):
+    cfg = _factory_config({
+        "provider": "deepseek",
+        "model": "deepseek-v4-flash-vision-exp",
+        "multimodal": True,
+        "base_url": "https://api.deepseek.com/v1",
+        "api_key": "test-key",
+    })
+    monkeypatch.setattr(agent_factory, "load_config", lambda: cfg)
+    monkeypatch.setattr(agent_factory, "ToolRegistry", _FakeRegistry)
+    monkeypatch.setattr(agent_factory, "Agent", _FakeRuntimeAgent)
+    monkeypatch.setattr(agent_factory, "AsyncOpenAI", lambda **kwargs: ("client", kwargs), raising=False)
+
+    created = agent_factory.create_agent(
+        agent_hint="research",
+        use_aux=True,
+        model="deepseek-v4-pro",
+    )
+
+    assert created._is_multimodal is False
+    assert "vision" not in created.tools
+
+
 def test_create_agent_uses_injected_tool_factory(monkeypatch):
     cfg = _factory_config({})
     requested = []

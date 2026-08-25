@@ -42,6 +42,12 @@ DEFAULTS = {
     "llm": {
         "provider": "deepseek",
         "model": "deepseek-v4-flash",
+        "multimodal": False,
+        "max_images_per_request": 600,
+        "max_request_size_mb": 48,
+        "file_upload_mode": "auto",
+        "file_upload_threshold_mb": 8,
+        "file_upload_expires_seconds": 86400,
         "temperature": 0.7,
         "max_tokens": 1000000,
         "top_p": 1.0,
@@ -96,6 +102,7 @@ DEFAULTS = {
     "aux": {
         "provider": "deepseek",
         "model": "",
+        "multimodal": False,
         "temperature": 0.3,
     },
     "vision": {
