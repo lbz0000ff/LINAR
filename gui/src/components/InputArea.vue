@@ -109,7 +109,7 @@ function formatTokens(n) {
   return String(n)
 }
 
-const backendOrigin = window.electronAPI?.isElectron ? 'http://127.0.0.1:8080' : ''
+const backendOrigin = window.electronAPI?.isElectron ? window.electronAPI.backendOrigin : ''
 
 function onSend() {
   const text = inputText.value.trim()

@@ -5,7 +5,7 @@ import { ref } from 'vue'
 
 // Electron: direct backend; browser: via Vite proxy / same port
 const WS_URL = window.electronAPI?.isElectron
-  ? 'ws://127.0.0.1:8080/ws'
+  ? `${window.electronAPI.backendOrigin.replace(/^http/, 'ws')}/ws`
   : `${location.protocol === 'https:' ? 'wss:' : 'ws:'}//${location.host}/ws`
 
 let ws = null

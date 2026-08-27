@@ -12,6 +12,7 @@ import argparse
 import os
 import shutil
 import signal
+import socket
 import subprocess
 import sys
 import threading
@@ -93,12 +94,19 @@ def _terminate_tree(proc: subprocess.Popen) -> None:
             return
 
 
-def _popen(cmd: list[str], cwd: str, *, pipe: bool = False) -> subprocess.Popen:
+def _popen(
+    cmd: list[str],
+    cwd: str,
+    *,
+    pipe: bool = False,
+    env: dict[str, str] | None = None,
+) -> subprocess.Popen:
     kwargs = {
         "cwd": cwd,
         "text": True,
         "encoding": "utf-8",
         "errors": "replace",
+        "env": env,
     }
     if pipe:
         kwargs.update({"stdout": subprocess.PIPE, "stderr": subprocess.STDOUT})
@@ -107,6 +115,30 @@ def _popen(cmd: list[str], cwd: str, *, pipe: bool = False) -> subprocess.Popen:
     else:
         kwargs["start_new_session"] = True
     return subprocess.Popen(cmd, **kwargs)
+
+
+def _select_backend_port(host: str, requested_port: int | None) -> int:
+    """Return an available backend port, preserving explicitly requested ports."""
+    if requested_port is not None:
+        return requested_port
+
+    for candidate in (8080, 0):
+        try:
+            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+                sock.bind((host, candidate))
+                return int(sock.getsockname()[1])
+        except OSError as exc:
+            if candidate == 8080:
+                print(f"[linar] Port 8080 unavailable ({exc}); selecting another port")
+                continue
+            raise
+
+    raise RuntimeError("Unable to select a backend port")
+
+
+def _backend_origin(host: str, port: int) -> str:
+    client_host = "127.0.0.1" if host in ("0.0.0.0", "::") else host
+    return f"http://{client_host}:{port}"
 
 
 def _stream_output(proc: subprocess.Popen, prefix: str) -> None:
@@ -141,8 +173,10 @@ def _launch_gui(args: argparse.Namespace) -> None:
         raise SystemExit(1)
 
     agent_dir = os.path.join(_project_root, "agent")
+    gui_env = os.environ.copy()
+    gui_env["LINAR_BACKEND_ORIGIN"] = _backend_origin(args.host, args.port)
     api_proc = _popen(_backend_cmd(args), agent_dir, pipe=True)
-    gui_proc = _popen([npm, "run", "dev"], gui_dir, pipe=True)
+    gui_proc = _popen([npm, "run", "dev"], gui_dir, pipe=True, env=gui_env)
 
     print(f"[linar] Backend started at http://{args.host}:{args.port}")
     print("[linar] Electron GUI starting via npm run dev")
@@ -187,7 +221,12 @@ def _parse_args() -> argparse.Namespace:
     mode.add_argument("--web", action="store_true", help="Start production web server")
     mode.add_argument("--gui", action="store_true", help="Start backend and Electron GUI")
     parser.add_argument("--host", default="127.0.0.1", help="Backend bind address")
-    parser.add_argument("--port", type=int, default=8080, help="Backend port")
+    parser.add_argument(
+        "--port",
+        type=int,
+        default=None,
+        help="Backend port (default: 8080 when available, otherwise an available port)",
+    )
     parser.add_argument("--reload", action="store_true", help="Enable backend auto-reload")
     return parser.parse_args()
 
@@ -197,6 +236,9 @@ def main() -> None:
 
     # 1. Bootstrap: install deps if missing
     _ensure_deps()
+
+    if args.web or args.gui:
+        args.port = _select_backend_port(args.host, args.port)
 
     # 2. Launch
     if args.web:
