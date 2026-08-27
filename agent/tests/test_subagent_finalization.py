@@ -78,6 +78,15 @@ def test_submit_output_schema_is_minimal_for_each_research_role():
     assert generic == common
 
 
+def test_analyst_submit_output_schema_bounds_compact_handoff_fields():
+    properties = _tool("analyst").tool_schema["parameters"]["properties"]
+
+    assert properties["summary"]["maxLength"] == 4000
+    assert properties["contradictions"]["maxItems"] == 8
+    assert properties["next_wave_suggestions"]["maxItems"] == 6
+    assert properties["key_evidence_ids"]["maxItems"] == 40
+
+
 def test_submit_output_discards_fields_outside_active_role_contract():
     tool = _tool("web_researcher")
 
@@ -101,6 +110,7 @@ def test_installed_research_templates_use_generic_handoff_contract():
         prompt = definition["system_prompt"]
         assert "status" in prompt
         assert "summary" in prompt
+        assert "correct the payload and retry" in prompt
         assert "get_date" not in definition["allowed_tools"]
         assert "get_time" not in definition["allowed_tools"]
 
@@ -116,6 +126,8 @@ def test_research_templates_describe_selection_and_progressive_state_access():
     assert "read_research_state" in analyst["allowed_tools"]
     assert "overview" in analyst["system_prompt"]
     assert "new_evidence" in analyst["system_prompt"]
+    assert "under 4,000 characters" in analyst["system_prompt"]
+    assert "not the final report" in analyst["system_prompt"]
     assert "read `research_state.json`" not in analyst["system_prompt"]
     assert "read_research_state" in critic["allowed_tools"]
     assert "evidence_by_id" in critic["system_prompt"]

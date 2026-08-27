@@ -14,6 +14,7 @@ except ImportError:
     )
 
 from agent import Agent
+from tool.basic_tools.tool_plan import SubmitOutputTool
 
 
 def _agent_config():
@@ -78,6 +79,35 @@ class _ScriptedLLM:
 
     def stream_response_messages(self, _messages):
         return self._stream()
+
+
+class _ArgumentScriptedLLM(_ScriptedLLM):
+    async def _stream(self):
+        batch = self.batches[self.calls] if self.calls < len(self.batches) else []
+        self.calls += 1
+        if not batch:
+            yield SimpleNamespace(
+                choices=[SimpleNamespace(delta=SimpleNamespace(
+                    content="done",
+                    reasoning_content=None,
+                    tool_calls=None,
+                ))]
+            )
+            return
+        yield SimpleNamespace(
+            choices=[SimpleNamespace(delta=SimpleNamespace(
+                content=None,
+                reasoning_content=None,
+                tool_calls=[
+                    SimpleNamespace(
+                        index=index,
+                        id=tool_call_id,
+                        function=SimpleNamespace(name=name, arguments=arguments),
+                    )
+                    for index, (tool_call_id, name, arguments) in enumerate(batch)
+                ],
+            ))]
+        )
 
 
 def _make_agent(monkeypatch, tools, batches):
@@ -226,6 +256,36 @@ def test_threshold_keeps_existing_do_not_retry_meta_hint(monkeypatch):
     ]
     assert len(hints) == 1
     assert "Do NOT retry" in hints[0]
+
+
+def test_submit_output_parse_errors_remain_recoverable_and_log_only_metadata(
+    monkeypatch, caplog,
+):
+    submit = SubmitOutputTool(agent_type="analyst")
+    agent = _make_agent(monkeypatch, {"submit_output": submit}, [])
+    submit.agent_ref = agent
+    agent.submission_required = True
+    malformed = '{"status":"completed","summary":"DO_NOT_LOG"'
+    valid = '{"status":"partial","summary":"Compact handoff"}'
+    agent.llm = _ArgumentScriptedLLM([
+        [(f"submit-{index}", "submit_output", malformed)]
+        for index in range(1, 5)
+    ] + [[("submit-5", "submit_output", valid)]])
+
+    asyncio.run(agent.process_with_llm())
+
+    messages = _tool_messages(agent, "submit_output")
+    assert len(messages) == 5
+    assert all(
+        "[SUBMISSION_JSON_INVALID]" in message["result"]
+        for message in messages[:4]
+    )
+    assert not any("[TOOL_CIRCUIT_OPEN]" in message["result"] for message in messages)
+    assert messages[-1]["result"] == "SUBMITTED: Result recorded."
+    assert agent._submission["summary"] == "Compact handoff"
+    assert agent._tool_failures.get("submit_output", 0) == 0
+    assert "chars=" in caplog.text
+    assert "DO_NOT_LOG" not in caplog.text
 
 
 def test_bracket_prefixed_success_does_not_trip_circuit(monkeypatch):

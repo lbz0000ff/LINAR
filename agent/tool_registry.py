@@ -380,16 +380,35 @@ def _add_vision_tools(tools: dict) -> None:
 
 
 def _replace_native_web_tools(tools: dict, mcp_tools: dict) -> None:
-    """Hide native web tools when a successful search MCP can replace them."""
-    search_mcp_tools = {
+    """Replace native search with MCP search while keeping native fetch.
+
+    ``is_search_tool`` is configured per MCP server, so a search provider may
+    expose companion fetch/extract tools under the same marker.  Only tools
+    whose original server-side name is actually search-shaped should replace
+    ``web_search``.  The bundled Crawl4AI ``web_fetch`` remains canonical.
+    """
+    marked_mcp_tools = {
         name: tool
         for name, tool in mcp_tools.items()
         if bool(getattr(tool, "is_search_tool", False))
     }
+    search_mcp_tools = {
+        name: tool
+        for name, tool in marked_mcp_tools.items()
+        if str(getattr(tool, "original_name", "")).lower().endswith("search")
+    }
     if not search_mcp_tools:
         return
+
+    # In the all-tools path MCP tools were already merged.  Remove companion
+    # fetch/extract tools from search-marked servers so the model does not see
+    # multiple overlapping fetch implementations.  They remain available when
+    # the caller explicitly selects only the ``mcp`` toolset.
+    for name in marked_mcp_tools:
+        if name not in search_mcp_tools:
+            tools.pop(name, None)
+
     tools.pop("web_search", None)
-    tools.pop("web_fetch", None)
     tools.update(search_mcp_tools)
 
 # ── public API ───────────────────────────────────────────────

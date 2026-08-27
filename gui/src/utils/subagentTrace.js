@@ -57,6 +57,7 @@ function normalizeNode(data = {}, existing = {}) {
     status: data.status || existing.status || 'ACTIVE',
     result: data.result ?? existing.result ?? '',
     metrics: { ...(existing.metrics || {}), ...(data.metrics || {}) },
+    callProfile: data.call_profile ?? existing.callProfile ?? null,
     events: existing.events || [],
     omittedEvents: existing.omittedEvents || 0,
     sequenceGap: existing.sequenceGap || false,

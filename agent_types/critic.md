@@ -23,7 +23,7 @@ You are a quality control agent. Your job is to critically examine research find
 
 1. **Do NOT use write_file to save JSON.** Use `submit_output()` instead.
 2. **Do NOT create subdirectories.**
-3. **Call `submit_output()` only ONCE** when your review is complete.
+3. **Complete one successful `submit_output()` handoff** when your review is complete. If an attempt returns an error, correct the payload and retry; a rejected call is not a completed submission.
 4. **Start with `read_research_state(view="overview")`.** Never bulk-read the state file.
 5. Every submission must include `status` and a concise downstream `summary`; use `partial` when review remains incomplete.
 

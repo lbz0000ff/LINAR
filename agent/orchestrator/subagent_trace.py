@@ -30,6 +30,13 @@ TOKEN_METRIC_KEYS = (
 )
 
 
+def _matches_research_tool(name: str, kind: str) -> bool:
+    """Match native and namespaced MCP search/fetch tool names."""
+    return name == f"web_{kind}" or (
+        name.startswith("mcp_") and name.endswith(kind)
+    )
+
+
 def _redact_value(value: Any) -> Any:
     if isinstance(value, dict):
         redacted = {}
@@ -90,6 +97,8 @@ class SubagentTraceRelay:
         self._node_id = node_id
         self._agent_type = agent_type
         self._sequence = 0
+        self._current_llm_call = 0
+        self._tools_by_llm_call: dict[int, list[str]] = {}
         self._pending_tools: dict[str, float] = {}
         self._pending_usage: dict[str, int] | None = None
         self._metrics: dict[str, Any] = {
@@ -97,6 +106,7 @@ class SubagentTraceRelay:
             "tool_calls": 0,
             "search_calls": 0,
             "fetch_calls": 0,
+            "submission_parse_errors": 0,
             "findings_submitted": 0,
             "sources_submitted": 0,
             **{key: 0 for key in TOKEN_METRIC_KEYS},
@@ -124,10 +134,41 @@ class SubagentTraceRelay:
             "event_type": event_type,
             "metrics": self.snapshot_metrics(),
         })
+        if event_type in {"start", "done", "tool_call", "tool_result", "error"}:
+            payload["llm_call_number"] = self._current_llm_call or None
         self._parent_emit({"type": "subagent_event", "data": payload})
 
     def snapshot_metrics(self) -> dict[str, Any]:
-        return dict(self._metrics)
+        metrics = dict(self._metrics)
+        fetch_batch_sizes = [
+            sum(_matches_research_tool(name, "fetch") for name in tools)
+            for tools in self._tools_by_llm_call.values()
+        ]
+        fetch_batch_sizes = [size for size in fetch_batch_sizes if size]
+        fetch_rounds = len(fetch_batch_sizes)
+        llm_calls = int(metrics["llm_calls"])
+        metrics.update({
+            "fetch_rounds": fetch_rounds,
+            "single_fetch_rounds": sum(size == 1 for size in fetch_batch_sizes),
+            "batched_fetch_rounds": sum(size > 1 for size in fetch_batch_sizes),
+            "max_fetch_batch_size": max(fetch_batch_sizes, default=0),
+            "tool_calls_per_llm_call": round(
+                metrics["tool_calls"] / llm_calls, 2,
+            ) if llm_calls else 0.0,
+            "fetches_per_fetch_round": round(
+                metrics["fetch_calls"] / fetch_rounds, 2,
+            ) if fetch_rounds else 0.0,
+        })
+        return metrics
+
+    def snapshot_call_profile(self) -> dict[str, Any]:
+        """Return a bounded, argument-free tool sequence for diagnostics."""
+        return {
+            "tool_batches": [
+                {"llm_call": call_number, "tools": list(tools)}
+                for call_number, tools in self._tools_by_llm_call.items()
+            ],
+        }
 
     def record_submission(self, submission: dict[str, Any]) -> None:
         """Update metrics after Tool_CreatePlan receives structured output."""
@@ -136,6 +177,8 @@ class SubagentTraceRelay:
 
     def _normalize(self, event_type: str, event: dict) -> dict[str, Any]:
         if event_type == "start":
+            self._current_llm_call += 1
+            self._tools_by_llm_call[self._current_llm_call] = []
             self._metrics["llm_calls"] += 1
             return {"status": "running", "summary": {}, "detail": {}}
         if event_type == "tool_call":
@@ -176,9 +219,11 @@ class SubagentTraceRelay:
         tool_id = str(event.get("id") or "")
         arguments = _redact_value(_parse_json(event.get("arguments") or {}))
         self._metrics["tool_calls"] += 1
-        if name == "web_search":
+        if self._current_llm_call:
+            self._tools_by_llm_call[self._current_llm_call].append(name)
+        if _matches_research_tool(name, "search"):
             self._metrics["search_calls"] += 1
-        elif name == "web_fetch":
+        elif _matches_research_tool(name, "fetch"):
             self._metrics["fetch_calls"] += 1
         if tool_id:
             self._pending_tools[tool_id] = time.perf_counter()
@@ -193,7 +238,15 @@ class SubagentTraceRelay:
     def _normalize_tool_result(self, event: dict) -> dict[str, Any]:
         name = str(event.get("name") or "")
         tool_id = str(event.get("id") or "")
-        raw_result = event.get("raw_result", event.get("result"))
+        raw_result = event.get("raw_result")
+        if raw_result is None:
+            raw_result = event.get("result")
+        submission_parse_error = (
+            name == "submit_output"
+            and "[SUBMISSION_JSON_INVALID]" in str(raw_result or "")
+        )
+        if submission_parse_error:
+            self._metrics["submission_parse_errors"] += 1
         result = _redact_value(_parse_json(raw_result))
         started = self._pending_tools.pop(tool_id, None)
         duration_ms = round((time.perf_counter() - started) * 1000) if started else None
@@ -204,7 +257,10 @@ class SubagentTraceRelay:
         return {
             "tool_name": name,
             "tool_call_id": tool_id,
-            "status": "error" if isinstance(result, dict) and result.get("error") else "success",
+            "status": "error" if (
+                submission_parse_error
+                or (isinstance(result, dict) and result.get("error"))
+            ) else "success",
             "duration_ms": duration_ms,
             "summary": summary,
             "detail": detail,

@@ -9,8 +9,11 @@ from datetime import date
 from typing import Any
 
 from plan import DAGNodeStatus
+from logger import get_logger
 
 from .tool import Tool
+
+log = get_logger(__name__)
 
 
 class Tool_PlanAdvance(Tool):
@@ -328,6 +331,20 @@ class SubmitOutputTool(Tool):
         schema["parameters"]["properties"] = {
             key: value for key, value in properties.items() if key in allowed
         }
+        if self.agent_type == "analyst":
+            analyst_limits = {
+                "summary": {"maxLength": 4000},
+                "unresolved": {"maxItems": 8},
+                "artifacts": {"maxItems": 8},
+                "contradictions": {"maxItems": 8},
+                "critical_gaps": {"maxItems": 8},
+                "next_wave_suggestions": {"maxItems": 6},
+                "key_evidence_ids": {"maxItems": 40},
+                "remove_evidence_ids": {"maxItems": 40},
+            }
+            for field, limits in analyst_limits.items():
+                if field in schema["parameters"]["properties"]:
+                    schema["parameters"]["properties"][field].update(limits)
         self.tool_schema = schema
 
     def execute(self, **kwargs) -> str | dict:
@@ -657,14 +674,24 @@ class Tool_CreatePlan(Tool):
             except Exception as exc:
                 from logger import redact_sensitive
                 error = redact_sensitive(exc)
+                trace_metrics = trace_relay.snapshot_metrics()
+                call_profile = trace_relay.snapshot_call_profile()
                 agent.emit({"type": "dag_node_complete", "data": {
                     "id": node_id,
                     "result": error[:200],
                     "status": "FAILED",
                     "stop_reason": "exception",
                     "duration_ms": round((time.perf_counter() - node_started) * 1000),
-                    "metrics": trace_relay.snapshot_metrics(),
+                    "metrics": trace_metrics,
+                    "call_profile": call_profile,
                 }})
+                log.info(
+                    "Subagent trace summary node=%s agent=%s metrics=%s call_profile=%s",
+                    node_id,
+                    agent_type or hint,
+                    json.dumps(trace_metrics, ensure_ascii=False, separators=(",", ":")),
+                    json.dumps(call_profile, ensure_ascii=False, separators=(",", ":")),
+                )
                 raise RuntimeError(error) from exc
 
             # ── Collect results (three-tier fallback) ──
@@ -712,14 +739,24 @@ class Tool_CreatePlan(Tool):
             else:
                 terminal_status = "CHECKPOINTED"
                 stop_reason = "submission_missing"
+            trace_metrics = trace_relay.snapshot_metrics()
+            call_profile = trace_relay.snapshot_call_profile()
             agent.emit({"type": "dag_node_complete", "data": {
                 "id": node_id,
                 "result": result[:200],
                 "status": terminal_status,
                 "stop_reason": stop_reason,
                 "duration_ms": round((time.perf_counter() - node_started) * 1000),
-                "metrics": trace_relay.snapshot_metrics(),
+                "metrics": trace_metrics,
+                "call_profile": call_profile,
             }})
+            log.info(
+                "Subagent trace summary node=%s agent=%s metrics=%s call_profile=%s",
+                node_id,
+                agent_type or hint,
+                json.dumps(trace_metrics, ensure_ascii=False, separators=(",", ":")),
+                json.dumps(call_profile, ensure_ascii=False, separators=(",", ":")),
+            )
             if submission is None:
                 raise RuntimeError(result)
             agent_results[node_id] = result

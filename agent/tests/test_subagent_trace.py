@@ -33,6 +33,7 @@ def test_relay_filters_stream_tokens_and_scopes_kept_events():
         "tool_calls": 0,
         "search_calls": 0,
         "fetch_calls": 0,
+        "submission_parse_errors": 0,
         "findings_submitted": 0,
         "sources_submitted": 0,
         "prompt_tokens": 123,
@@ -41,6 +42,12 @@ def test_relay_filters_stream_tokens_and_scopes_kept_events():
         "prompt_cache_hit_tokens": 0,
         "prompt_cache_miss_tokens": 0,
         "reasoning_tokens": 0,
+        "fetch_rounds": 0,
+        "single_fetch_rounds": 0,
+        "batched_fetch_rounds": 0,
+        "max_fetch_batch_size": 0,
+        "tool_calls_per_llm_call": 0.0,
+        "fetches_per_fetch_round": 0.0,
     }
 
 
@@ -81,6 +88,97 @@ def test_relay_accumulates_final_usage_across_llm_calls():
     assert metrics["prompt_cache_hit_tokens"] == 115
     assert metrics["prompt_cache_miss_tokens"] == 35
     assert metrics["reasoning_tokens"] == 11
+
+
+def test_relay_groups_native_and_mcp_fetches_by_llm_call():
+    emitted = []
+    relay = SubagentTraceRelay(emitted.append, "node-a", "researcher")
+
+    relay({"type": "start"})
+    for index, name in enumerate((
+        "mcp_stepsearch_web_fetch",
+        "web_fetch",
+        "mcp_fetch_fetch",
+    ), 1):
+        relay({
+            "type": "tool_call",
+            "name": name,
+            "id": f"fetch-{index}",
+            "arguments": '{"url":"https://example.com"}',
+        })
+    relay({"type": "done"})
+    relay({"type": "start"})
+    relay({
+        "type": "tool_call",
+        "name": "mcp_anysearch_batch_search",
+        "id": "search-1",
+        "arguments": '{"query":"demo"}',
+    })
+    relay({
+        "type": "tool_call",
+        "name": "web_fetch",
+        "id": "fetch-4",
+        "arguments": '{"url":"https://example.org"}',
+    })
+
+    tool_events = [
+        event["data"] for event in emitted
+        if event["data"]["event_type"] == "tool_call"
+    ]
+    assert [event["llm_call_number"] for event in tool_events] == [1, 1, 1, 2, 2]
+
+    metrics = relay.snapshot_metrics()
+    assert metrics["llm_calls"] == 2
+    assert metrics["tool_calls"] == 5
+    assert metrics["search_calls"] == 1
+    assert metrics["fetch_calls"] == 4
+    assert metrics["fetch_rounds"] == 2
+    assert metrics["single_fetch_rounds"] == 1
+    assert metrics["batched_fetch_rounds"] == 1
+    assert metrics["max_fetch_batch_size"] == 3
+    assert metrics["tool_calls_per_llm_call"] == 2.5
+    assert metrics["fetches_per_fetch_round"] == 2.0
+    assert relay.snapshot_call_profile() == {
+        "tool_batches": [
+            {
+                "llm_call": 1,
+                "tools": [
+                    "mcp_stepsearch_web_fetch",
+                    "web_fetch",
+                    "mcp_fetch_fetch",
+                ],
+            },
+            {
+                "llm_call": 2,
+                "tools": ["mcp_anysearch_batch_search", "web_fetch"],
+            },
+        ],
+    }
+
+
+def test_relay_preserves_and_counts_submit_output_parse_errors():
+    emitted = []
+    relay = SubagentTraceRelay(emitted.append, "node-a", "analyst")
+
+    relay({"type": "start"})
+    relay({
+        "type": "tool_call",
+        "name": "submit_output",
+        "id": "submit-1",
+        "arguments": '{"status":"completed"',
+    })
+    relay({
+        "type": "tool_result",
+        "name": "submit_output",
+        "id": "submit-1",
+        "result": "Error: [SUBMISSION_JSON_INVALID] chars=21 line=1 column=22 pos=21",
+        "raw_result": None,
+    })
+
+    assert relay.snapshot_metrics()["submission_parse_errors"] == 1
+    result_event = emitted[-1]["data"]
+    assert result_event["status"] == "error"
+    assert "[SUBMISSION_JSON_INVALID]" in result_event["detail"]["preview"]
 
 
 def test_relay_summarizes_tools_redacts_secrets_and_bounds_preview():

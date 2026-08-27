@@ -31,5 +31,10 @@ class MCPTool(Tool):
         self._server = server
         self._original_name = original_name
 
+    @property
+    def original_name(self) -> str:
+        """Return the server-side tool name before LINAR namespacing."""
+        return self._original_name
+
     async def execute(self, **kwargs):
         return await self._server.call_tool(self._original_name, kwargs)

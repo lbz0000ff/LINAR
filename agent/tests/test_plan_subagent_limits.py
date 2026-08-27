@@ -184,6 +184,10 @@ def test_create_plan_forwards_node_scoped_subagent_events(monkeypatch):
     completed = [event["data"] for event in parent.events if event["type"] == "dag_node_complete"]
     assert {event["status"] for event in completed} == {"CHECKPOINTED"}
     assert all(event["metrics"]["search_calls"] == 1 for event in completed)
+    assert all(event["metrics"]["fetch_rounds"] == 0 for event in completed)
+    assert all(event["call_profile"] == {
+        "tool_batches": [{"llm_call": 1, "tools": ["web_search"]}],
+    } for event in completed)
     assert all(event["stop_reason"] == "submission_missing" for event in completed)
     assert all('"status": "checkpointed"' in event["result"] for event in completed)
 

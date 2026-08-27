@@ -87,7 +87,7 @@ class Agent:
         api_key = cfg["llm"]["api_key"]
         base_url = cfg["llm"].get("base_url", "https://api.deepseek.com/v1")
         model = cfg["llm"].get("model", "deepseek-v4-flash")
-        system_prompt = self._build_prompt(cfg)
+        system_prompt = self._build_prompt(cfg, tools)
         self.llm = LLM(
             api_key, system_prompt, tools,
             base_url=base_url,
@@ -162,7 +162,7 @@ class Agent:
                 ] + active_config_hooks
 
         load_hooks_from_config(merged_hooks_config, self.hooks)
-    def _build_prompt(self, cfg):
+    def _build_prompt(self, cfg: dict, tools: dict | None = None) -> str:
         """Load and join prompt files listed in config."""
         # ── Memory View compilation (session start, one-shot) ──────────
         if self._memory_enabled and cfg.get("memory", {}).get("enabled", True):
@@ -213,22 +213,24 @@ class Agent:
         # Skill listing is injected dynamically as a system-reminder message
         # in _build_llm_messages(), available skills are listed there.
         # Use the `skill` tool to load and execute a skill.
-        # dynamically append MCP tools so the LLM knows about them
-        try:
-            from tool_registry import _init_mcp_servers
-            mcp_tools = _init_mcp_servers()
-            if mcp_tools:
-                lines = ["\n## MCP tools (loaded via external servers)"]
-                for name, tool in mcp_tools.items():
-                    desc = (tool.description or "").split(".")[0][:80]
-                    lines.append(f"- `{name}` — {desc}")
-                lines.append(
-                    "\nThese tools work exactly like built-in tools — call them "
-                    "by name via function calling."
-                )
-                parts.append("\n".join(lines))
-        except ImportError:
-            pass
+        # Describe only MCP tools already registered on this Agent. Prompt
+        # construction must never start external servers or advertise tools
+        # that are absent from the function-calling schema.
+        mcp_tools = {
+            name: tool
+            for name, tool in (tools or {}).items()
+            if name.startswith("mcp_")
+        }
+        if mcp_tools:
+            lines = ["\n## MCP tools (loaded via external servers)"]
+            for name, tool in mcp_tools.items():
+                desc = (tool.description or "").split(".")[0][:80]
+                lines.append(f"- `{name}` — {desc}")
+            lines.append(
+                "\nThese tools work exactly like built-in tools — call them "
+                "by name via function calling."
+            )
+            parts.append("\n".join(lines))
         # append promise mechanism info so the LLM knows about async ops
         parts.append(
             "\n## Async operations (promises)\n"
@@ -1263,7 +1265,7 @@ class Agent:
             self.stop_event.clear()
         self._interrupted = False
         if not self._skill_active and not getattr(self, '_custom_system_prompt', False):
-            self.llm.system_prompt = self._build_prompt(self.cfg)
+            self.llm.system_prompt = self._build_prompt(self.cfg, self.tools)
         llm_call = 0
         wrap_up_emitted = False
         submit_only_emitted = False
@@ -1525,6 +1527,7 @@ class Agent:
                 break
             self._interrupted = False
             for tc in tool_calls:
+                is_submission_tool = tc["name"] == "submit_output"
                 # Tool logging handled by log_tool_call hook (hooks_builtin.py)
                 if self.stop_event.is_set():
                     self._interrupted = True
@@ -1537,7 +1540,8 @@ class Agent:
                 result = None
                 _tool_failed = False
                 circuit_rejected = (
-                    self._tool_failures.get(tc["name"], 0)
+                    not is_submission_tool
+                    and self._tool_failures.get(tc["name"], 0)
                     >= _TOOL_FAILURE_THRESHOLD
                 )
                 policy_rejected = False
@@ -1560,12 +1564,37 @@ class Agent:
                     raw_args = tc["arguments"]
                     try:
                         args_dict = json.loads(raw_args) if isinstance(raw_args, str) else raw_args
-                    except json.JSONDecodeError:
-                        result_str = (
-                            f"Error: Failed to parse arguments for tool "
-                            f"'{tc['name']}': invalid JSON. "
-                            f"Do NOT retry with the same arguments."
-                        )
+                    except json.JSONDecodeError as error:
+                        argument_length = len(raw_args) if isinstance(raw_args, str) else 0
+                        if is_submission_tool:
+                            log.warning(
+                                "submit_output arguments invalid JSON "
+                                "(session=%s round=%s llm_call=%s chars=%s "
+                                "line=%s column=%s pos=%s)",
+                                self.session_id,
+                                self._conversation_round,
+                                llm_call,
+                                argument_length,
+                                error.lineno,
+                                error.colno,
+                                error.pos,
+                            )
+                            result_str = (
+                                "Error: [SUBMISSION_JSON_INVALID] submit_output "
+                                "arguments were not valid JSON "
+                                f"(chars={argument_length}, line={error.lineno}, "
+                                f"column={error.colno}, pos={error.pos}). "
+                                "Retry with a smaller payload. Keep summary concise, "
+                                "include only the most important list items and evidence "
+                                "IDs, and do not embed a full report in the tool call. "
+                                "This handoff tool remains available."
+                            )
+                        else:
+                            result_str = (
+                                f"Error: Failed to parse arguments for tool "
+                                f"'{tc['name']}': invalid JSON. "
+                                f"Do NOT retry with the same arguments."
+                            )
                         _tool_failed = True
                     if result_str is None:
                         hook_result = await self._run_hook("PreToolUse", {
@@ -1662,7 +1691,12 @@ class Agent:
                             result_str = f"Error: {e}"
                             _tool_failed = True
                 is_failure = _tool_failed or _is_tool_failure_result(result_str)
-                if is_failure and not circuit_rejected and not policy_rejected:
+                if (
+                    is_failure
+                    and not is_submission_tool
+                    and not circuit_rejected
+                    and not policy_rejected
+                ):
                     self._tool_failures[tc["name"]] = self._tool_failures.get(tc["name"], 0) + 1
                     if self._tool_failures[tc["name"]] == _TOOL_FAILURE_THRESHOLD:
                         self.chat_history.append({

@@ -90,7 +90,9 @@ function formatDuration(durationMs) {
             {{ node.agentType || node.hint || 'subagent' }}
             · LLM {{ node.metrics?.llm_calls || 0 }}/{{ node.maxLlmCalls || '?' }}
             · search {{ node.metrics?.search_calls || 0 }}
-            · fetch {{ node.metrics?.fetch_calls || 0 }}
+            · fetch {{ node.metrics?.fetch_calls || 0 }}/{{ node.metrics?.fetch_rounds || 0 }} rounds
+            <template v-if="node.metrics?.batched_fetch_rounds"> · batched {{ node.metrics.batched_fetch_rounds }}</template>
+            <template v-if="node.metrics?.max_fetch_batch_size"> · max {{ node.metrics.max_fetch_batch_size }}</template>
             · input {{ formatTokenCount(node.metrics?.prompt_tokens) }}
             · output {{ formatTokenCount(node.metrics?.completion_tokens) }}
             <template v-if="tokenCacheHitRate(node.metrics)"> · cache {{ tokenCacheHitRate(node.metrics) }}</template>
@@ -124,6 +126,7 @@ function formatDuration(durationMs) {
           >
             <button class="trace-event-summary" @click="toggleEvent(event.sequence)">
               <span class="trace-time">{{ formatTime(event.timestamp) }}</span>
+              <span v-if="event.llm_call_number" class="trace-call">LLM #{{ event.llm_call_number }}</span>
               <span class="trace-action">{{ eventTitle(event) }}</span>
               <span class="trace-summary">{{ eventSummary(event) }}</span>
               <span class="trace-duration">{{ formatDuration(event.duration_ms) }}</span>
@@ -160,8 +163,9 @@ function formatDuration(durationMs) {
 .trace-event { flex: 0 0 auto; border-left: 2px solid var(--border-light); background: var(--bg-glass); border-radius: 4px; overflow: hidden; }
 .trace-event[data-status="error"] { border-left-color: var(--crimson); }
 .trace-event[data-status="running"] { border-left-color: oklch(55% 0.12 240); }
-.trace-event-summary { width: 100%; display: grid; grid-template-columns: auto auto minmax(0, 1fr) auto auto; gap: 6px; align-items: center; border: 0; background: transparent; color: var(--text-secondary); text-align: left; padding: 6px; cursor: pointer; font-size: 10px; }
+.trace-event-summary { width: 100%; display: grid; grid-template-columns: auto auto auto minmax(0, 1fr) auto auto; gap: 6px; align-items: center; border: 0; background: transparent; color: var(--text-secondary); text-align: left; padding: 6px; cursor: pointer; font-size: 10px; }
 .trace-time, .trace-duration { color: var(--text-weak); font-variant-numeric: tabular-nums; }
+.trace-call { color: var(--text-weak); font-variant-numeric: tabular-nums; white-space: nowrap; }
 .trace-action { color: var(--text-primary); font-weight: 600; }
 .trace-summary { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .trace-event-detail { margin: 0; border-top: 1px solid var(--border-light); padding: 8px; max-height: 220px; overflow: auto; white-space: pre-wrap; word-break: break-word; color: var(--text-secondary); font-size: 10px; }

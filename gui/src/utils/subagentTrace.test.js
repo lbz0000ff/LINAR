@@ -76,11 +76,15 @@ test('applies explicit terminal status and completion metadata', () => {
   const initial = applyDagNodeStart({}, { id: 'one' })
   const updated = applyDagNodeComplete(initial, {
     id: 'one', status: 'CHECKPOINTED', result: 'partial', stop_reason: 'budget', duration_ms: 42,
+    call_profile: { tool_batches: [{ llm_call: 1, tools: ['web_fetch'] }] },
   })
 
   assert.equal(updated.one.status, 'CHECKPOINTED')
   assert.equal(updated.one.stopReason, 'budget')
   assert.equal(updated.one.durationMs, 42)
+  assert.deepEqual(updated.one.callProfile, {
+    tool_batches: [{ llm_call: 1, tools: ['web_fetch'] }],
+  })
 })
 
 test('sums per-node token metrics into DAG totals', () => {
@@ -103,4 +107,6 @@ test('trace event rows cannot shrink instead of overflowing the scroll container
 
   assert.match(source, /\.trace-events\s*\{[^}]*overflow-y:\s*auto/s)
   assert.match(source, /\.trace-event\s*\{[^}]*flex:\s*0\s+0\s+auto/s)
+  assert.match(source, /fetch_rounds/)
+  assert.match(source, /llm_call_number/)
 })
