@@ -136,9 +136,33 @@ def _select_backend_port(host: str, requested_port: int | None) -> int:
     raise RuntimeError("Unable to select a backend port")
 
 
+def _select_gui_port(requested_port: int | None) -> int:
+    """Return an available IPv4 loopback port for the Vite dev server."""
+    if requested_port is not None:
+        return requested_port
+
+    for candidate in (5173, 0):
+        try:
+            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+                sock.bind(("127.0.0.1", candidate))
+                return int(sock.getsockname()[1])
+        except OSError as exc:
+            if candidate == 5173:
+                print(f"[linar] Port 5173 unavailable ({exc}); selecting another GUI port")
+                continue
+            raise
+
+    raise RuntimeError("Unable to select a GUI port")
+
+
 def _backend_origin(host: str, port: int) -> str:
     client_host = "127.0.0.1" if host in ("0.0.0.0", "::") else host
     return f"http://{client_host}:{port}"
+
+
+def _gui_origin(port: int) -> str:
+    """Return the browser-visible origin for the local Vite server."""
+    return f"http://127.0.0.1:{port}"
 
 
 def _stream_output(proc: subprocess.Popen, prefix: str) -> None:
@@ -175,10 +199,14 @@ def _launch_gui(args: argparse.Namespace) -> None:
     agent_dir = os.path.join(_project_root, "agent")
     gui_env = os.environ.copy()
     gui_env["LINAR_BACKEND_ORIGIN"] = _backend_origin(args.host, args.port)
+    gui_env["LINAR_GUI_HOST"] = "127.0.0.1"
+    gui_env["LINAR_GUI_PORT"] = str(args.gui_port)
+    gui_env["LINAR_GUI_ORIGIN"] = _gui_origin(args.gui_port)
     api_proc = _popen(_backend_cmd(args), agent_dir, pipe=True)
     gui_proc = _popen([npm, "run", "dev"], gui_dir, pipe=True, env=gui_env)
 
     print(f"[linar] Backend started at http://{args.host}:{args.port}")
+    print(f"[linar] Vite frontend starting at {_gui_origin(args.gui_port)}")
     print("[linar] Electron GUI starting via npm run dev")
     print("[linar] Press Ctrl+C to stop both processes")
 
@@ -227,6 +255,12 @@ def _parse_args() -> argparse.Namespace:
         default=None,
         help="Backend port (default: 8080 when available, otherwise an available port)",
     )
+    parser.add_argument(
+        "--gui-port",
+        type=int,
+        default=None,
+        help="Vite GUI port (default: 5173 when available, otherwise an available port)",
+    )
     parser.add_argument("--reload", action="store_true", help="Enable backend auto-reload")
     return parser.parse_args()
 
@@ -239,6 +273,8 @@ def main() -> None:
 
     if args.web or args.gui:
         args.port = _select_backend_port(args.host, args.port)
+    if args.gui:
+        args.gui_port = _select_gui_port(args.gui_port)
 
     # 2. Launch
     if args.web:

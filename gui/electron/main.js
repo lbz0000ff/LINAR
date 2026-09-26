@@ -22,7 +22,8 @@ function createWindow() {
   })
 
   if (!app.isPackaged) {
-    mainWindow.loadURL('http://localhost:5173')
+    const frontendOrigin = process.env.LINAR_GUI_ORIGIN || 'http://127.0.0.1:5173'
+    mainWindow.loadURL(frontendOrigin)
   } else {
     mainWindow.loadFile(path.join(__dirname, '../dist/index.html'))
   }
