@@ -7,6 +7,19 @@ __pycache__/
 .claude/
 .vscode/
 .codex/
+.worktrees/
+.env
+
+# Project-local browsers (Playwright Chromium)
+.browsers/
+
+# Playwright MCP runtime data
+.playwright-mcp/
+.superpowers/
+
+# Python virtual environment
+.venv/
+
 *.pyc
 *.pyo
 *.pyd
@@ -14,14 +27,13 @@ __pycache__/
 *.log
 api_key.txt
 config.yaml
-.env
 logs/
 tmp/
 models/*
-reports
-research
-test/*
-.worktrees/
+reports/
+research/
+specs
+test/
 agent/memory/chat_history/*
 agent/memory/archived/*
 agent/prompt/USER.md
@@ -50,16 +62,6 @@ skills/*
 
 # Upload artifacts
 webui/*
-
-# Project-local browsers (Playwright Chromium)
-.browsers/
-
-# Playwright MCP runtime data
-.playwright-mcp/
-.superpowers/
-
-# Python virtual environment
-.venv/
 
 # Dev notes
 agent/BACKEND_CHANGES.md
