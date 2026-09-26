@@ -627,6 +627,7 @@ class Tool_CreatePlan(Tool):
                     equivalent_tools = [
                         name for name in sub_agent.tools
                         if name == tool_name
+                        or (tool_name == "web_fetch" and name == "acquire_resource")
                         or (
                             name.startswith("mcp_")
                             and name.endswith(mcp_suffix)

@@ -98,7 +98,7 @@ def test_relay_groups_native_and_mcp_fetches_by_llm_call():
     for index, name in enumerate((
         "mcp_stepsearch_web_fetch",
         "web_fetch",
-        "mcp_fetch_fetch",
+        "acquire_resource",
     ), 1):
         relay({
             "type": "tool_call",
@@ -145,7 +145,7 @@ def test_relay_groups_native_and_mcp_fetches_by_llm_call():
                 "tools": [
                     "mcp_stepsearch_web_fetch",
                     "web_fetch",
-                    "mcp_fetch_fetch",
+                    "acquire_resource",
                 ],
             },
             {

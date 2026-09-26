@@ -109,6 +109,14 @@ web_fetch:
     browser_channel: chromium   # chromium = Playwright browser; msedge = system Edge fallback
     respect_robots_txt: true    # refuse URLs disallowed by the site's robots.txt
 
+# Binary Resource Acquisition
+acquire_resource:
+    timeout: 60                  # total request timeout in seconds
+    max_bytes: 52428800          # 50 MiB per file; code hard-caps at 100 MiB
+    max_redirects: 5             # every redirect target is checked for SSRF
+    artifact_dir: acquired       # tool-managed directory under the active workspace
+    pdf_preview_chars: 6000      # PDF text returned directly to the model
+
 # Logging Configuration
 logging:
     level: INFO                # DEBUG | INFO | WARNING | ERROR | CRITICAL
@@ -131,6 +139,7 @@ permissions:
         delete_file: ask
         delete_dir: ask
         web_fetch: ask
+        acquire_resource: ask
         web_search: allow
         vision_query: ask        # image analysis — confirm before calling external API
         truncate_long_output: ask   # "allow" = silent truncate, "ask" = prompt user
@@ -152,6 +161,7 @@ permission_modes:
                 delete_file: ask
                 delete_dir: ask
                 web_fetch: ask
+                acquire_resource: ask
                 vision_query: ask
                 truncate_long_output: ask
         review: {}

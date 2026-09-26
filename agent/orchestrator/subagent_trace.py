@@ -32,6 +32,8 @@ TOKEN_METRIC_KEYS = (
 
 def _matches_research_tool(name: str, kind: str) -> bool:
     """Match native and namespaced MCP search/fetch tool names."""
+    if kind == "fetch" and name == "acquire_resource":
+        return True
     return name == f"web_{kind}" or (
         name.startswith("mcp_") and name.endswith(kind)
     )
@@ -280,6 +282,15 @@ class SubagentTraceRelay:
             return {
                 key: result.get(key)
                 for key in ("url", "status_code", "content_length", "content_file", "truncated")
+                if key in result
+            }
+        if name == "acquire_resource":
+            return {
+                key: result.get(key)
+                for key in (
+                    "final_url", "status_code", "detected_content_type",
+                    "bytes", "path", "extracted_text_file",
+                )
                 if key in result
             }
         if name == "submit_output":

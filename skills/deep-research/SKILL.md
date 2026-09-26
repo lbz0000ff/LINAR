@@ -5,6 +5,7 @@ when_to_use: "Use for complex research topics that need multi-angle investigatio
 allowed-tools:
   - web_search
   - web_fetch
+  - acquire_resource
   - read_file
   - write_file
   - search_files
@@ -88,7 +89,7 @@ You have three predefined subagent types. **All research tasks MUST use the `age
 ### File naming convention
 
 All files in the workspace must follow these rules:
-- **No subdirectories** — all files go in the workspace root
+- **No agent-created subdirectories** — files created with `write_file` go in the workspace root. Tool-managed `web_fetch/` and `acquired/` artifact directories are allowed.
 - **Descriptive names** — use format `{wave}_{angle}_{type}.{ext}`, e.g. `wave1_market_policy_findings.json` is NOT allowed (no JSON via write_file); `wave1_market_landscape.mmd` is OK for Mermaid diagrams
 - **JSON files are FORBIDDEN** — subagents output JSON in their messages, never via write_file. If you see `.json` files in the workspace, they were created by mistake. Read them and merge their contents into your understanding, but do NOT create new ones.
 
@@ -255,5 +256,6 @@ Prefer sources in this order: **primary** (official data, original law, paper, o
 - **Coverage first, depth second**: Wave 1 explores broadly, later waves dive deeper.
 - **Flag uncertainty**: Conflicting or unclear information must be noted.
 - **Know when to stop**: After 2-3 waves with good coverage (>0.6), write the report.
-- **Use visual tools**: When `web_fetch` returns blocked/empty content, use `vision` or `img_to_text` as fallback.
-- **Embed original images**: If research refers to a chart/diagram/photo, use `vision` to view it and include it.
+- **Acquire source artifacts**: When research depends on a direct image, PDF, or attachment URL, use `acquire_resource` instead of shell download commands. It automatically exposes supported images and extracts ordinary PDF text.
+- **Use visual tools**: When `web_fetch` returns blocked/empty content, or an already-local image needs another inspection, use `vision` or `img_to_text` as fallback.
+- **Embed original images**: If research refers to a chart/diagram/photo, acquire or view the original and include it.

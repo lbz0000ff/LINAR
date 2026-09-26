@@ -24,18 +24,7 @@ DEFAULT_BROWSER_CHANNEL = "chromium"
 # ---------------------------------------------------------------------------
 # SSRF Protection
 # ---------------------------------------------------------------------------
-_PRIVATE_BLOCKS = [
-    ipaddress.ip_network("10.0.0.0/8"),
-    ipaddress.ip_network("172.16.0.0/12"),
-    ipaddress.ip_network("192.168.0.0/16"),
-    ipaddress.ip_network("169.254.0.0/16"),
-    ipaddress.ip_network("::1/128"),
-    ipaddress.ip_network("fc00::/7"),
-    ipaddress.ip_network("fe80::/10"),
-]
-
-
-def _check_ssrf(url_str):
+def _check_ssrf(url_str: str) -> tuple[Any, str] | dict[str, str]:
     """Validate URL and block SSRF-vulnerable targets.
 
     Returns (parsed_url, resolved_ip) on success, or an error dict on failure.
@@ -51,6 +40,8 @@ def _check_ssrf(url_str):
         return {"error": f"Unsupported URL scheme '{parsed.scheme}'. Only http and https are allowed."}
     if not parsed.netloc:
         return {"error": f"Invalid URL: no hostname found."}
+    if parsed.username is not None or parsed.password is not None:
+        return {"error": "URLs with embedded credentials are not allowed."}
 
     hostname = parsed.hostname
     if not hostname:
@@ -68,17 +59,26 @@ def _check_ssrf(url_str):
     if not addr_info:
         return {"error": f"Could not resolve hostname: {hostname}"}
 
-    # Check all resolved addresses against private ranges
-    resolved = addr_info[0][4][0]
-    try:
-        ip = ipaddress.ip_address(resolved)
-        for block in _PRIVATE_BLOCKS:
-            if ip in block:
-                return {"error": f"Blocked SSRF target: {hostname} resolves to private IP {resolved}."}
-    except ValueError:
-        return {"error": f"Could not parse resolved IP: {resolved}"}
+    # Every candidate must be globally routable.  Checking only the first DNS
+    # result allows a mixed public/private answer to bypass the guard when the
+    # HTTP client later selects a different address.
+    resolved_addresses = sorted({item[4][0] for item in addr_info if item[4]})
+    if not resolved_addresses:
+        return {"error": f"Could not resolve hostname: {hostname}"}
+    for resolved in resolved_addresses:
+        try:
+            ip = ipaddress.ip_address(resolved)
+        except ValueError:
+            return {"error": f"Could not parse resolved IP: {resolved}"}
+        if not ip.is_global:
+            return {
+                "error": (
+                    f"Blocked SSRF target: {hostname} resolves to non-public IP "
+                    f"{resolved}."
+                )
+            }
 
-    return (parsed, resolved)
+    return (parsed, resolved_addresses[0])
 
 
 @dataclass

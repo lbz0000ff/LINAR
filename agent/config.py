@@ -79,6 +79,13 @@ DEFAULTS = {
         "artifact_dir": "web_fetch",
         "browser_channel": "chromium",
     },
+    "acquire_resource": {
+        "timeout": 60,
+        "max_bytes": 52428800,
+        "max_redirects": 5,
+        "artifact_dir": "acquired",
+        "pdf_preview_chars": 6000,
+    },
     "memory": {
         "enabled": True,
         "extraction": {

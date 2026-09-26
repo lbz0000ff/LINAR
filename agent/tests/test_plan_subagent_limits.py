@@ -356,6 +356,7 @@ def test_web_researcher_mcp_and_native_tools_share_retrieval_budgets(monkeypatch
             "mcp_anysearch_batch_search": _FakeTool("mcp_anysearch_batch_search"),
             "web_fetch": _FakeTool("web_fetch"),
             "mcp_stepsearch_web_fetch": _FakeTool("mcp_stepsearch_web_fetch"),
+            "acquire_resource": _FakeTool("acquire_resource"),
         }
         sub_agent.llm.tools = sub_agent.tools
         created.append(sub_agent)
@@ -382,6 +383,7 @@ def test_web_researcher_mcp_and_native_tools_share_retrieval_budgets(monkeypatch
     assert asyncio.run(tools["mcp_anysearch_batch_search"].execute(query="four"))["budget_exhausted"] is True
     assert asyncio.run(tools["mcp_stepsearch_web_fetch"].execute(url="https://one.example"))["message"].endswith("ok")
     assert asyncio.run(tools["web_fetch"].execute(url="https://two.example"))["budget_exhausted"] is True
+    assert asyncio.run(tools["acquire_resource"].execute(url="https://three.example/file.pdf"))["budget_exhausted"] is True
 
 
 def test_predefined_subagent_prompt_includes_current_date(monkeypatch):

@@ -12,6 +12,7 @@ from tool.basic_tools.tool_fileio import (
 )
 from tool.basic_tools.tool_cmd import Tool_CmdExecute
 from tool.basic_tools.tool_web import Tool_WebFetch, Tool_WebSearch
+from tool.basic_tools.tool_acquire import Tool_AcquireResource
 from tool.basic_tools.tool_memory import Tool_Remember, Tool_RecallFact, Tool_RecallTopic, Tool_GetTopicList
 from tool.basic_tools.tool_ask_user import Tool_AskUser
 from tool.basic_tools.tool_skill import Tool_Skill
@@ -253,6 +254,7 @@ _TOOL_CLASSES = {
     "cmd_execute": Tool_CmdExecute,
     "web_fetch": Tool_WebFetch,
     "web_search": Tool_WebSearch,
+    "acquire_resource": Tool_AcquireResource,
     "remember": Tool_Remember,
     "recall_fact": Tool_RecallFact,
     "recall_topic": Tool_RecallTopic,
@@ -279,13 +281,13 @@ _TOOLSETS = {
         "create_workspace", "switch_workspace",
     ],
     "shell": ["cmd_execute", "cancel_promise"],
-    "web": ["web_fetch", "web_search"],
+    "web": ["web_fetch", "web_search", "acquire_resource"],
     "memory": ["remember", "recall_fact", "recall_topic", "get_topic_list"],
     "interactive": ["ask_user", "skill", "resolve_promise"],
     "plan": ["plan_advance", "plan_status", "create_plan"],
     "vision": ["img_to_text"],
     "research": [
-        "web_search", "web_fetch",
+        "web_search", "web_fetch", "acquire_resource",
         "read_file", "write_file", "search_files",
         "create_workspace", "switch_workspace",
         "create_plan",
@@ -349,6 +351,7 @@ _all_tools = {
     "cmd_execute": Tool_CmdExecute(),
     "web_fetch": Tool_WebFetch(),
     "web_search": Tool_WebSearch(),
+    "acquire_resource": Tool_AcquireResource(),
     "remember": Tool_Remember(),
     "recall_fact": Tool_RecallFact(),
     "recall_topic": Tool_RecallTopic(),
